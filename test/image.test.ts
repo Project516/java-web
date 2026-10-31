@@ -34,14 +34,14 @@ test("ImageBackend reads the index, packed files and module images", () => {
     writeFileSync(join(dir, "jdk", "jdk.other.jar"), "XYZ");
     writeFileSync(join(dir, "jdk", "jdk.localedata.txt"), "d /modules/jdk.localedata\nf /modules/jdk.localedata/L 3 jdk.other:0");
     writeFileSync(join(dir, "boot.pack"), pack([
-      ["/index.txt", "d /lib\nf /lib/boot 4 java.base:0\nf /lib/rest 6 java.base:4\nd /modules\nd /modules/jdk.other\nf /modules/jdk.other/x 3 jdk.other:0"],
+      ["/index.txt", "d /lib\nf /lib/boot 4 java.base:0\nf /lib/rest 6 java.base:4\nf /lib/cut 6 jdk.other:1\nd /modules\nd /modules/jdk.other\nf /modules/jdk.other/x 3 jdk.other:0"],
       ["/lib/boot", "BOOT"],
     ]));
     const b = new ImageBackend(dir);
     assert.deepEqual(b.stat("/lib"), { dir: true, size: 0, mtime: 0 });
     assert.deepEqual(b.stat("/lib/rest"), { dir: false, size: 6, mtime: 0 });
     assert.equal(b.stat("/lib/none"), null);
-    assert.deepEqual(b.list("/lib"), ["boot", "rest"]);
+    assert.deepEqual(b.list("/lib"), ["boot", "rest", "cut"]);
     assert.deepEqual(b.list("/"), ["lib", "modules"]);
     assert.equal(b.list("/lib/boot"), null);
     const text = (d: Uint8Array | null) => d && new TextDecoder().decode(d);
@@ -50,6 +50,8 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(text(b.readRange("/lib/rest", 2, 3)), "cde");
     assert.equal(text(b.read("/modules/jdk.other/x")), "XYZ");
     assert.equal(b.read("/lib"), null);
+    // past the end of a damaged image
+    assert.equal(b.read("/lib/cut"), null);
     assert.equal(b.stat("/modules/jdk.localedata"), null);
     assert.equal(text(new ImageBackend(dir, true).read("/modules/jdk.localedata/L")), "XYZ");
   } finally {

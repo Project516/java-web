@@ -169,7 +169,11 @@ function nodeVm(o: NodeRunOptions): JVM {
   vfs.mount("/", new NodeBackend("/", true));
   // built as dist/node.js, it reads the packaged image next to it
   const packaged = !o.jdk && fs.existsSync(path.join(here, "boot.pack"));
-  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(o.jdk ?? defaultJdk));
+  const jdk = o.jdk ?? defaultJdk;
+  if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
+    throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
+  }
+  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(jdk));
   if (!o.localeData) vfs.hide("/jdk/modules/jdk.localedata");
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
@@ -290,7 +294,12 @@ function main(argv: string[]) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);
   }
-  runNode(o).then((code) => process.exit(code));
+  try {
+    runNode(o).then((code) => process.exit(code));
+  } catch (e) {
+    console.error(`java-web: ${(e as Error).message}`);
+    process.exit(1);
+  }
 }
 
 // run as a script, also through the symlink npm puts in node_modules/.bin

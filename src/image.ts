@@ -49,7 +49,8 @@ export class ImageBackend implements Backend {
       if (got === 0) break;
       n += got;
     }
-    return n === len ? out : out.subarray(0, n);
+    // a short image is damaged; the file reads as missing rather than cut off
+    return n === len ? out : null;
   }
 
   list(p: string): string[] | null {
