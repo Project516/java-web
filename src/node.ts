@@ -161,7 +161,7 @@ function fixedInput(data: Uint8Array) {
   };
 }
 
-const bridges = new WeakMap<JVM, Bridge>();
+const bridges = new WeakMap<object, Bridge>();
 
 // The host file system is the VFS root, with the JDK image mounted at /jdk.
 function nodeVm(o: NodeRunOptions): JVM {
@@ -239,7 +239,7 @@ export async function startLibrary(o: NodeRunOptions): Promise<JVM> {
   return vm;
 }
 
-export function libraryOf(vm: JVM): any {
+export function libraryOf(vm: object): any {
   return bridges.get(vm)!.root(0);
 }
 

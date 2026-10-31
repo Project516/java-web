@@ -39,7 +39,8 @@ const code = await runNode({
 });
 ```
 
-`runNode` resolves to the exit code. Its options:
+The package ships TypeScript declarations (`dist/node.d.ts`). `runNode`
+resolves to the exit code. Its options:
 
 - `classpath`, `mainClass` or `jar`, `args`, `props` (system properties)
 - `stdout`, `stderr` (byte callbacks; default the process's), `input` (fixed stdin bytes)
@@ -47,6 +48,7 @@ const code = await runNode({
 - `natives`: Java `native` methods in JS, as in the browser ([browser.md](browser.md))
 - `assertions` (the flags, for example `["-ea"]`), `enablePreview`, `localeData`
 - `hostName` (what `InetAddress.getLocalHost()` reports), `maxRssMb`, `jdk`, `debug`
+- `fetch`: sockets stay inside the VM, and `http:` requests go to this `fetch`, as in the browser
 
 `startLibrary(options)` starts a VM in library mode, and `libraryOf(vm)` is its
 `lib`, used as `cheerpjRunLibrary`'s result is in the browser. `vm.halt(0)`

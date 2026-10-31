@@ -43,6 +43,7 @@ await build({
   target: "node23",
   banner: { js: "#!/usr/bin/env node" },
 });
+cpSync(join(root, "types", "node.d.ts"), join(dist, "node.d.ts"));
 
 mkdirSync(join(dist, "jdk"), { recursive: true });
 
