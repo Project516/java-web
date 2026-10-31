@@ -16,6 +16,9 @@ export class ImageBackend implements Backend {
   // dir holds boot.pack and jdk/; localeData adds jdk.localedata's files
   constructor(dir: string, localeData = false) {
     this.dir = path.resolve(dir);
+    if (!fs.existsSync(path.join(this.dir, "jdk", "java.base.jar"))) {
+      throw new Error(`no packaged JDK image in ${this.dir}: boot.pack needs jdk/ next to it`);
+    }
     const buf = fs.readFileSync(path.join(this.dir, "boot.pack"));
     this.pack = parsePack(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
     if (localeData) addIndex(this.pack, fs.readFileSync(path.join(this.dir, "jdk", "jdk.localedata.txt"), "utf8"));
@@ -32,23 +35,30 @@ export class ImageBackend implements Backend {
   }
 
   readRange(p: string, off: number, len: number): Uint8Array | null {
+    const size = this.pack.index!.get(p);
+    if (size === undefined || size < 0) return null;
+    len = Math.max(0, Math.min(len, size - off));
     const packed = this.pack.files.get(p);
     if (packed) return packed.subarray(off, off + len);
     const at = this.pack.offsets.get(p);
     if (!at) return null;
     const out = new Uint8Array(len);
     let n = 0;
-    const fd = fs.openSync(path.join(this.dir, "jdk", at.image), "r");
     try {
-      while (n < len) {
-        const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
-        if (got === 0) break;
-        n += got;
+      const fd = fs.openSync(path.join(this.dir, "jdk", at.image), "r");
+      try {
+        while (n < len) {
+          const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
+          if (got === 0) break;
+          n += got;
+        }
+      } finally {
+        fs.closeSync(fd);
       }
-    } finally {
-      fs.closeSync(fd);
+    } catch {
+      return null;
     }
-    // a short image is damaged; the file reads as missing rather than cut off
+    // a short or unreadable image is damaged; the file reads as missing rather than cut off
     return n === len ? out : null;
   }
 

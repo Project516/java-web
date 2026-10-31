@@ -48,12 +48,17 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(text(b.read("/lib/boot")), "BOOT");
     assert.equal(text(b.read("/lib/rest")), "abcdef");
     assert.equal(text(b.readRange("/lib/rest", 2, 3)), "cde");
+    // a range is cut at the file's end, not read into the next file
+    assert.equal(text(b.readRange("/lib/boot", 2, 10)), "OT");
+    assert.equal(text(b.readRange("/lib/rest", 4, 10)), "ef");
     assert.equal(text(b.read("/modules/jdk.other/x")), "XYZ");
     assert.equal(b.read("/lib"), null);
     // past the end of a damaged image
     assert.equal(b.read("/lib/cut"), null);
     assert.equal(b.stat("/modules/jdk.localedata"), null);
     assert.equal(text(new ImageBackend(dir, true).read("/modules/jdk.localedata/L")), "XYZ");
+    rmSync(join(dir, "jdk", "java.base.jar"));
+    assert.throws(() => new ImageBackend(dir), /no packaged JDK image/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

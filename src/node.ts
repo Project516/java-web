@@ -294,12 +294,10 @@ function main(argv: string[]) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);
   }
-  try {
-    runNode(o).then((code) => process.exit(code));
-  } catch (e) {
+  Promise.resolve().then(() => runNode(o)).then((code) => process.exit(code), (e) => {
     console.error(`java-web: ${(e as Error).message}`);
     process.exit(1);
-  }
+  });
 }
 
 // run as a script, also through the symlink npm puts in node_modules/.bin
