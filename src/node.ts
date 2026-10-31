@@ -10,6 +10,7 @@ import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
 import { JVM, LM_CLASS, LM_JAR } from "./jvm.ts";
 import { hostNatives } from "./hostnatives.ts";
+import { ImageBackend } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import type { NetBackend } from "./sockets.ts";
 
@@ -116,7 +117,8 @@ export class NodeBackend implements Backend {
   }
 }
 
-export const defaultJdk = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "build", "jdk");
+const here = path.dirname(fileURLToPath(import.meta.url));
+export const defaultJdk = path.join(here, "..", "build", "jdk");
 
 export interface NodeRunOptions {
   classpath: string[];
@@ -124,6 +126,7 @@ export interface NodeRunOptions {
   jar?: string;
   args?: string[];
   props?: Record<string, string>;
+  // an exploded JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
   jdk?: string;
   debug?: boolean;
   stdout?: (b: Uint8Array) => void;
@@ -158,13 +161,19 @@ function fixedInput(data: Uint8Array) {
   };
 }
 
-const bridges = new WeakMap<JVM, Bridge>();
+const bridges = new WeakMap<object, Bridge>();
 
 // The host file system is the VFS root, with the JDK image mounted at /jdk.
 function nodeVm(o: NodeRunOptions): JVM {
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));
-  vfs.mount("/jdk", new NodeBackend(o.jdk ?? defaultJdk));
+  // built as dist/node.js, it reads the packaged image next to it
+  const packaged = !o.jdk && fs.existsSync(path.join(here, "boot.pack"));
+  const jdk = o.jdk ?? defaultJdk;
+  if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
+    throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
+  }
+  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(jdk));
   if (!o.localeData) vfs.hide("/jdk/modules/jdk.localedata");
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
@@ -230,7 +239,7 @@ export async function startLibrary(o: NodeRunOptions): Promise<JVM> {
   return vm;
 }
 
-export function libraryOf(vm: JVM): any {
+export function libraryOf(vm: object): any {
   return bridges.get(vm)!.root(0);
 }
 
@@ -285,7 +294,11 @@ function main(argv: string[]) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);
   }
-  runNode(o).then((code) => process.exit(code));
+  Promise.resolve().then(() => runNode(o)).then((code) => process.exit(code), (e) => {
+    console.error(`java-web: ${(e as Error).message}`);
+    process.exit(1);
+  });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2));
+// run as a script, also through the symlink npm puts in node_modules/.bin
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) main(process.argv.slice(2));

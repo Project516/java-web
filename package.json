@@ -19,11 +19,20 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    ".": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
     "./dist/*": "./dist/*"
+  },
+  "bin": {
+    "java-web": "dist/node.js"
   },
   "files": [
     "dist/java-web.js",
     "dist/java-web-worker.js",
+    "dist/node.js",
+    "dist/node.d.ts",
     "dist/boot.pack",
     "dist/jdk/*.jar",
     "dist/jdk/javac.pack",
