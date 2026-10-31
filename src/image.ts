@@ -8,9 +8,6 @@ import { addIndex, listIndex, parsePack } from "./browser/http.ts";
 import type { Pack } from "./browser/http.ts";
 import type { Backend, Stat } from "./fs.ts";
 
-// open module images by host path, shared by every VM in the process
-const images = new Map<string, number>();
-
 export class ImageBackend implements Backend {
   readonly writable = false;
   private readonly dir: string;
@@ -39,15 +36,17 @@ export class ImageBackend implements Backend {
     if (packed) return packed.subarray(off, off + len);
     const at = this.pack.offsets.get(p);
     if (!at) return null;
-    const file = path.join(this.dir, "jdk", at.image);
-    let fd = images.get(file);
-    if (fd === undefined) images.set(file, (fd = fs.openSync(file, "r")));
     const out = new Uint8Array(len);
     let n = 0;
-    while (n < len) {
-      const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
-      if (got === 0) break;
-      n += got;
+    const fd = fs.openSync(path.join(this.dir, "jdk", at.image), "r");
+    try {
+      while (n < len) {
+        const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
+        if (got === 0) break;
+        n += got;
+      }
+    } finally {
+      fs.closeSync(fd);
     }
     // a short image is damaged; the file reads as missing rather than cut off
     return n === len ? out : null;
