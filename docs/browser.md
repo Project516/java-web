@@ -1,7 +1,7 @@
 # Using java-web in a page
 
 The npm package holds the built files: `java-web.js`, `java-web-worker.js`,
-`boot.pack` and `jdk/`. Serve `node_modules/java-web/dist/` as static files
+`boot.pack` and `jdk/` for pages, and `node.js` for Node ([node.md](node.md)). Serve `node_modules/java-web/dist/` as static files
 and load `java-web.js` with a classic `<script>` tag. It finds the other files
 next to itself, or where `cheerpjInit({ runtime: "/path/to/dist/" })` says.
 

@@ -10,6 +10,7 @@ import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
 import { JVM, LM_CLASS, LM_JAR } from "./jvm.ts";
 import { hostNatives } from "./hostnatives.ts";
+import { ImageBackend } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import type { NetBackend } from "./sockets.ts";
 
@@ -116,7 +117,8 @@ export class NodeBackend implements Backend {
   }
 }
 
-export const defaultJdk = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "build", "jdk");
+const here = path.dirname(fileURLToPath(import.meta.url));
+export const defaultJdk = path.join(here, "..", "build", "jdk");
 
 export interface NodeRunOptions {
   classpath: string[];
@@ -124,6 +126,7 @@ export interface NodeRunOptions {
   jar?: string;
   args?: string[];
   props?: Record<string, string>;
+  // an exploded JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
   jdk?: string;
   debug?: boolean;
   stdout?: (b: Uint8Array) => void;
@@ -164,7 +167,9 @@ const bridges = new WeakMap<JVM, Bridge>();
 function nodeVm(o: NodeRunOptions): JVM {
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));
-  vfs.mount("/jdk", new NodeBackend(o.jdk ?? defaultJdk));
+  // built as dist/node.js, it reads the packaged image next to it
+  const packaged = !o.jdk && fs.existsSync(path.join(here, "boot.pack"));
+  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(o.jdk ?? defaultJdk));
   if (!o.localeData) vfs.hide("/jdk/modules/jdk.localedata");
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
@@ -288,4 +293,5 @@ function main(argv: string[]) {
   runNode(o).then((code) => process.exit(code));
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2));
+// run as a script, also through the symlink npm puts in node_modules/.bin
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) main(process.argv.slice(2));

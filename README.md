@@ -24,6 +24,19 @@ Serve `node_modules/java-web/dist/` as static files, then:
 `cheerpjRunMain`, `cheerpjRunLibrary` (call Java from JS), JS natives and
 `/files/` storage work too. See [docs/browser.md](docs/browser.md).
 
+## Use it under Node
+
+```sh
+npx java-web -cp classes Main          # or: npx java-web -jar app.jar
+```
+
+```js
+import { runNode } from "java-web";
+const code = await runNode({ classpath: ["classes"], mainClass: "Main" });
+```
+
+See [docs/node.md](docs/node.md).
+
 ## What runs
 
 - Console apps, libraries and javac: every Java SE module, plus `jdk.compiler`,

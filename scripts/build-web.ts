@@ -1,4 +1,4 @@
-// Builds dist/: the browser runtime (java-web.js + worker), the JDK image,
+// Builds dist/: the browser runtime (java-web.js + worker), the Node entry, the JDK image,
 // a boot pack with the JDK files a typical start needs, a javac pack the
 // worker fetches the first time javac runs, and the demo page.
 // Run `pnpm jdk` first.
@@ -32,6 +32,17 @@ for (const [entry, out] of [["api.ts", "java-web.js"], ["worker.ts", "java-web-w
     sourcemap: true,
   });
 }
+
+// the Node entry (runNode and the java-web command), over the packaged image next to it
+await build({
+  entryPoints: [join(root, "src", "node.ts")],
+  outfile: join(dist, "node.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node23",
+  banner: { js: "#!/usr/bin/env node" },
+});
 
 mkdirSync(join(dist, "jdk"), { recursive: true });
 

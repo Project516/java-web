@@ -214,14 +214,17 @@ export class HttpBackend implements Backend {
   }
 
   list(path: string): string[] | null {
-    const idx = this.pack.index;
-    if (!idx) return null;
-    if (idx.get(path) !== -1) return null;
-    const prefix = path === "/" ? "/" : path + "/";
-    const out: string[] = [];
-    for (const p of idx.keys()) {
-      if (p.startsWith(prefix) && p.length > prefix.length && !p.slice(prefix.length).includes("/")) out.push(p.slice(prefix.length));
-    }
-    return out;
+    return this.pack.index ? listIndex(this.pack.index, path) : null;
   }
+}
+
+// The names in a directory of a pack index, or null if path is not one.
+export function listIndex(idx: Map<string, number>, path: string): string[] | null {
+  if (idx.get(path) !== -1) return null;
+  const prefix = path === "/" ? "/" : path + "/";
+  const out: string[] = [];
+  for (const p of idx.keys()) {
+    if (p.startsWith(prefix) && p.length > prefix.length && !p.slice(prefix.length).includes("/")) out.push(p.slice(prefix.length));
+  }
+  return out;
 }
