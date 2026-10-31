@@ -1,0 +1,159 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>java-web self test</title>
+<pre id="console"></pre>
+<pre id="result">running</pre>
+<script src="../java-web.js"></script>
+<script>
+(async () => {
+  const results = {};
+  const t0 = performance.now();
+  // expected is compared as JSON; a step without one only has to finish
+  const step = async (name, f, expected) => {
+    const s = performance.now();
+    try {
+      const value = await f();
+      results[name] = { value };
+      if (expected !== undefined && JSON.stringify(value) !== JSON.stringify(expected)) results[name].error = "expected " + JSON.stringify(expected);
+    } catch (e) { results[name] = { error: String(e.message ?? e) }; }
+    results[name].ms = Math.round(performance.now() - s);
+  };
+  // library mode can start before cheerpjInit and waits for it
+  const early = cheerpjRunLibrary("/app/selftest/");
+  const progress = [];
+  const logged = [];
+  const log = console.log;
+  console.log = (...a) => { logged.push(a.join(" ")); log(...a); };
+  const downloads = [];
+  document.addEventListener("click", (e) => {
+    if (e.target.download) { e.preventDefault(); downloads.push(e.target.download); }
+  }, true);
+  await step("init", () => cheerpjInit({
+    version: 17,
+    status: "none",
+    hostName: "box.local",
+    javaProperties: ["java.library.path=/app/selftest/"],
+    preloadProgress: (done, total) => progress.push([done, total]),
+    natives: {
+      async Java_SelfTest_ping(lib, s) { return s.toUpperCase(); },
+      async Java_SelfTest_viaLib(lib, s) {
+        const SelfTest = await lib.SelfTest;
+        return (await SelfTest.greet(s)) + "!";
+      },
+      async Java_SelfTest_00024Item_shout(lib, self, s) {
+        await self.inc();
+        return s + "!" + (await self.n);
+      },
+    },
+  }));
+  let lib, cls;
+  await step("library", async () => { lib = await early; cls = await lib.SelfTest; return "ok"; }, "ok");
+  await step("greet", () => cls.greet("browser"), "hello browser");
+  await step("native", () => cls.viaPage("hi"), "page said HI");
+  await step("native with lib callback", () => cls.callsBack("x"), "java got hello x!");
+  await step("hostName", () => cls.hostName(), "box.local");
+  await step("loopback", () => cls.loopback(), "ECHO 200 served");
+  // localhost and 127.* are the VM's own loopback, so this needs the page on another name, over http:
+  if (location.protocol === "http:" && !/^(localhost|127\.)/.test(location.hostname)) await step("fetch", () => cls.fetch(location.origin + "/selftest/index.html"), "200 <!doctype html>");
+  await step("missing", async () => {
+    try { await lib.NoSuchClass; return "found"; } catch (e) { return /ClassNotFoundException/.test(e.message); }
+  }, true);
+  await step("new and instance methods", async () => {
+    const Item = await lib["SelfTest$Item"];
+    const item = await new Item("box");
+    await item.inc();
+    return [item instanceof Item, await item.inc(), await item.label];
+  }, [true, 2, "box"]);
+  await step("fields", async () => {
+    const item = await cls.item("f");
+    item.n = 41;
+    return await item.inc();
+  }, 42);
+  await step("native with this", async () => {
+    const item = await cls.item("n");
+    return [await item.shout("hey"), await item.n];
+  }, ["hey!1", 1]);
+  await step("static field and chained member", async () => {
+    const System = await lib.java.lang.System;
+    await System.out.println("hello from a static field");
+    return typeof (await System.out);
+  }, "object");
+  await step("arrays", async () => {
+    const buf = new Int8Array(3);
+    await cls.fill(buf);
+    const ArrayList = await lib.java.util.ArrayList;
+    const list = await new ArrayList();
+    await list.add("a");
+    await list.add(2);
+    return [Array.from(buf), await list.toArray(), await cls.join("-", "p", "q")];
+  }, [[1, 2, 3], ["a", 2], "p-q"]);
+  await step("exceptions", async () => {
+    const IOException = await lib.java.io.IOException;
+    try { await cls.fail(); } catch (e) { return [e instanceof IOException, await e.getMessage()]; }
+  }, [true, "disk full"]);
+  await step("preloadProgress", async () => {
+    const last = progress[progress.length - 1];
+    return progress.length > 0 && last[0] === last[1];
+  }, true);
+  await step("System.loadLibrary imports native.js", async () => (await lib["SelfTest$Loaded"]).twice(21), 42);
+  await step("console output is buffered to the newline", async () => {
+    await cls.printParts();
+    await new Promise((r) => setTimeout(r, 50));
+    return logged.filter((l) => /^(a|b|ab)$/.test(l));
+  }, ["ab"]);
+  await step("string files", async () => {
+    cheerpjAddStringFile("/str/x.txt", "hi");
+    const Files = await lib.java.nio.file.Files;
+    const Paths = await lib.java.nio.file.Paths;
+    const path = await Paths.get("/str/x.txt");
+    const text = await Files.readString(path);
+    cheerpOSRemoveStringFile("/str/x.txt");
+    return [text, await Files.exists(path)];
+  }, ["hi", false]);
+  await step("/files/downloads starts a download and /files/uploads exists", async () => {
+    await cls.download();
+    for (let i = 0; i < 40 && downloads.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    const Files = await lib.java.nio.file.Files;
+    const Paths = await lib.java.nio.file.Paths;
+    return [downloads, await Files.isDirectory(await Paths.get("/files/uploads"))];
+  }, [["report.txt"], true]);
+  await step("java-web.js in a Web Worker", () => new Promise((resolve, reject) => {
+    const w = new Worker("worker.js");
+    w.onmessage = (e) => resolve(e.data);
+    w.onerror = (e) => reject(new Error(e.message));
+  }), 9);
+  // the CheerpJ library mode guide's standard library example
+  await step("docs standard library example", async () => {
+    const ArrayList = await lib.java.util.ArrayList;
+    const Point = await lib.java.awt.Point;
+    const System = await lib.java.lang.System;
+    const points = await new ArrayList();
+    for (let i = 0; i < 4; i++) {
+      const p = await new Point(i, 0);
+      await points.add(p);
+    }
+    const a = await points.toArray();
+    for (let i = 0; i < a.length; i++) a[i].y = a[i].x;
+    for (let i = 0; i < a.length; i++) a[i] = await a[i].toString();
+    for (let i = 0; i < a.length; i++) await System.out.println(a[i]);
+    return a;
+  }, ["java.awt.Point[x=0,y=0]", "java.awt.Point[x=1,y=1]", "java.awt.Point[x=2,y=2]", "java.awt.Point[x=3,y=3]"]);
+  // the file system guide's Files.copy example
+  await step("docs Files.copy example", async () => {
+    const Files = await lib.java.nio.file.Files;
+    const StandardCopyOption = await lib.java.nio.file.StandardCopyOption;
+    const Paths = await lib.java.nio.file.Paths;
+    const source = await Paths.get("/app/selftest/SelfTest.class");
+    const target = await Paths.get("/files/SelfTest.class");
+    await Files.copy(source, target, [StandardCopyOption.REPLACE_EXISTING]);
+    return (await (await cjFileBlob("/files/SelfTest.class")).arrayBuffer()).byteLength > 1000;
+  }, true);
+  const src = "public class Hi { public static void main(String[] a) { System.out.println(\"hi \" + a.length); } }";
+  await step("compile", () => cls.compile("/files/selftest", "Hi", src));
+  await step("compileAgain", () => cls.compile("/files/selftest", "Hi", src));
+  await step("broken", () => cls.compile("/files/selftest", "Bad", "class Bad { int x = \"s\"; }"));
+  await step("readBack", async () => (await (await cjFileBlob("/files/selftest/Hi.class")).arrayBuffer()).byteLength);
+  results.totalMs = Math.round(performance.now() - t0);
+  document.getElementById("result").textContent = JSON.stringify(results, null, 1);
+})();
+</script>

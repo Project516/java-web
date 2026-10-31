@@ -1,0 +1,48 @@
+{
+  "name": "java-web",
+  "version": "0.1.0",
+  "description": "Run Java 25 bytecode in the browser on a JavaScript JVM and the real OpenJDK class library",
+  "keywords": [
+    "java",
+    "jvm",
+    "openjdk",
+    "browser",
+    "cheerpj",
+    "javac"
+  ],
+  "homepage": "https://github.com/Project516/java-web#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Project516/java-web.git"
+  },
+  "bugs": "https://github.com/Project516/java-web/issues",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    "./dist/*": "./dist/*"
+  },
+  "files": [
+    "dist/java-web.js",
+    "dist/java-web-worker.js",
+    "dist/boot.pack",
+    "dist/jdk/*.jar",
+    "dist/jdk/javac.pack",
+    "dist/jdk/jdk.localedata.txt",
+    "dist/jdk/legal/"
+  ],
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "jdk": "bash scripts/build-jdk.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "node --expose-gc --test \"test/**/*.test.ts\"",
+    "build": "node scripts/build-web.ts",
+    "serve": "node scripts/serve.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

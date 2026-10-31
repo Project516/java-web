@@ -1,0 +1,40 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    # prereleases are not published, so npm's latest tag only gets stable versions
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches package.json
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p 'require("./package.json").version')"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm jdk
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: OpenJDK regression tests
+        run: |
+          release=$(sed -n 's/^release=//p' scripts/build-jdk.sh)
+          git clone -q --filter=blob:none --sparse --depth 1 --branch "jdk-${release%+*}-ga" https://github.com/openjdk/jdk25u.git build/ref/jdk25u
+          dirs=$(grep -v '^#' test/jtreg/passing.txt | cut -d/ -f1-2 | sort -u | sed 's|^|test/jdk/|')
+          git -C build/ref/jdk25u sparse-checkout set test/lib test/jdk/lib test/jdk/tools/lib $dirs
+          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4
+      - run: pnpm build
+      - run: npm publish

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3,
+  "dependencyDashboard": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The Temurin JDK 25 release scripts/build-jdk.sh downloads",
+      "managerFilePatterns": ["/^scripts/build-jdk\\.sh$/"],
+      "matchStrings": ["\\nrelease=(?<currentValue>\\S+)\\n"],
+      "depNameTemplate": "temurin-jdk-25",
+      "packageNameTemplate": "java-jdk?os=linux&architecture=x64",
+      "datasourceTemplate": "java-version",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+\\+\\d+)"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The build tools (TypeScript, esbuild, Node types) move together in one weekly PR",
+      "groupName": "build tools",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "java-web runs Java 25 bytecode, so the JDK stays on 25",
+      "matchDepNames": ["temurin-jdk-25"],
+      "allowedVersions": "<26"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noImplicitAny": false,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "lib": ["es2022", "dom", "webworker"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "scripts"]
+}

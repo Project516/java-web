@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>java-web</title>
+<script src="java-web.js"></script>
+</head>
+<body>
+<h1>java-web</h1>
+<p>Java 25 running in your browser on the OpenJDK class library.</p>
+<p>
+  <button data-main="Hello">Hello</button>
+  <button data-main="Primes">Primes</button>
+  <button data-main="Shapes">Shapes</button>
+  <span id="status">loading the runtime...</span>
+</p>
+<pre id="console"></pre>
+<script>
+const status = document.getElementById("status");
+const buttons = document.querySelectorAll("button");
+buttons.forEach((b) => (b.disabled = true));
+cheerpjInit().then(() => {
+  status.textContent = "ready";
+  buttons.forEach((b) => (b.disabled = false));
+});
+buttons.forEach((b) => b.addEventListener("click", async () => {
+  buttons.forEach((x) => (x.disabled = true));
+  const start = performance.now();
+  status.textContent = "running " + b.dataset.main + "...";
+  const code = await cheerpjRunMain(b.dataset.main, "/app/samples");
+  status.textContent = `${b.dataset.main} exited with ${code} after ${Math.round(performance.now() - start)} ms`;
+  buttons.forEach((x) => (x.disabled = false));
+}));
+</script>
+</body>
+</html>
