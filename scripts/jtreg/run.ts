@@ -446,6 +446,8 @@ console.log(`${selected.length} tests, ${queue.length} to run, ${jobs} at a time
 
 const counts: Record<string, number> = {};
 const regressions: string[] = [];
+// java-web's time per test, to spot tests that run close to the timeout
+const times: [string, number][] = [];
 let finished = 0;
 async function coolDown() {
   const zone = "/sys/class/thermal/thermal_zone0/temp";
@@ -464,7 +466,10 @@ async function worker() {
     const r: Record<string, any> = { id: tc.id, ...(await runCase(tc)) };
     counts[r.status as string] = (counts[r.status as string] ?? 0) + 1;
     finished++;
-    if (onlyPassing) { if (r.status !== "pass") regressions.push(`${tc.id}: ${r.status} ${r.why ?? ""}`); }
+    if (onlyPassing) {
+      if (r.status !== "pass") regressions.push(`${tc.id}: ${r.status} ${r.why ?? ""}`);
+      if (typeof r.ms === "number") times.push([tc.id, r.ms]);
+    }
     else appendFileSync(resultsFile, JSON.stringify(r) + "\n");
     if (r.status !== "skip") console.log(`[${finished}] ${r.status.toString().padEnd(7)} ${tc.id}${r.why ? "  " + r.why : ""}`);
   }
@@ -474,6 +479,9 @@ await Promise.all(Array.from({ length: jobs }, worker));
 console.log(counts);
 
 if (onlyPassing) {
+  times.sort((a, b) => b[1] - a[1]);
+  writeFileSync(join(out, "times.tsv"), times.map(([id, ms]) => `${ms}\t${id}`).join("\n") + "\n");
+  console.log("slowest:\n" + times.slice(0, 15).map(([id, ms]) => `${Math.round(ms / 1000)}s ${id}`).join("\n"));
   if (regressions.length) {
     console.log("regressions:\n" + regressions.join("\n"));
     process.exit(1);
