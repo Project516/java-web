@@ -129,6 +129,7 @@ test("permission denied", { skip: process.getuid?.() === 0 }, async () => {
   try {
     writeFileSync(open, "x");
     const ref = spawnSync(hotspot("java"), ["-cp", classes, "Permissions", file, locked, open], { encoding: "utf8" });
+    writeFileSync(open, "x");
     chmodSync(open, 0o644);
     const stdout: Uint8Array[] = [];
     const code = await runNode({ classpath: [classes], mainClass: "Permissions", args: [file, locked, open], stdout: (b) => stdout.push(b) });

@@ -29,6 +29,8 @@ export interface Backend {
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
   chmod?(path: string, f: (mode: number) => number): boolean;
+  // whether the host allows reading (4) and executing (1), as access(2)
+  access?(path: string, mode: number): boolean;
 }
 
 export function normalize(path: string): string {
@@ -170,9 +172,19 @@ export class VFS {
 
   // undefined when the backend has no permission bits
   chmod(path: string, f: (mode: number) => number): boolean | undefined {
+    if (DEVICES.has(normalize(path))) return false;
     const r = this.resolve(path);
     if (!r || !r[0].chmod) return undefined;
     return r[0].writable && r[0].chmod(r[1], f);
+  }
+
+  // access(2) on an existing path: mode is 4 read, 2 write, 1 execute
+  access(path: string, mode: number): boolean {
+    if (DEVICES.has(normalize(path))) return true;
+    const r = this.resolve(path);
+    if (!r) return false;
+    if (mode & 2 && (!r[0].writable || r[0].denied?.(r[1]))) return false;
+    return !(mode & 5) || (r[0].access?.(r[1], mode & 5) ?? true);
   }
 }
 

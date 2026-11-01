@@ -34,5 +34,14 @@ public class Permissions {
     File w = new File(args[2]);
     System.out.println(w.setReadOnly() + " " + w.canWrite());
     System.out.println(w.setWritable(true) + " " + w.canWrite());
+    System.out.println(w.canExecute() + " " + w.setExecutable(true) + " " + w.canExecute());
+    try (var out = new FileOutputStream(w)) {
+      out.write('a');
+      w.setReadOnly();
+      out.write('b');
+    }
+    w.setWritable(true);
+    System.out.println(Files.readString(w.toPath()));
+    System.out.println(w.setReadable(false) + " " + w.canRead() + " " + Files.isReadable(w.toPath()));
   }
 }

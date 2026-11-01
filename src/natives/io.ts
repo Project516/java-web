@@ -192,7 +192,13 @@ export function fileOf(t: JThread, fd: number): OpenFile {
 
 export function flush(t: JThread, f: OpenFile) {
   if (f.dirty && f.writable && f.path) {
-    t.vm.fs.write(f.path, f.data.slice(0, f.size));
+    const data = f.data.slice(0, f.size);
+    // an open file keeps its write access when the file's mode changes, as an fd does
+    let mode = 0;
+    if (!t.vm.fs.write(f.path, data) && t.vm.fs.chmod(f.path, (m) => (mode = m) | 0o200)) {
+      t.vm.fs.write(f.path, data);
+      t.vm.fs.chmod(f.path, () => mode);
+    }
     f.dirty = false;
   }
 }
@@ -380,8 +386,7 @@ export const natives: Natives = {
   [`${UFS}.getBooleanAttributes0(Ljava/io/File;)I`]: (t, [, f]) => attrs(t, f),
   [`${UFS}.checkAccess0(Ljava/io/File;I)Z`]: (t, [, f, access]) => {
     const abs = resolvePath(t, pathOf(t, f));
-    if (!t.vm.fs.stat(abs)) return 0;
-    return (access & 2) === 0 || (t.vm.fs.writable(abs) && !t.vm.fs.denied(abs));
+    return !!t.vm.fs.stat(abs) && t.vm.fs.access(abs, access);
   },
   [`${UFS}.getLastModifiedTime0(Ljava/io/File;)J`]: (t, [, f]) => BigInt(Math.floor(t.vm.fs.stat(resolvePath(t, pathOf(t, f)))?.mtime ?? 0)),
   [`${UFS}.getLength0(Ljava/io/File;)J`]: (t, [, f]) => {

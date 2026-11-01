@@ -89,6 +89,14 @@ export class NodeBackend implements Backend {
       return false;
     }
   }
+  access(p: string, mode: number) {
+    try {
+      fs.accessSync(this.host(p), mode);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   setMtime(p: string, ms: number) {
     try {
       fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);

@@ -113,7 +113,7 @@ export const natives: Natives = {
   [`${N}access0(JI)I`]: (t, [p, amode]) => {
     const abs = path(t, p);
     if (!t.vm.fs.stat(abs)) return ENOENT;
-    return amode & 2 && (!t.vm.fs.writable(abs) || t.vm.fs.denied(abs)) ? EACCES : 0;
+    return t.vm.fs.access(abs, amode) ? 0 : EACCES;
   },
   [`${N}open0(JII)I`]: (t, [p, flags]) => {
     const abs = path(t, p);
