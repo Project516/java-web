@@ -1,0 +1,65 @@
+name: jtreg
+
+# The OpenJDK regression tests in test/jtreg/passing.txt, split over parallel
+# jobs. A pull request runs the tests its changes need; `full` runs them all.
+on:
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      filters: ${{ steps.select.outputs.filters }}
+      shards: ${{ steps.select.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: select
+        run: node scripts/jtreg/select.ts ${{ inputs.full && '--full' || github.event.pull_request.base.sha || '--full' }} >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    if: needs.plan.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/java-web
+          key: jdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-jdk.sh') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm jdk
+      - name: OpenJDK regression tests
+        env:
+          FILTERS: ${{ needs.plan.outputs.filters }}
+        run: |
+          release=$(sed -n 's/^release=//p' scripts/build-jdk.sh)
+          git clone -q --filter=blob:none --sparse --depth 1 --branch "jdk-${release%+*}-ga" https://github.com/openjdk/jdk25u.git build/ref/jdk25u
+          dirs=$(grep -v '^#' test/jtreg/passing.txt | cut -d/ -f1-2 | sort -u | sed 's|^|test/jdk/|')
+          git -C build/ref/jdk25u sparse-checkout set test/lib test/jdk/lib test/jdk/tools/lib $dirs
+          set -f
+          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600 \
+            --shard ${{ matrix.shard }}/${{ strategy.job-total }} $FILTERS

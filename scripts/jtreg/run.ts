@@ -1,12 +1,14 @@
 // Runs OpenJDK regression tests (the `@run main`, `testng` and `junit` kinds) on java-web.
 //
 //   node scripts/jtreg/run.ts <jdk-source-checkout> [dir or file filters...]
-//        [--jobs 1] [--timeout 120] [--rerun] [--only-passing] [--vm path/to/node.ts] [--cool 75]
+//        [--jobs 1] [--timeout 120] [--rerun] [--only-passing] [--shard 1/4] [--vm path/to/node.ts] [--cool 75]
 //
 // Each test is compiled the way jtreg does it, run on HotSpot first (only
 // tests that pass there count), then on java-web in a child process.
 // Results go to build/jtreg/results.jsonl; --only-passing reruns the tests
-// listed in test/jtreg/passing.txt and fails if any of them regress.
+// listed in test/jtreg/passing.txt (those under the filters, if any) on
+// java-web alone, and fails if any of them regress. --shard k/n runs every
+// nth of the selected tests, for parallel CI jobs.
 
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -36,6 +38,7 @@ const rerun = has("--rerun");
 // pause new tests while the CPU is at or above this many degrees C (for small boards)
 const cool = Number(flag("--cool", "0"));
 const onlyPassing = has("--only-passing");
+const [shardK, shardN] = flag("--shard", "1/1").split("/").map(Number);
 // node entry to test; point it at a copy of src/ to keep editing during a long run
 const vm = resolve(flag("--vm", join(root, "src", "node.ts")));
 const src = resolve(argv.shift() ?? "");
@@ -363,7 +366,8 @@ async function runCase(tc: TestCase): Promise<Record<string, unknown>> {
   // the whole sequence on one VM, then the other: later runs may depend on files earlier ones left
   let refMs = 0;
   let work = scratch("hotspot");
-  for (const a of tc.runs) {
+  // tests in passing.txt already pass on HotSpot
+  for (const a of onlyPassing ? [] : tc.runs) {
     if (a.kind === "compile") {
       const err = await javacInto(tc, path, a.opts, a.args.map((f) => resolve(tc.dir, f)));
       if (err) return { status: "skip", why: `javac: ${err}` };
@@ -413,7 +417,8 @@ function listed(): string[] {
 mkdirSync(out, { recursive: true });
 let selected: TestCase[];
 if (onlyPassing) {
-  const ids = new Set(listed());
+  const under = (id: string) => !argv.length || argv.some((f) => id === f || id.startsWith(f + "/") || id.startsWith(f + "#"));
+  const ids = new Set(listed().filter(under));
   const files = [...new Set([...ids].map((id) => join(testRoot, id.split("#")[0])))];
   selected = files.flatMap(parseFile).filter((tc) => ids.has(tc.id));
 } else {
@@ -427,6 +432,7 @@ if (onlyPassing) {
     return ids.has(tc.id) || whole.has(file) || !narrowed.has(file);
   });
 }
+selected = selected.filter((_, i) => i % shardN === shardK - 1);
 const done = new Set<string>();
 if (!rerun && !onlyPassing && existsSync(resultsFile)) {
   for (const l of readFileSync(resultsFile, "utf8").split("\n")) if (l) done.add(JSON.parse(l).id);
