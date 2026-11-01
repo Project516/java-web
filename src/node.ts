@@ -15,6 +15,7 @@ import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { PendingThrow } from "./thread.ts";
+import { setMaxHeap } from "./runtime.ts";
 import type { NetBackend } from "./sockets.ts";
 
 // A host directory exposed read-only (or writable) inside the VFS.
@@ -314,6 +315,12 @@ export function moduleFlag(o: NodeRunOptions, arg: string, next: string | undefi
   return true;
 }
 
+// a -Xmx size: bytes, or k, m or g
+function heapSize(s: string): number {
+  const unit = { k: 2 ** 10, m: 2 ** 20, g: 2 ** 30 }[s.slice(-1).toLowerCase()];
+  return unit ? Number(s.slice(0, -1)) * unit : Number(s);
+}
+
 function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
@@ -329,6 +336,7 @@ function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
+    else if (/^-Xmx\d+[kmg]?$/i.test(a)) setMaxHeap(heapSize(a.slice(4)));
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);

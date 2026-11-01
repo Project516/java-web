@@ -64,6 +64,15 @@ test("System.gc collects under the command", { skip: !files.includes("Refs.java"
   assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
 });
 
+test("-Xmx caps an allocation under the command", () => {
+  const classes = join(root, "build", "test-heap");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "heap", "Heap.java")]);
+  const args = ["-Xmx16m", "-cp", classes, "Heap"];
+  const ref = spawnSync(hotspot("java"), args, { encoding: "utf8" });
+  const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...args], { encoding: "utf8" });
+  assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+});
+
 test("stdout closed by its reader", async () => {
   const classes = join(root, "build", "test-pipe");
   execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "pipe", "Pipe.java")]);

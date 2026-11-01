@@ -19,6 +19,7 @@ npx @project516/java-web [options] -jar app.jar [args]
 | `--enable-preview` | preview features |
 | `--add-exports`, `--add-opens`, `--add-reads`, `--add-modules`, `--module-path`, `-p` | module options, as with `java` |
 | `--locale-data` | locales other than English (see [support.md](support.md#locales)) |
+| `-Xmx` | the largest array, and what `Runtime.maxMemory()` reports (default and at most 1g); the total heap is not counted |
 | `--max-rss MB` | exit when resident memory passes this (default 2048) |
 | `--jdk DIR` | an exploded JDK image instead of the packaged one |
 | `--debug` | log VM events |
