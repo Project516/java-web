@@ -57,8 +57,9 @@ for (const file of files) {
 }
 
 // the java-web command, which node starts without --expose-gc
-test("System.gc collects under the command", () => {
+test("System.gc collects under the command", { skip: !files.includes("Refs.java") }, () => {
   const ref = spawnSync(hotspot("java"), ["-cp", out, "Refs"], { encoding: "utf8" });
+  assert.equal(ref.status, 0);
   const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), "-cp", out, "Refs"], { encoding: "utf8" });
   assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
 });

@@ -186,8 +186,12 @@ const bridges = new WeakMap<object, Bridge>();
 function exposeGc() {
   const g = globalThis as { gc?: unknown };
   if (typeof g.gc === "function") return;
+  // V8 aborts on a flag change once flags are frozen
+  if (/(^|\s)--freeze-flags-after-init\b/.test([...process.execArgv, process.env.NODE_OPTIONS ?? ""].join(" "))) return;
   setFlagsFromString("--expose-gc");
-  g.gc = runInNewContext("gc");
+  // absent when --expose-gc-as gave it another name
+  const gc = runInNewContext("typeof gc === 'function' ? gc : undefined");
+  if (gc) g.gc = gc;
 }
 
 function nodeVm(o: NodeRunOptions): JVM {
