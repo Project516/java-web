@@ -27,7 +27,13 @@ jobs:
         with:
           node-version: 24
       - id: select
-        run: node scripts/jtreg/select.ts ${{ inputs.full && '--full' || github.event.pull_request.base.sha || '--full' }} >> "$GITHUB_OUTPUT"
+        env:
+          FULL: ${{ inputs.full }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        # a pull request runs what its diff needs; anything else runs everything
+        run: |
+          if [ "$FULL" = true ] || [ -z "$BASE" ]; then arg=--full; else arg=$BASE; fi
+          node scripts/jtreg/select.ts "$arg" >> "$GITHUB_OUTPUT"
 
   run:
     needs: plan
