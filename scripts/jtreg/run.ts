@@ -39,6 +39,10 @@ const rerun = has("--rerun");
 const cool = Number(flag("--cool", "0"));
 const onlyPassing = has("--only-passing");
 const [shardK, shardN] = flag("--shard", "1/1").split("/").map(Number);
+if (!Number.isInteger(shardK) || !Number.isInteger(shardN) || shardK < 1 || shardK > shardN) {
+  console.error("--shard takes k/n with 1 <= k <= n");
+  process.exit(2);
+}
 // node entry to test; point it at a copy of src/ to keep editing during a long run
 const vm = resolve(flag("--vm", join(root, "src", "node.ts")));
 const src = resolve(argv.shift() ?? "");

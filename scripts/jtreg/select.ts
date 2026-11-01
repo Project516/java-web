@@ -33,7 +33,7 @@ function select(base: string | undefined): string[] | "all" {
   if (!base) return "all";
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
   const filters = new Set<string>();
-  for (const file of git("diff", "--name-only", `${base}...HEAD`).split("\n").filter(Boolean)) {
+  for (const file of git("diff", "--name-only", "--no-renames", `${base}...HEAD`).split("\n").filter(Boolean)) {
     if (file === passingFile) {
       // the tests it adds
       for (const l of git("diff", "-U0", `${base}...HEAD`, "--", file).split("\n")) {
