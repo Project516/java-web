@@ -64,6 +64,10 @@ Node, which is how the tests run.
   needs inputs first (see docs/development.md)
 - `JW_JIT_STATS=1` prints what the JIT compiled, fell back on and entered
   through the run loop; `JW_JIT_DUMP=<method>` prints a method's generated JS
+- Pull requests run the OpenJDK tests in `test/jtreg/passing.txt` that their
+  changes need (`scripts/jtreg/select.ts`); releases run all of them. A test
+  that fails without a code change is fixed or taken out of `passing.txt`, so
+  a green pull request stays green on `master` and at release
 - `project516-review-bot` reviews every PR. Merge only once its review of the
   head commit has every finding fixed or answered on its thread. When it
   cannot read the whole diff, a subagent reviews the files it skipped
