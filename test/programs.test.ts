@@ -122,14 +122,16 @@ test("permission denied", { skip: process.getuid?.() === 0 }, async () => {
   const classes = join(root, "build", "test-permissions");
   execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "permissions", "Permissions.java")]);
   const dir = mkdtempSync(join(tmpdir(), "java-web-perm-"));
-  const file = join(dir, "read-only.txt"), locked = join(dir, "locked");
+  const file = join(dir, "read-only.txt"), locked = join(dir, "locked"), open = join(dir, "open.txt");
   writeFileSync(file, "x");
   chmodSync(file, 0o444);
   mkdirSync(locked, { mode: 0o555 });
   try {
-    const ref = spawnSync(hotspot("java"), ["-cp", classes, "Permissions", file, locked], { encoding: "utf8" });
+    writeFileSync(open, "x");
+    const ref = spawnSync(hotspot("java"), ["-cp", classes, "Permissions", file, locked, open], { encoding: "utf8" });
+    chmodSync(open, 0o644);
     const stdout: Uint8Array[] = [];
-    const code = await runNode({ classpath: [classes], mainClass: "Permissions", args: [file, locked], stdout: (b) => stdout.push(b) });
+    const code = await runNode({ classpath: [classes], mainClass: "Permissions", args: [file, locked, open], stdout: (b) => stdout.push(b) });
     assert.equal(Buffer.concat(stdout).toString("utf8"), ref.stdout);
     assert.equal(code, ref.status);
   } finally {

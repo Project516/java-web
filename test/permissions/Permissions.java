@@ -4,7 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-// Writes the host refuses: args are a read-only file and a read-only directory.
+// Writes the host refuses: args are a read-only file, a read-only directory and a
+// writable file.
 public class Permissions {
   public static void main(String[] args) throws Exception {
     Path file = Path.of(args[0]), dir = Path.of(args[1]);
@@ -30,5 +31,8 @@ public class Permissions {
       System.out.println(e.getClass().getName());
     }
     System.out.println(Files.isWritable(dir) + " " + Files.exists(dir.resolve("new.txt")));
+    File w = new File(args[2]);
+    System.out.println(w.setReadOnly() + " " + w.canWrite());
+    System.out.println(w.setWritable(true) + " " + w.canWrite());
   }
 }

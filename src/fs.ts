@@ -27,6 +27,8 @@ export interface Backend {
   setMtime?(path: string, ms: number): boolean;
   // whether the host refuses to write the file, or to create it when it is missing
   denied?(path: string): boolean;
+  // sets the permission bits to f(current bits)
+  chmod?(path: string, f: (mode: number) => number): boolean;
 }
 
 export function normalize(path: string): string {
@@ -164,6 +166,13 @@ export class VFS {
   denied(path: string): boolean {
     const r = this.resolve(path);
     return !!r && r[0].writable && !!r[0].denied?.(r[1]);
+  }
+
+  // undefined when the backend has no permission bits
+  chmod(path: string, f: (mode: number) => number): boolean | undefined {
+    const r = this.resolve(path);
+    if (!r || !r[0].chmod) return undefined;
+    return r[0].writable && r[0].chmod(r[1], f);
   }
 }
 
