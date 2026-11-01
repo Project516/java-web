@@ -1,7 +1,7 @@
 // Compiles each test/java/*.java and checks that java-web prints exactly
 // what HotSpot prints, with the same exit code.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,20 @@ test("System.gc collects under the command", { skip: !files.includes("Refs.java"
   assert.equal(ref.status, 0);
   const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), "-cp", out, "Refs"], { encoding: "utf8" });
   assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+});
+
+test("stdout closed by its reader", async () => {
+  const classes = join(root, "build", "test-pipe");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "pipe", "Pipe.java")]);
+  // reads the first chunk, then closes the pipe
+  const run = (cmd: string, args: string[]) => new Promise<{ stderr: string; code: number | null }>((resolve) => {
+    const p = spawn(cmd, [...args, "-cp", classes, "Pipe"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    p.stderr.on("data", (d) => (stderr += d));
+    p.stdout.once("data", () => p.stdout.destroy());
+    p.on("close", (code) => resolve({ stderr, code }));
+  });
+  assert.deepEqual(await run(process.execPath, [join(root, "src", "node.ts")]), await run(hotspot("java"), []));
 });
 
 function flags(file: string, tool: string): string[] {

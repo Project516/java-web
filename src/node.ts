@@ -14,6 +14,7 @@ import { JVM, LM_CLASS, LM_JAR } from "./jvm.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
+import { PendingThrow } from "./thread.ts";
 import type { NetBackend } from "./sockets.ts";
 
 // A host directory exposed read-only (or writable) inside the VFS.
@@ -194,6 +195,20 @@ function exposeGc() {
   if (gc) g.gc = gc;
 }
 
+// Once the reader goes away (a closed pipe), writes fail with an IOException as
+// on HotSpot; without a listener, node exits on the stream's error event.
+const broken = new Set<NodeJS.WriteStream>();
+function hostOut(s: NodeJS.WriteStream) {
+  if (!s.listeners("error").includes(onOutError)) s.on("error", onOutError);
+  return (b: Uint8Array) => {
+    if (broken.has(s)) throw new PendingThrow("java/io/IOException", "Broken pipe");
+    s.write(b);
+  };
+}
+function onOutError(this: NodeJS.WriteStream) {
+  broken.add(this);
+}
+
 function nodeVm(o: NodeRunOptions): JVM {
   exposeGc();
   const vfs = new VFS();
@@ -232,8 +247,8 @@ function nodeVm(o: NodeRunOptions): JVM {
       const mod = await import(pathToFileURL(p).href);
       Object.assign(natives, nativeTable(mod));
     },
-    stdout: o.stdout ?? ((b) => process.stdout.write(b)),
-    stderr: o.stderr ?? ((b) => process.stderr.write(b)),
+    stdout: o.stdout ?? hostOut(process.stdout),
+    stderr: o.stderr ?? hostOut(process.stderr),
     stdin: o.input ? fixedInput(o.input) : () => new Promise((resolve) => {
       const onData = (d: Buffer) => { cleanup(); resolve(new Uint8Array(d)); };
       const onEnd = () => { cleanup(); resolve(null); };
