@@ -4,6 +4,8 @@ import { isAssertionFlag, parseAssertions } from "./assertions.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
@@ -180,7 +182,16 @@ function fixedInput(data: Uint8Array) {
 const bridges = new WeakMap<object, Bridge>();
 
 // The host file system is the VFS root, with the JDK image mounted at /jdk.
+// System.gc() calls globalThis.gc, which node defines only under --expose-gc
+function exposeGc() {
+  const g = globalThis as { gc?: unknown };
+  if (typeof g.gc === "function") return;
+  setFlagsFromString("--expose-gc");
+  g.gc = runInNewContext("gc");
+}
+
 function nodeVm(o: NodeRunOptions): JVM {
+  exposeGc();
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));
   // built as dist/node.js, it reads the packaged image next to it
