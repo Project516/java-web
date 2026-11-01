@@ -193,13 +193,14 @@ export function fileOf(t: JThread, fd: number): OpenFile {
 export function flush(t: JThread, f: OpenFile) {
   if (f.dirty && f.writable && f.path) {
     const data = f.data.slice(0, f.size);
+    let ok = t.vm.fs.write(f.path, data);
     // an open file keeps its write access when the file's mode changes, as an fd does
     let mode = 0;
-    if (!t.vm.fs.write(f.path, data) && t.vm.fs.chmod(f.path, (m) => (mode = m) | 0o200)) {
-      t.vm.fs.write(f.path, data);
+    if (!ok && t.vm.fs.chmod(f.path, (m) => (mode = m) | 0o200)) {
+      ok = t.vm.fs.write(f.path, data);
       t.vm.fs.chmod(f.path, () => mode);
     }
-    f.dirty = false;
+    if (ok) f.dirty = false;
   }
 }
 
