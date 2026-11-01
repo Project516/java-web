@@ -72,3 +72,14 @@ jobs:
           read -ra filters <<< "$FILTERS"
           node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600 \
             --shard ${{ matrix.shard }}/${{ strategy.job-total }} "${filters[@]}"
+
+  # one check for branch protection, whatever the number of shards
+  result:
+    needs: [plan, run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PLAN: ${{ needs.plan.result }}
+          RUN: ${{ needs.run.result }}
+        run: test "$PLAN" = success && { test "$RUN" = success || test "$RUN" = skipped; }
