@@ -336,7 +336,15 @@ function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
-    else if (/^-Xmx\d+[kmg]?$/i.test(a)) setMaxHeap(heapSize(a.slice(4)));
+    else if (/^-Xmx\d+[kmg]?$/i.test(a)) {
+      // x64 HotSpot refuses to start below 2 MB and rounds up to 2 MB steps
+      const n = heapSize(a.slice(4));
+      if (n < 2 ** 21) {
+        console.error(n === 0 ? `Invalid maximum heap size: ${a}` : "Error occurred during initialization of VM\nToo small maximum heap");
+        process.exit(1);
+      }
+      setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
+    }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);
