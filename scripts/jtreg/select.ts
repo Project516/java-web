@@ -2,9 +2,10 @@
 //
 //   node scripts/jtreg/select.ts [<base> | --full]
 //
-// Prints GitHub Actions outputs: `filters`, the test areas to pass to run.ts
-// (empty for all of them), and `shards`, a JSON list of shard numbers ([] when
-// no test is needed). A changed file this does not know runs every test.
+// Prints GitHub Actions outputs: `filters`, the tests to pass to run.ts (empty
+// for all of them), and `shards`, a JSON list of shard numbers ([] when no test
+// is needed). Tests added to passing.txt run alone; a change to anything the
+// tests load runs them all.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -13,17 +14,10 @@ import { join } from "node:path";
 const root = join(import.meta.dirname, "..", "..");
 const passingFile = "test/jtreg/passing.txt";
 
-// first match wins; null runs no test
-const areas: [RegExp, string[] | null][] = [
-  [/\.md$|^docs\/|^LICENSE|^renovate\.json$|^\.coderabbit/, null],
-  [/^src\/browser\/|^src\/(bridge|library|image|http-proxy)\.ts$|^types\/|^scripts\/(build-web|serve)\.ts$/, null],
-  [/^test\/(?!jtreg\/)/, null],
-  [/^src\/natives\/zip\.ts$|^src\/inflate\.ts$/, ["java/util/zip", "java/util/jar"]],
-  [/^src\/natives\/(io|nio)\.ts$|^src\/fs\.ts$/, ["java/io", "java/nio", "java/util/zip", "java/util/jar"]],
-  [/^src\/natives\/(net|sockets)\.ts$|^src\/(sockets|net-node)\.ts$|^scripts\/tls\//, ["java/net", "java/nio/channels"]],
-  [/^src\/natives\/(font|java2d)[\w-]*\.ts$/, ["java/awt", "java/beans"]],
-  [/^src\/natives\/management\.ts$/, ["java/lang/management"]],
-];
+// Files the OpenJDK tests never load. Natives are shared across the whole
+// class library (file natives serve class loading and most tests), so any other
+// change runs every test rather than guessing which areas it reaches.
+const untested = /\.md$|^docs\/|^LICENSE|^renovate\.json$|^\.coderabbit|^types\/|^test\/(?!jtreg\/)|^src\/browser\/|^src\/(bridge|library|image|http-proxy)\.ts$|^scripts\/(build-web|serve)\.ts$/;
 
 const shardsFor = (n: number) => Array.from({ length: Math.min(4, Math.ceil(n / 400)) }, (_, i) => i + 1);
 const listed = readFileSync(join(root, passingFile), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
@@ -41,9 +35,7 @@ function select(base: string | undefined): string[] | "all" {
       }
       continue;
     }
-    const hit = areas.find(([re]) => re.test(file));
-    if (!hit) return "all";
-    for (const f of hit[1] ?? []) filters.add(f);
+    if (!untested.test(file)) return "all";
   }
   return [...filters];
 }
