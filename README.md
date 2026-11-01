@@ -7,10 +7,10 @@ and its page API matches CheerpJ's, so existing pages can switch.
 ## Use it in a page
 
 ```sh
-pnpm add java-web
+pnpm add @project516/java-web
 ```
 
-Serve `node_modules/java-web/dist/` as static files, then:
+Serve `node_modules/@project516/java-web/dist/` as static files, then:
 
 ```html
 <script src="java-web.js"></script>
@@ -27,11 +27,11 @@ Serve `node_modules/java-web/dist/` as static files, then:
 ## Use it under Node
 
 ```sh
-npx java-web -cp classes Main          # or: npx java-web -jar app.jar
+npx @project516/java-web -cp classes Main          # or: npx @project516/java-web -jar app.jar
 ```
 
 ```js
-import { runNode } from "java-web";
+import { runNode } from "@project516/java-web";
 const code = await runNode({ classpath: ["classes"], mainClass: "Main" });
 ```
 
