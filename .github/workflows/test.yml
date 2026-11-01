@@ -36,3 +36,8 @@ jobs:
       - run: pnpm build
       - name: Node entry on the built dist/
         run: node --expose-gc --test test/image.test.ts
+
+  jtreg:
+    uses: ./.github/workflows/jtreg.yml
+    with:
+      full: ${{ github.event_name == 'push' }}

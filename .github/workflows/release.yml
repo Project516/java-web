@@ -6,14 +6,22 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  jtreg:
     # prereleases are not published, so npm's latest tag only gets stable versions
     if: ${{ !github.event.release.prerelease }}
+    uses: ./.github/workflows/jtreg.yml
+    with:
+      full: true
+
+  publish:
+    needs: jtreg
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - name: Check the tag matches package.json
@@ -29,13 +37,6 @@ jobs:
       - run: pnpm jdk
       - run: pnpm typecheck
       - run: pnpm test
-      - name: OpenJDK regression tests
-        run: |
-          release=$(sed -n 's/^release=//p' scripts/build-jdk.sh)
-          git clone -q --filter=blob:none --sparse --depth 1 --branch "jdk-${release%+*}-ga" https://github.com/openjdk/jdk25u.git build/ref/jdk25u
-          dirs=$(grep -v '^#' test/jtreg/passing.txt | cut -d/ -f1-2 | sort -u | sed 's|^|test/jdk/|')
-          git -C build/ref/jdk25u sparse-checkout set test/lib test/jdk/lib test/jdk/tools/lib $dirs
-          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600
       - run: pnpm build
       - name: Node entry on the built dist/
         run: node --expose-gc --test test/image.test.ts
