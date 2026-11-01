@@ -9,8 +9,12 @@ public class Heap {
       System.out.println("OutOfMemoryError: " + e.getMessage());
     }
     System.out.println("small " + new int[1 << 20].length);
+    Runtime rt = Runtime.getRuntime();
+    System.out.println("free <= total <= max " + (rt.freeMemory() <= rt.totalMemory() && rt.totalMemory() <= rt.maxMemory()));
+    var usage = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+    System.out.println("heap usage within max " + (usage.getCommitted() <= usage.getMax() && usage.getMax() == rt.maxMemory()));
     // the heap's exact size depends on the platform's rounding
-    long max = Runtime.getRuntime().maxMemory();
+    long max = rt.maxMemory();
     System.out.println(args.length > 0 ? "max " + max : "max under 32 MB " + (max <= 32 << 20));
   }
 }

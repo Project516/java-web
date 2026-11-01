@@ -336,11 +336,12 @@ function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
-    else if (/^-Xmx\d+[kmg]?$/i.test(a)) {
+    else if (a.startsWith("-Xmx")) {
       // x64 HotSpot refuses to start below 2 MB and rounds up to 2 MB steps
-      const n = heapSize(a.slice(4));
+      const n = /^-Xmx\d+[kmg]?$/i.test(a) ? heapSize(a.slice(4)) : 0;
       if (n < 2 ** 21) {
-        console.error(n === 0 ? `Invalid maximum heap size: ${a}` : "Error occurred during initialization of VM\nToo small maximum heap");
+        console.error(n === 0 ? `Invalid maximum heap size: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`
+          : "Error occurred during initialization of VM\nToo small maximum heap");
         process.exit(1);
       }
       setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
