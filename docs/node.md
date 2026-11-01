@@ -7,8 +7,8 @@ system is the VFS root, and Java sees the host's environment.
 ## Command
 
 ```sh
-npx java-web [options] Main [args]
-npx java-web [options] -jar app.jar [args]
+npx @project516/java-web [options] Main [args]
+npx @project516/java-web [options] -jar app.jar [args]
 ```
 
 | Option | Meaning |
@@ -28,7 +28,7 @@ Other `-X` and HotSpot-only options are ignored.
 ## From JS
 
 ```js
-import { runNode } from "java-web";
+import { runNode } from "@project516/java-web";
 
 const out = [];
 const code = await runNode({
