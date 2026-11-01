@@ -359,8 +359,12 @@ export function primName(c: string) {
   throw new Error(`not a primitive: ${c}`);
 }
 
-// Reported by Runtime.maxMemory; no array may be bigger.
-export const MAX_HEAP = 1 << 30;
+// Reported by Runtime.maxMemory; no array may be bigger. -Xmx lowers it; the
+// total of live objects is not counted.
+export let MAX_HEAP = 1 << 30;
+export function setMaxHeap(bytes: number) {
+  MAX_HEAP = Math.min(bytes, 1 << 30);
+}
 const ELEM_SIZE: Record<string, number> = { Z: 1, B: 1, C: 2, S: 2, I: 4, F: 4, J: 8, D: 8, L: 4 };
 
 // V8 gives a typed array over 64 bytes its own malloc'd store, about ten

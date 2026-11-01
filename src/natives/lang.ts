@@ -315,8 +315,9 @@ export const natives: Natives = {
 
   // Runtime
   "java/lang/Runtime.availableProcessors()I": () => 1,
-  "java/lang/Runtime.freeMemory()J": () => 256n << 20n,
-  "java/lang/Runtime.totalMemory()J": () => 512n << 20n,
+  // free <= total <= max, as callers that compute available memory expect
+  "java/lang/Runtime.freeMemory()J": () => BigInt(Math.min(512 << 20, MAX_HEAP) / 2),
+  "java/lang/Runtime.totalMemory()J": () => BigInt(Math.min(512 << 20, MAX_HEAP)),
   "java/lang/Runtime.maxMemory()J": () => BigInt(MAX_HEAP),
   // Collects where the engine allows it (node --expose-gc), in a new JS job:
   // a WeakRef read earlier in a job keeps its target alive until the job ends.

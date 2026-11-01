@@ -91,8 +91,14 @@ function* poolUsage(t: JThread, self: JObject): NativeGen {
   const b: Beans = yield* beans(t);
   const pool = POOLS[b.pools.indexOf(self)];
   if (pool.name !== OLD) return yield* usage(t, 0, 0, 0, -1);
+  return yield* heapUsage(t);
+}
+
+// MemoryUsage needs used <= committed <= max; node's heap does not know -Xmx
+function* heapUsage(t: JThread): NativeGen {
   const h = jsHeap();
-  return yield* usage(t, 0, h.used, Math.max(h.used, h.committed), MAX_HEAP);
+  const committed = Math.min(Math.max(h.used, h.committed), MAX_HEAP);
+  return yield* usage(t, 0, Math.min(h.used, committed), committed, MAX_HEAP);
 }
 
 function liveThreads(vm: JVM): JThread[] {
@@ -146,8 +152,7 @@ export const natives: Natives = {
   },
   "sun/management/MemoryImpl.getMemoryUsage0(Z)Ljava/lang/management/MemoryUsage;": function* (t, [, heap]): NativeGen {
     if (!heap) return yield* usage(t, 0, 0, 0, -1);
-    const h = jsHeap();
-    return yield* usage(t, 0, h.used, Math.max(h.used, h.committed), MAX_HEAP);
+    return yield* heapUsage(t);
   },
   "sun/management/MemoryImpl.setVerboseGC(Z)V": () => undefined,
 

@@ -15,6 +15,7 @@ import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { PendingThrow } from "./thread.ts";
+import { setMaxHeap } from "./runtime.ts";
 import type { NetBackend } from "./sockets.ts";
 
 // A host directory exposed read-only (or writable) inside the VFS.
@@ -314,6 +315,12 @@ export function moduleFlag(o: NodeRunOptions, arg: string, next: string | undefi
   return true;
 }
 
+// a -Xmx size: bytes, or k, m or g
+function heapSize(s: string): number {
+  const unit = { k: 2 ** 10, m: 2 ** 20, g: 2 ** 30 }[s.slice(-1).toLowerCase()];
+  return unit ? Number(s.slice(0, -1)) * unit : Number(s);
+}
+
 function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
@@ -329,6 +336,16 @@ function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
+    else if (a.startsWith("-Xmx")) {
+      // x64 HotSpot refuses to start below 2 MB and rounds up to 2 MB steps
+      const n = /^-Xmx\d+[kmg]?$/i.test(a) ? heapSize(a.slice(4)) : 0;
+      if (n < 2 ** 21) {
+        console.error(n === 0 ? `Invalid maximum heap size: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`
+          : "Error occurred during initialization of VM\nToo small maximum heap");
+        process.exit(1);
+      }
+      setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
+    }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);
