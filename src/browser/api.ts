@@ -277,6 +277,7 @@ export function cheerpOSRemoveStringFile(path: string) {
 
 // Feeds System.in; null ends the input.
 export function javaWebWriteStdin(data: string | null) {
+  if (!worker) throw new Error("call cheerpjInit() first");
   send({ type: "stdin", data: data === null ? null : new TextEncoder().encode(data) });
 }
 

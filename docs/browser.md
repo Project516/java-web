@@ -37,6 +37,10 @@ and `cjFileBlob(path)` also work.
   `/files/uploads/` exists for files the page adds there.
 - The browser console gets whole lines, so two `print` calls and a `println` log one
   line. A partial line is logged after 100 ms.
+- `javaWebWriteStdin(text)` feeds `System.in` (CheerpJ has no such call). A read
+  waits until the page sends text, and text sent before Java reads it is kept.
+  `javaWebWriteStdin(null)` ends the input. Nothing is echoed, so the page shows
+  what the user typed itself.
 
 Library mode calls Java from JS, as in CheerpJ's library mode guide. The VM
 stays up between calls:
