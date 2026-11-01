@@ -192,8 +192,15 @@ export function fileOf(t: JThread, fd: number): OpenFile {
 
 export function flush(t: JThread, f: OpenFile) {
   if (f.dirty && f.writable && f.path) {
-    t.vm.fs.write(f.path, f.data.slice(0, f.size));
-    f.dirty = false;
+    const data = f.data.slice(0, f.size);
+    let ok = t.vm.fs.write(f.path, data);
+    // an open file keeps its write access when the file's mode changes, as an fd does
+    let mode = 0;
+    if (!ok && t.vm.fs.chmod(f.path, (m) => (mode = m) | 0o200)) {
+      ok = t.vm.fs.write(f.path, data);
+      t.vm.fs.chmod(f.path, () => mode);
+    }
+    if (ok) f.dirty = false;
   }
 }
 
@@ -276,6 +283,11 @@ function attrs(t: JThread, file: JObject): number {
   const st = t.vm.fs.stat(resolvePath(t, pathOf(t, file)));
   if (!st) return 0;
   return 1 | (st.dir ? 4 : st.device ? 0 : 2);
+}
+
+// a backend without permission bits takes any change to an existing file
+function chmod(t: JThread, file: JObject, f: (mode: number) => number): boolean {
+  return t.vm.fs.chmod(resolvePath(t, pathOf(t, file)), f) ?? attrs(t, file) !== 0;
 }
 
 function pathOf(t: JThread, file: JObject): string {
@@ -375,8 +387,7 @@ export const natives: Natives = {
   [`${UFS}.getBooleanAttributes0(Ljava/io/File;)I`]: (t, [, f]) => attrs(t, f),
   [`${UFS}.checkAccess0(Ljava/io/File;I)Z`]: (t, [, f, access]) => {
     const abs = resolvePath(t, pathOf(t, f));
-    if (!t.vm.fs.stat(abs)) return 0;
-    return (access & 2) === 0 || (t.vm.fs.writable(abs) && !t.vm.fs.denied(abs));
+    return !!t.vm.fs.stat(abs) && t.vm.fs.access(abs, access);
   },
   [`${UFS}.getLastModifiedTime0(Ljava/io/File;)J`]: (t, [, f]) => BigInt(Math.floor(t.vm.fs.stat(resolvePath(t, pathOf(t, f)))?.mtime ?? 0)),
   [`${UFS}.getLength0(Ljava/io/File;)J`]: (t, [, f]) => {
@@ -384,7 +395,10 @@ export const natives: Natives = {
     syncPath(t, abs);
     return BigInt(t.vm.fs.stat(abs)?.size ?? 0);
   },
-  [`${UFS}.setPermission0(Ljava/io/File;IZZ)Z`]: (t, [, f]) => attrs(t, f) !== 0,
+  [`${UFS}.setPermission0(Ljava/io/File;IZZ)Z`]: (t, [, f, access, enable, ownerOnly]) => {
+    const bits = ownerOnly ? access << 6 : access * 0o111;
+    return chmod(t, f, (m) => (enable ? m | bits : m & ~bits));
+  },
   [`${UFS}.createFileExclusively0(Ljava/lang/String;)Z`]: (t, [, p]) => {
     const abs = resolvePath(t, t.vm.jsString(p));
     if (t.vm.fs.stat(abs)) return 0;
@@ -401,7 +415,7 @@ export const natives: Natives = {
   [`${UFS}.rename0(Ljava/io/File;Ljava/io/File;)Z`]: (t, [, a, b]) =>
     renamePath(t, resolvePath(t, pathOf(t, a)), resolvePath(t, pathOf(t, b))),
   [`${UFS}.setLastModifiedTime0(Ljava/io/File;J)Z`]: (t, [, f, ms]) => setMtime(t, resolvePath(t, pathOf(t, f)), Number(ms)),
-  [`${UFS}.setReadOnly0(Ljava/io/File;)Z`]: (t, [, f]) => attrs(t, f) !== 0,
+  [`${UFS}.setReadOnly0(Ljava/io/File;)Z`]: (t, [, f]) => chmod(t, f, (m) => m & ~0o222),
   [`${UFS}.getSpace0(Ljava/io/File;I)J`]: () => 0n,
   [`${UFS}.getNameMax0(Ljava/lang/String;)J`]: () => 255n,
 };

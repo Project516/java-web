@@ -81,6 +81,22 @@ export class NodeBackend implements Backend {
       return (e as NodeJS.ErrnoException).code === "EACCES" || (e as NodeJS.ErrnoException).code === "EPERM";
     }
   }
+  chmod(p: string, f: (mode: number) => number) {
+    try {
+      fs.chmodSync(this.host(p), f(fs.statSync(this.host(p)).mode & 0o7777));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  access(p: string, mode: number) {
+    try {
+      fs.accessSync(this.host(p), mode);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   setMtime(p: string, ms: number) {
     try {
       fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);

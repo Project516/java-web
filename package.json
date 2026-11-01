@@ -39,6 +39,9 @@
     "dist/jdk/jdk.localedata.txt",
     "dist/jdk/legal/"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=23.6"
   },

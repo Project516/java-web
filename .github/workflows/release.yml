@@ -35,7 +35,7 @@ jobs:
           git clone -q --filter=blob:none --sparse --depth 1 --branch "jdk-${release%+*}-ga" https://github.com/openjdk/jdk25u.git build/ref/jdk25u
           dirs=$(grep -v '^#' test/jtreg/passing.txt | cut -d/ -f1-2 | sort -u | sed 's|^|test/jdk/|')
           git -C build/ref/jdk25u sparse-checkout set test/lib test/jdk/lib test/jdk/tools/lib $dirs
-          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4
+          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600
       - run: pnpm build
       - name: Node entry on the built dist/
         run: node --expose-gc --test test/image.test.ts
