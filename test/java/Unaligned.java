@@ -5,7 +5,8 @@ import java.nio.ByteOrder;
 import java.util.HexFormat;
 
 // Multi-byte reads and writes at every alignment, in both byte orders, through
-// byte array views, heap and direct buffers, and views of other element types.
+// byte array views, heap and direct buffers, and views of other element types,
+// and native-order reads across the elements of other primitive arrays.
 public class Unaligned {
   public static void main(String[] args) {
     HexFormat hex = HexFormat.of();
@@ -45,5 +46,25 @@ public class Unaligned {
       bb.asIntBuffer().put(new int[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
       System.out.println(order + " view " + Long.toHexString(bb.asLongBuffer().get(2)) + " " + bb.position(3).slice().order(order).getInt(0));
     }
+    // Arrays.mismatch reads longs across the elements of int, char and short
+    // arrays, from any starting element
+    int[] ia = new int[40], ib = new int[40];
+    char[] ca = new char[70], cb = new char[70];
+    short[] sa = new short[70], sb = new short[70];
+    StringBuilder out = new StringBuilder("mismatch");
+    for (int diff = 0; diff < 40; diff += 3) {
+      ib[diff] = ia[diff] + 1;
+      cb[diff + 25] = 'x';
+      sb[diff + 25] = -1;
+      for (int from = 0; from < 5; from++) {
+        out.append(' ').append(java.util.Arrays.mismatch(ia, from, 40, ib, from, 40))
+            .append(',').append(java.util.Arrays.mismatch(ca, from, 70, cb, from + 1, 70))
+            .append(',').append(java.util.Arrays.mismatch(sa, from, 70, sb, from, 70));
+      }
+      ib[diff] = ia[diff];
+      cb[diff + 25] = 0;
+      sb[diff + 25] = 0;
+    }
+    System.out.println(out);
   }
 }
