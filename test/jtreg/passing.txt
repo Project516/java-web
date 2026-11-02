@@ -1658,6 +1658,7 @@ java/security/KeyAgreement/NegativeTest.java
 java/security/KeyFactory/Failover.java
 java/security/KeyFactory/GenerateRSAPrivateCrtKey.java
 java/security/KeyFactory/KeyFactoryGetKeySpecForInvalidSpec.java
+java/security/KeyPairGenerator/Failover.java
 java/security/KeyPairGenerator/GenerateKeypair.java
 java/security/KeyPairGenerator/GenerateRSAKeyPair.java
 java/security/KeyRep/Serial.java

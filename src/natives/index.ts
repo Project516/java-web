@@ -1,4 +1,5 @@
 import { natives as continuation } from "./continuation.ts";
+import { intrinsics as cryptoIntrinsics } from "./crypto.ts";
 import { natives as invoke } from "./invoke.ts";
 import { natives as io } from "./io.ts";
 import { natives as loader } from "./loader.ts";
@@ -24,4 +25,4 @@ import type { Natives } from "./util.ts";
 export const natives: Natives = { ...lang, ...misc, ...io, ...loader, ...reflect, ...invoke, ...zip, ...nio, ...net, ...sockets, ...npe, ...stackwalk, ...ref, ...management, ...continuation, ...java2dShape, ...java2dAaPgram, ...java2dPath, ...java2d, ...font };
 
 // Replace Java (non-native) methods of the JDK.
-export const intrinsics: Natives = { ...miscIntrinsics, ...refIntrinsics, ...stringIntrinsics };
+export const intrinsics: Natives = { ...miscIntrinsics, ...refIntrinsics, ...stringIntrinsics, ...cryptoIntrinsics };
