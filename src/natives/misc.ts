@@ -20,42 +20,38 @@ export function indexScale(c: JClass): number {
   return p ? WIDTH[p] : REF_SCALE;
 }
 
-// A primitive array's DataView over its whole buffer (small arrays share slab
-// buffers), kept in x; a clone copies x, hence the buffer check.
+// A primitive array's DataView, kept in x (unused otherwise for arrays, and
+// not copied by clone).
 function view(a: JArray): DataView {
-  const buf = (a.a as Int8Array).buffer;
-  let dv = a.x as DataView | undefined;
-  if (dv === undefined || dv.buffer !== buf) a.x = dv = new DataView(buf);
-  return dv;
+  const v = a.x as DataView | undefined;
+  if (v !== undefined) return v;
+  const d = a.a as Int8Array;
+  return (a.x = new DataView(d.buffer, d.byteOffset, d.byteLength));
 }
 
-// where an array offset is in its view
-function viewAt(a: JArray, off: number): number {
-  return (a.a as Int8Array).byteOffset - ARRAY_BASE_OFFSET + off;
-}
-
-function dvRead(dv: DataView, p: number, k: string): any {
+// native order is little-endian
+function dvRead(dv: DataView, p: number, k: string, le = true): any {
   switch (k) {
     case "Z": return dv.getInt8(p) !== 0 ? 1 : 0;
     case "B": return dv.getInt8(p);
-    case "S": return dv.getInt16(p, true);
-    case "C": return dv.getUint16(p, true);
-    case "I": return dv.getInt32(p, true);
-    case "J": return dv.getBigInt64(p, true);
-    case "F": return dv.getFloat32(p, true);
-    case "D": return dv.getFloat64(p, true);
+    case "S": return dv.getInt16(p, le);
+    case "C": return dv.getUint16(p, le);
+    case "I": return dv.getInt32(p, le);
+    case "J": return dv.getBigInt64(p, le);
+    case "F": return dv.getFloat32(p, le);
+    case "D": return dv.getFloat64(p, le);
   }
   throw new Error(`bad kind ${k}`);
 }
 
-function dvWrite(dv: DataView, p: number, k: string, v: any) {
+function dvWrite(dv: DataView, p: number, k: string, v: any, le = true) {
   switch (k) {
     case "Z": case "B": dv.setInt8(p, v); return;
-    case "S": case "C": dv.setInt16(p, v, true); return;
-    case "I": dv.setInt32(p, v, true); return;
-    case "J": dv.setBigInt64(p, v, true); return;
-    case "F": dv.setFloat32(p, v, true); return;
-    case "D": dv.setFloat64(p, v, true); return;
+    case "S": case "C": dv.setInt16(p, v, le); return;
+    case "I": dv.setInt32(p, v, le); return;
+    case "J": dv.setBigInt64(p, v, le); return;
+    case "F": dv.setFloat32(p, v, le); return;
+    case "D": dv.setFloat64(p, v, le); return;
   }
   throw new Error(`bad kind ${k}`);
 }
@@ -74,7 +70,7 @@ export function unsafeGet(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") return o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE];
     if (sameKind(elem, k)) return o.a[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]];
-    return dvRead(view(o), viewAt(o, off), k);
+    return dvRead(view(o), off - ARRAY_BASE_OFFSET, k);
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) return o.x.statics[off - STATIC_OFFSET_BASE];
   return o.f[off];
@@ -90,7 +86,7 @@ export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE] = v;
     else if (sameKind(elem, k)) (o.a as any)[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]] = v;
-    else dvWrite(view(o), viewAt(o, off), k, v);
+    else dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v);
     return;
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) o.x.statics[off - STATIC_OFFSET_BASE] = v;
@@ -152,16 +148,28 @@ function unaligned(o: JObject | null, off: number, k: string): o is JArray {
   const elem = o.cls.component!.prim;
   return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
 }
+// Unsafe.convEndian, through a scratch view
+const swapView = new DataView(new ArrayBuffer(8));
+function convEndian(k: string, v: any, bigEndian: boolean): any {
+  if (!bigEndian) return v;
+  dvWrite(swapView, 0, k, v);
+  return dvRead(swapView, 0, k, false);
+}
 for (const [name, k] of [["Long", "J"], ["Int", "I"], ["Short", "S"], ["Char", "C"]]) {
-  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, offset]) => {
+  const get = (t: JThread, o: JObject | null, offset: bigint, bigEndian: boolean) => {
     const off = Number(offset);
-    return unaligned(o, off, k) ? dvRead(view(o), viewAt(o, off), k) : unsafeGet(t, o, offset, k);
+    if (unaligned(o, off, k)) return dvRead(view(o), off - ARRAY_BASE_OFFSET, k, !bigEndian);
+    return convEndian(k, unsafeGet(t, o, offset, k), bigEndian);
   };
-  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, offset, v]) => {
+  const put = (t: JThread, o: JObject | null, offset: bigint, v: any, bigEndian: boolean) => {
     const off = Number(offset);
-    if (unaligned(o, off, k)) dvWrite(view(o), viewAt(o, off), k, v);
-    else unsafePut(t, o, offset, k, v);
+    if (unaligned(o, off, k)) dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v, !bigEndian);
+    else unsafePut(t, o, offset, k, convEndian(k, v, bigEndian));
   };
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, off]) => get(t, o, off, false);
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;JZ)${k}`] = (t, [, o, off, be]) => get(t, o, off, be !== 0);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, off, v]) => put(t, o, off, v, false);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k}Z)V`] = (t, [, o, off, v, be]) => put(t, o, off, v, be !== 0);
 }
 
 function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
