@@ -190,7 +190,8 @@ export function fileOf(t: JThread, fd: number): OpenFile {
   return f;
 }
 
-export function flush(t: JThread, f: OpenFile) {
+// Writes the file's buffered bytes; false if the host refused them.
+export function flush(t: JThread, f: OpenFile): boolean {
   if (f.dirty && f.writable && f.path) {
     const data = f.data.slice(0, f.size);
     let ok = t.vm.fs.write(f.path, data);
@@ -201,7 +202,25 @@ export function flush(t: JThread, f: OpenFile) {
       t.vm.fs.chmod(f.path, () => mode);
     }
     if (ok) f.dirty = false;
+    return ok;
   }
+  return true;
+}
+
+const ERRNO: Record<string, string> = {
+  ENOSPC: "No space left on device", EFBIG: "File too large", EDQUOT: "Disk quota exceeded",
+  EACCES: "Permission denied", EPERM: "Operation not permitted", EROFS: "Read-only file system",
+  ENOENT: "No such file or directory",
+};
+
+// Where Java learns of a write that failed: HotSpot reports it from write(),
+// java-web, which buffers, from the flush, sync or close that writes it out.
+export function flushOrThrow(t: JThread, f: OpenFile) {
+  if (!flush(t, f)) throw writeFailed(t, f.path);
+}
+
+function writeFailed(t: JThread, path: string): PendingThrow {
+  return new PendingThrow("java/io/IOException", ERRNO[t.vm.fs.writeError(path) ?? ""] ?? "Input/output error");
 }
 
 export function newFd(t: JThread): number {
@@ -213,9 +232,11 @@ export function closeFd(t: JThread, fd: number) {
   const tab = table(t);
   const f = tab.files.get(fd);
   if (f) {
-    flush(t, f);
+    const ok = flush(t, f);
     tab.files.delete(fd);
     if (f.writable && f.path) t.vm.opts.fileClosed?.(f.path);
+    // the descriptor is closed either way, as with close(2)
+    if (!ok) throw writeFailed(t, f.path);
   }
 }
 
@@ -308,7 +329,7 @@ export const natives: Natives = {
   "java/io/FileDescriptor.sync0()V": (t, [fdObj]) => {
     const fd = t.vm.getField(fdObj, "java/io/FileDescriptor", "fd");
     const f = table(t).files.get(fd);
-    if (f) flush(t, f);
+    if (f) flushOrThrow(t, f);
   },
   "java/io/FileDescriptor.close0()V": (t, [fdObj]) => {
     const fd = t.vm.getField(fdObj, "java/io/FileDescriptor", "fd");

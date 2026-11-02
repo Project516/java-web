@@ -5,7 +5,7 @@ import type { JObject } from "../runtime.ts";
 import { preCloseSock } from "../sockets.ts";
 import { sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
-import { closeFd, endsInDot, fileOf, flush, openFile, removePath, renamePath, resolvePath, setMtime, syncPath } from "./io.ts";
+import { closeFd, endsInDot, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath } from "./io.ts";
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
@@ -338,8 +338,7 @@ Object.assign(natives, {
   [`${UFD}writev0(Ljava/io/FileDescriptor;JI)J`]: (t: JThread, [fd, addr, n]: any[]) =>
     sockWritev(t, fd, addr, n) ?? vector(t, addr, n, (base, len) => writeAt(t, fd, base, len, null)),
   [`${UFD}force0(Ljava/io/FileDescriptor;Z)I`]: (t: JThread, [fd]: any[]) => {
-    const f = chanFile(t, fd);
-    flush(t, f);
+    flushOrThrow(t, chanFile(t, fd));
     return 0;
   },
   [`${UFD}seek0(Ljava/io/FileDescriptor;J)J`]: (t: JThread, [fd, off]: any[]) => {

@@ -68,11 +68,13 @@ export class NodeBackend implements Backend {
     if (!this.writable) this.lists.set(p, names);
     return names;
   }
+  writeError?: string;
   write(p: string, data: Uint8Array) {
     try {
       fs.writeFileSync(this.host(p), data);
       return true;
-    } catch {
+    } catch (e) {
+      this.writeError = (e as NodeJS.ErrnoException).code;
       return false;
     }
   }

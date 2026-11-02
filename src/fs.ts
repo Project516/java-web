@@ -20,6 +20,8 @@ export interface Backend {
   readRange?(path: string, off: number, len: number): Uint8Array | null;
   list(path: string): string[] | null;
   write?(path: string, data: Uint8Array): boolean;
+  // the errno code (such as "ENOSPC") of the last write that failed
+  writeError?: string;
   mkdir?(path: string): boolean;
   remove?(path: string): boolean;
   rename?(from: string, to: string): boolean;
@@ -137,6 +139,10 @@ export class VFS {
   write(path: string, data: Uint8Array): boolean {
     const r = this.resolve(path);
     return !!r && r[0].writable && !!r[0].write?.(r[1], data);
+  }
+
+  writeError(path: string): string | undefined {
+    return this.resolve(path)?.[0].writeError;
   }
 
   mkdir(path: string): boolean {
