@@ -20,9 +20,18 @@ export function indexScale(c: JClass): number {
   return p ? WIDTH[p] : REF_SCALE;
 }
 
+// A primitive array's DataView over its whole buffer (small arrays share slab
+// buffers), kept in x; a clone copies x, hence the buffer check.
 function view(a: JArray): DataView {
-  const ta = a.a as Int8Array;
-  return new DataView(ta.buffer, ta.byteOffset, ta.byteLength);
+  const buf = (a.a as Int8Array).buffer;
+  let dv = a.x as DataView | undefined;
+  if (dv === undefined || dv.buffer !== buf) a.x = dv = new DataView(buf);
+  return dv;
+}
+
+// where an array offset is in its view
+function viewAt(a: JArray, off: number): number {
+  return (a.a as Int8Array).byteOffset - ARRAY_BASE_OFFSET + off;
 }
 
 function dvRead(dv: DataView, p: number, k: string): any {
@@ -65,7 +74,7 @@ export function unsafeGet(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") return o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE];
     if (sameKind(elem, k)) return o.a[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]];
-    return dvRead(view(o), off - ARRAY_BASE_OFFSET, k);
+    return dvRead(view(o), viewAt(o, off), k);
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) return o.x.statics[off - STATIC_OFFSET_BASE];
   return o.f[off];
@@ -81,7 +90,7 @@ export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE] = v;
     else if (sameKind(elem, k)) (o.a as any)[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]] = v;
-    else dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v);
+    else dvWrite(view(o), viewAt(o, off), k, v);
     return;
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) o.x.statics[off - STATIC_OFFSET_BASE] = v;
@@ -134,6 +143,26 @@ export const intrinsics: Natives = {
   [`${U}compareAndExchangeByte(Ljava/lang/Object;JBB)B`]: (t, [, o, off, e, v]) => cas(t, o, off, "B", e, v),
   [`${U}compareAndExchangeShort(Ljava/lang/Object;JSS)S`]: (t, [, o, off, e, v]) => cas(t, o, off, "S", e, v),
 };
+
+// Unaligned access, intrinsics in HotSpot too: one native-order read or write
+// instead of the Java version's byte-by-byte assembly.
+// a primitive array access that the element-indexed path cannot do
+function unaligned(o: JObject | null, off: number, k: string): o is JArray {
+  if (!(o instanceof JArray)) return false;
+  const elem = o.cls.component!.prim;
+  return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
+}
+for (const [name, k] of [["Long", "J"], ["Int", "I"], ["Short", "S"], ["Char", "C"]]) {
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, offset]) => {
+    const off = Number(offset);
+    return unaligned(o, off, k) ? dvRead(view(o), viewAt(o, off), k) : unsafeGet(t, o, offset, k);
+  };
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, offset, v]) => {
+    const off = Number(offset);
+    if (unaligned(o, off, k)) dvWrite(view(o), viewAt(o, off), k, v);
+    else unsafePut(t, o, offset, k, v);
+  };
+}
 
 function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
   if (t.parkPermit) {
