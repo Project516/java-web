@@ -156,12 +156,16 @@ const runtime = {
   memberTarget,
   // Fills a VarHandle call site's cache [handle, implementation] when the
   // guard would link straight to the implementation: it decides from the
-  // handle's final fields and the site's AccessDescriptor, so the same handle
-  // always takes the same path. Exact and indirect handles are left uncached.
+  // handle's final and stable fields and the site's AccessDescriptor, so the
+  // same handle always takes the same path. Indirect handles, and exact ones
+  // whose type check has not passed yet, are left uncached.
   vhTarget(t: JThread, cell: any[], h: JObject | null, ad: JObject) {
     const vm = t.vm;
-    if (h === null || vm.getField(h, VH, "exact")) return;
-    if (h.cls.selectMethod(VH_CHECK)?.cls.name !== VH) return;
+    if (h === null || h.cls.selectMethod(VH_CHECK)?.cls.name !== VH) return;
+    if (vm.getField(h, VH, "exact")) {
+      const exact = (vm.getField(h, VH, "methodTypeTable") as JArray | null)?.a[vm.getField(ad, VH_AD, "type")];
+      if (!exact || exact !== vm.getField(ad, VH_AD, "symbolicMethodTypeExact")) return;
+    }
     const vform = vm.getField(h, VH, "vform") as JObject;
     const types = vm.getField(vform, VF, "methodType_table") as JArray;
     if (types.a[vm.getField(ad, VH_AD, "type")] !== vm.getField(ad, VH_AD, "symbolicMethodTypeErased")) return;

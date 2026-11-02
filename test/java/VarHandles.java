@@ -11,7 +11,7 @@ public class VarHandles {
   long total;
   static int shared;
 
-  static final VarHandle COUNT, TOTAL, SHARED, INTS, BE, LE;
+  static final VarHandle COUNT, TOTAL, SHARED, INTS, BE, LE, LONGS;
   static {
     try {
       var l = MethodHandles.lookup();
@@ -21,6 +21,7 @@ public class VarHandles {
       INTS = MethodHandles.arrayElementVarHandle(int[].class);
       BE = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.BIG_ENDIAN);
       LE = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
+      LONGS = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.BIG_ENDIAN);
     } catch (ReflectiveOperationException e) {
       throw new ExceptionInInitializerError(e);
     }
@@ -68,5 +69,20 @@ public class VarHandles {
       }
     }
     System.out.println(o.count + " wrong type " + wrong + " out of bounds " + oob);
+
+    // exact handles at a shared site: an int view matches put's call, a long
+    // view does not, and a plain long view converts the int
+    VarHandle[] hs = {BE.withInvokeExactBehavior(), LONGS.withInvokeExactBehavior(), LONGS};
+    wrong = 0;
+    mix = 0;
+    for (int i = 0; i < 30000; i++) {
+      try {
+        put(hs[i % 3], b, i & 7, i);
+      } catch (WrongMethodTypeException e) {
+        wrong++;
+      }
+      mix = mix * 31 + get(BE, b, 4);
+    }
+    System.out.println("exact wrong type " + wrong + " " + mix);
   }
 }
