@@ -40,7 +40,7 @@ public class CryptoMath {
     KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
     SecureRandom keyRnd = SecureRandom.getInstance("SHA1PRNG");
     keyRnd.setSeed(7);
-    kpg.initialize(1024, keyRnd);
+    kpg.initialize(2048, keyRnd);
     RSAPrivateCrtKey k = (RSAPrivateCrtKey) kpg.generateKeyPair().getPrivate();
     System.out.println("rsa " + hash(k.getModulus()) + " " + hash(k.getPrivateExponent()));
     System.out.println("prime " + BigInteger.probablePrime(512, rnd).bitLength() + " " + new BigInteger("1000000007").isProbablePrime(50));
