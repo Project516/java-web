@@ -1,7 +1,7 @@
-// The methods HotSpot replaces with intrinsics for SHA digests and BigInteger
-// arithmetic. As bytecode they run on Java longs, which are JS BigInts here,
-// so a 64-bit step allocates; these do the same work on numbers, or on one
-// BigInt for a whole multiplication.
+// The methods HotSpot replaces with intrinsics for SHA digests, AES blocks
+// and BigInteger arithmetic. As bytecode they run on Java longs, which are JS
+// BigInts here, so a 64-bit step allocates; these do the same work on
+// numbers, or on one BigInt for a whole multiplication.
 
 import type { JArray, JObject } from "../runtime.ts";
 import type { JThread } from "../thread.ts";
@@ -12,6 +12,7 @@ const SHA1 = "sun/security/provider/SHA";
 const SHA2 = "sun/security/provider/SHA2";
 const SHA5 = "sun/security/provider/SHA5";
 const BI = "java/math/BigInteger";
+const AES = "com/sun/crypto/provider/AESCrypt";
 
 // the `state` field's slot in each digest class
 const stateSlots = new WeakMap<JVM, Map<string, number>>();
@@ -213,7 +214,55 @@ function montgomery(a: bigint, b: bigint, nArr: Int32Array, len: number, inv: bi
   return product;
 }
 
+// AESCrypt's round tables and the slots of its key schedule fields
+interface Aes { T1: Int32Array; T2: Int32Array; T3: Int32Array; T4: Int32Array; S: Int8Array; K: number; limit: number }
+const aesTables = new WeakMap<JVM, Aes>();
+function aes(t: JThread, self: JObject): Aes {
+  let a = aesTables.get(t.vm);
+  if (!a) {
+    const vm = t.vm, c = self.cls;
+    const table = (name: string) => (vm.getStatic(c, name) as JArray).a as any;
+    a = {
+      T1: table("T1"), T2: table("T2"), T3: table("T3"), T4: table("T4"), S: table("S"),
+      K: vm.slotOf(AES, "K"), limit: vm.slotOf(AES, "limit"),
+    };
+    aesTables.set(vm, a);
+  }
+  return a;
+}
+
+// the last round's four output bytes for one column
+function aesLast(out: Int8Array, o: number, S: Int8Array, a: number, b: number, c: number, d: number, k: number) {
+  out[o] = S[a >>> 24] ^ (k >>> 24);
+  out[o + 1] = S[(b >>> 16) & 255] ^ (k >>> 16);
+  out[o + 2] = S[(c >>> 8) & 255] ^ (k >>> 8);
+  out[o + 3] = S[d & 255] ^ k;
+}
+
+// AESCrypt.implEncryptBlock; callers have checked the bounds
+function aesEncrypt(t: JThread, self: JObject, inp: Int8Array, i: number, out: Int8Array, o: number) {
+  const { T1, T2, T3, T4, S, K: kSlot, limit: limitSlot } = aes(t, self);
+  const K = (self.f[kSlot] as JArray).a as Int32Array, limit = self.f[limitSlot] as number;
+  let t0 = word(inp, i) ^ K[0], t1 = word(inp, i + 4) ^ K[1], t2 = word(inp, i + 8) ^ K[2], t3 = word(inp, i + 12) ^ K[3];
+  let k = 4;
+  while (k < limit) {
+    const a0 = T1[t0 >>> 24] ^ T2[(t1 >>> 16) & 255] ^ T3[(t2 >>> 8) & 255] ^ T4[t3 & 255] ^ K[k];
+    const a1 = T1[t1 >>> 24] ^ T2[(t2 >>> 16) & 255] ^ T3[(t3 >>> 8) & 255] ^ T4[t0 & 255] ^ K[k + 1];
+    const a2 = T1[t2 >>> 24] ^ T2[(t3 >>> 16) & 255] ^ T3[(t0 >>> 8) & 255] ^ T4[t1 & 255] ^ K[k + 2];
+    t3 = T1[t3 >>> 24] ^ T2[(t0 >>> 16) & 255] ^ T3[(t1 >>> 8) & 255] ^ T4[t2 & 255] ^ K[k + 3];
+    t0 = a0; t1 = a1; t2 = a2;
+    k += 4;
+  }
+  aesLast(out, o, S, t0, t1, t2, t3, K[k]);
+  aesLast(out, o + 4, S, t1, t2, t3, t0, K[k + 1]);
+  aesLast(out, o + 8, S, t2, t3, t0, t1, K[k + 2]);
+  aesLast(out, o + 12, S, t3, t0, t1, t2, K[k + 3]);
+}
+
 export const intrinsics: Natives = {
+  [`${AES}.implEncryptBlock([BI[BI)V`]: (t, [self, inp, i, out, o]) =>
+    aesEncrypt(t, self, (inp as JArray).a as Int8Array, i, (out as JArray).a as Int8Array, o),
+
   [`${SHA1}.implCompress0([BI)V`]: (t, [self, buf, ofs]) =>
     sha1(state(t, self, SHA1).a as Int32Array, (buf as JArray).a as Int8Array, ofs),
   [`${SHA2}.implCompress0([BI)V`]: (t, [self, buf, ofs]) =>
