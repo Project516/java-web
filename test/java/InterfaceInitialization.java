@@ -28,9 +28,17 @@ public class InterfaceInitialization {
   interface Child extends Parent {
     String VALUE = mark("child");
   }
+  interface PrivateOnly {
+    String VALUE = mark("private interface");
+    private void helper() {}
+  }
+  static class PrivateImpl implements PrivateOnly {
+    static String VALUE = mark("private class");
+  }
 
   public static void main(String[] args) {
     System.out.println(Child.VALUE);
     System.out.println(Impl.VALUE);
+    System.out.println(PrivateImpl.VALUE);
   }
 }

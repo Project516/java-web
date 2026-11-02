@@ -11,6 +11,11 @@ public class BooleanStore {
   }
 
   public static void main(String[] args) throws Exception {
+    try {
+      Stores.store(null);
+    } catch (NullPointerException e) {
+      System.out.println("null store: " + e.getClass().getName());
+    }
     byte[] bytes;
     try (var in = BooleanStore.class.getResourceAsStream("BooleanStore$Stores.class")) {
       bytes = in.readAllBytes();
