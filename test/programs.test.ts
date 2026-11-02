@@ -76,6 +76,22 @@ test("-Xmx caps an allocation under the command", () => {
   assert.match(max.stdout, /^max 18874368$/m);
 });
 
+// ulimit -f makes the host refuse writes past 4 KB; SIGXFSZ ignored, they fail with EFBIG
+test("writes the host refuses", { skip: process.platform !== "linux" }, () => {
+  const classes = join(root, "build", "test-full");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "full", "Full.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-full-"));
+  const limited = (cmd: string, args: string[]) =>
+    spawnSync("bash", ["-c", 'trap "" XFSZ; ulimit -f 4; exec "$@"', "bash", cmd, ...args, "-cp", classes, "Full", join(dir, "out.bin")], { encoding: "utf8" });
+  try {
+    const ref = limited(hotspot("java"), []);
+    const got = limited(process.execPath, [join(root, "src", "node.ts")]);
+    assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+
 test("stdout closed by its reader", async () => {
   const classes = join(root, "build", "test-pipe");
   execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "pipe", "Pipe.java")]);
