@@ -37,7 +37,7 @@ jobs:
       - name: Node entry on the built dist/
         run: node --expose-gc --test test/image.test.ts
 
+  # master only takes up-to-date pull requests, so this already ran on the merged code
   jtreg:
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/jtreg.yml
-    with:
-      full: ${{ github.event_name == 'push' }}
