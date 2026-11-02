@@ -5,7 +5,7 @@ import type { JObject } from "../runtime.ts";
 import { preCloseSock } from "../sockets.ts";
 import { sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
-import { closeFd, endsInDot, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath } from "./io.ts";
+import { closeFd, endsInDot, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
@@ -267,15 +267,16 @@ function mappings(t: JThread): Map<number, Mapping> {
 }
 
 // Copies mapped bytes from addr on into the file, which stays the size it is.
-function writeBack(t: JThread, m: Mapping, base: number, addr: number, len: number) {
+// false if the host refused the bytes
+function writeBack(t: JThread, m: Mapping, base: number, addr: number, len: number): boolean {
   const at = m.pos + addr - base;
   const n = Math.min(len, m.f.size - at);
-  if (n <= 0) return;
+  if (n <= 0) return true;
   const save = m.f.pos;
   m.f.pos = at;
   m.f.write(t.vm.mem.u8.slice(addr, addr + n));
   m.f.pos = save;
-  flush(t, m.f);
+  return flush(t, m.f);
 }
 
 function readAt(t: JThread, fdObj: JObject, addr: bigint, len: number, pos: number | null): number {
@@ -386,7 +387,7 @@ Object.assign(natives, {
     const from = Number(addr), to = from + Number(len);
     for (const [base, m] of mappings(t)) {
       const start = Math.max(from, base), end = Math.min(to, base + m.len);
-      if (start < end) writeBack(t, m, base, start, end - start);
+      if (start < end && !writeBack(t, m, base, start, end - start)) throw writeFailed(t, m.f.path);
     }
   },
   "java/nio/MappedMemoryUtils.isLoaded0(JJJ)Z": () => 1,
@@ -406,7 +407,9 @@ Object.assign(natives, {
   "sun/nio/ch/UnixDispatcher.init()V": () => undefined,
   "sun/nio/ch/UnixDispatcher.preClose0(Ljava/io/FileDescriptor;)V": (t: JThread, [fd]: any[]) => preCloseSock(t.vm.state, fdNum(t, fd)),
   "sun/nio/ch/UnixDispatcher.close0(Ljava/io/FileDescriptor;)V": (t: JThread, [fd]: any[]) => {
-    closeFd(t, fdNum(t, fd));
+    const n = fdNum(t, fd);
+    // closed even when close reports a failed write
     t.vm.setField(fd, FD, "fd", -1);
+    closeFd(t, n);
   },
 });

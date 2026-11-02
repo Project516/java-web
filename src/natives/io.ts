@@ -219,7 +219,7 @@ export function flushOrThrow(t: JThread, f: OpenFile) {
   if (!flush(t, f)) throw writeFailed(t, f.path);
 }
 
-function writeFailed(t: JThread, path: string): PendingThrow {
+export function writeFailed(t: JThread, path: string): PendingThrow {
   return new PendingThrow("java/io/IOException", ERRNO[t.vm.fs.writeError(path) ?? ""] ?? "Input/output error");
 }
 
@@ -333,8 +333,9 @@ export const natives: Natives = {
   },
   "java/io/FileDescriptor.close0()V": (t, [fdObj]) => {
     const fd = t.vm.getField(fdObj, "java/io/FileDescriptor", "fd");
-    if (fd > 2) closeFd(t, fd);
+    // closed even when close reports a failed write
     t.vm.setField(fdObj, "java/io/FileDescriptor", "fd", -1);
+    if (fd > 2) closeFd(t, fd);
   },
 
   [`${FOS}.open0(Ljava/lang/String;Z)V`]: (t, [self, path, append]) =>

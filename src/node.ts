@@ -68,15 +68,19 @@ export class NodeBackend implements Backend {
     if (!this.writable) this.lists.set(p, names);
     return names;
   }
-  writeError?: string;
+  private writeErrors = new Map<string, string>();
   write(p: string, data: Uint8Array) {
     try {
       fs.writeFileSync(this.host(p), data);
+      this.writeErrors.delete(p);
       return true;
     } catch (e) {
-      this.writeError = (e as NodeJS.ErrnoException).code;
+      this.writeErrors.set(p, (e as NodeJS.ErrnoException).code ?? "EIO");
       return false;
     }
+  }
+  writeError(p: string) {
+    return this.writeErrors.get(p);
   }
   denied(p: string) {
     const host = this.host(p);
