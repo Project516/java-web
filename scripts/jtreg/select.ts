@@ -23,7 +23,7 @@ function loaded(): Set<string> {
     if (seen.has(file)) return;
     seen.add(file);
     const text = readFileSync(join(root, file), "utf8");
-    for (const m of text.matchAll(/(?:from|import)\s*\(?\s*"(\.{1,2}\/[^"]+\.ts)"/g)) visit(join(dirname(file), m[1]));
+    for (const m of text.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+\.ts)["']/g)) visit(join(dirname(file), m[1]));
   };
   visit("src/node.ts");
   visit("scripts/jtreg/run.ts");
