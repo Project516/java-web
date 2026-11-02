@@ -48,7 +48,8 @@ Node, which is how the tests run.
   value conversion; `src/bridge.ts` the JS proxies over it
 - `src/natives/` JS implementations of JDK native methods, by package;
   `java2d*.ts` port libawt's Java2D loops and must match HotSpot's pixels;
-  `font*.ts` are the font natives (scaler, fontconfig, layout) over one TrueType font
+  `font*.ts` are the font natives (scaler, fontconfig, layout) over one TrueType font;
+  `crypto.ts` the SHA and BigInteger methods HotSpot replaces with intrinsics
 - `src/sockets.ts` sockets (`Sock`, POSIX readiness) and the in-VM loopback backend;
   `src/net-node.ts` host sockets, DNS and interfaces for Node
 - `src/node.ts` Node entry, over `build/jdk` or, built as `dist/node.js`, the
