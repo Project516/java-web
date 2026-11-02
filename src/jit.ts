@@ -16,7 +16,7 @@
 
 import { Tag, utf8 } from "./classfile.ts";
 import {
-  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, newArrayData, parseMethodDesc,
+  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc,
 } from "./runtime.ts";
 import { memberTarget } from "./natives/invoke.ts";
 import { concatStrings } from "./natives/strings.ts";
@@ -223,6 +223,7 @@ const runtime = {
   },
   PUSHED,
   INTERPRET,
+  longToFloat,
   npe: npeAt,
   arr(o: JArray | null, i: number, pc?: number): any {
     if (o === null) throw at(new PendingThrow("java/lang/NullPointerException"), pc);
@@ -744,8 +745,11 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x43: case 0x44: case 0x45: case 0x46: emit(`${L(op - 0x43)}=${top()};`); break;
     case 0x47: case 0x48: case 0x49: case 0x4a: emit(`${L(op - 0x47)}=${top(1)};`); break;
     case 0x4b: case 0x4c: case 0x4d: case 0x4e: emit(`${L(op - 0x4b)}=${top()};`); break;
-    case 0x4f: case 0x51: case 0x54: case 0x55: case 0x56:
+    case 0x4f: case 0x51: case 0x55: case 0x56:
       emit(`if(${top(2)}===null)rt.npe(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top()};`);
+      break;
+    case 0x54:
+      emit(`if(${top(2)}===null)rt.npe(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top(2)}.cls.name==="[Z"?${top()}&1:${top()};`);
       break;
     case 0x50: case 0x52:
       emit(`if(${top(3)}===null)rt.npe(${pc});a=${top(3)}.a;if(${top(2)}>>>0>=a.length)rt.arr(${top(3)},${top(2)},${pc});a[${top(2)}]=${top(1)};`);
@@ -800,7 +804,7 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x86: emit(`${top()}=Math.fround(${top()});`); break;
     case 0x87: break;
     case 0x88: emit(`${top(1)}=Number(BigInt.asIntN(32,${top(1)}));`); break;
-    case 0x89: emit(`${top(1)}=Math.fround(Number(${top(1)}));`); break;
+    case 0x89: emit(`${top(1)}=rt.longToFloat(${top(1)});`); break;
     case 0x8a: emit(`${top(1)}=Number(${top(1)});`); break;
     case 0x8b: emit(`${top()}=rt.f2i(${top()});`); break;
     case 0x8c: emit(`${top()}=rt.f2l(${top()});`); break;
@@ -1039,7 +1043,7 @@ const BINARY: Record<number, (a: string, b: string) => string> = {
 const UNARY: Record<number, (a: string) => string> = {
   0x74: (a) => `((-${a})|0)`, 0x75: (a) => `BigInt.asIntN(64,-${a})`, 0x76: (a) => `(-${a})`, 0x77: (a) => `(-${a})`,
   0x85: (a) => `BigInt(${a})`, 0x86: (a) => `Math.fround(${a})`, 0x87: (a) => a, 0x88: (a) => `Number(BigInt.asIntN(32,${a}))`,
-  0x89: (a) => `Math.fround(Number(${a}))`, 0x8a: (a) => `Number(${a})`, 0x8b: (a) => `rt.f2i(${a})`, 0x8c: (a) => `rt.f2l(${a})`,
+  0x89: (a) => `rt.longToFloat(${a})`, 0x8a: (a) => `Number(${a})`, 0x8b: (a) => `rt.f2i(${a})`, 0x8c: (a) => `rt.f2l(${a})`,
   0x8d: (a) => a, 0x8e: (a) => `rt.f2i(${a})`, 0x8f: (a) => `rt.f2l(${a})`, 0x90: (a) => `Math.fround(${a})`,
   0x91: (a) => `((${a}<<24)>>24)`, 0x92: (a) => `(${a}&65535)`, 0x93: (a) => `((${a}<<16)>>16)`,
 };

@@ -168,6 +168,15 @@ export type ArrayData =
   | Int8Array | Uint16Array | Int16Array | Int32Array | Float32Array | Float64Array
   | BigInt64Array | (JObject | null)[];
 
+// Preserve discarded bits as a sticky bit before rounding a long to float.
+export function longToFloat(v: bigint): number {
+  const negative = v < 0n;
+  const magnitude = negative ? -v : v;
+  if (magnitude < (1n << 53n)) return Math.fround(Number(v));
+  const rounded = (magnitude >> 11n) | ((magnitude & 2047n) === 0n ? 0n : 1n);
+  return Math.fround(Number(negative ? -rounded : rounded) * 2048);
+}
+
 export class JArray extends JObject {
   a: ArrayData;
   constructor(cls: JClass, a: ArrayData) {
