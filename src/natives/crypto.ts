@@ -28,6 +28,8 @@ function word(b: Int8Array, p: number): number {
   return (b[p] << 24) | ((b[p + 1] & 255) << 16) | ((b[p + 2] & 255) << 8) | (b[p + 3] & 255);
 }
 
+// Scratch for one block, shared: a VM runs all its Java threads on one JS
+// thread and these natives never yield, so calls cannot interleave.
 const w32 = new Int32Array(80);
 
 function sha1(s: Int32Array, b: Int8Array, ofs: number) {
