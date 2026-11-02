@@ -20,33 +20,38 @@ export function indexScale(c: JClass): number {
   return p ? WIDTH[p] : REF_SCALE;
 }
 
+// A primitive array's DataView, kept in x (unused otherwise for arrays, and
+// not copied by clone).
 function view(a: JArray): DataView {
-  const ta = a.a as Int8Array;
-  return new DataView(ta.buffer, ta.byteOffset, ta.byteLength);
+  const v = a.x as DataView | undefined;
+  if (v !== undefined) return v;
+  const d = a.a as Int8Array;
+  return (a.x = new DataView(d.buffer, d.byteOffset, d.byteLength));
 }
 
-function dvRead(dv: DataView, p: number, k: string): any {
+// native order is little-endian
+function dvRead(dv: DataView, p: number, k: string, le = true): any {
   switch (k) {
     case "Z": return dv.getInt8(p) !== 0 ? 1 : 0;
     case "B": return dv.getInt8(p);
-    case "S": return dv.getInt16(p, true);
-    case "C": return dv.getUint16(p, true);
-    case "I": return dv.getInt32(p, true);
-    case "J": return dv.getBigInt64(p, true);
-    case "F": return dv.getFloat32(p, true);
-    case "D": return dv.getFloat64(p, true);
+    case "S": return dv.getInt16(p, le);
+    case "C": return dv.getUint16(p, le);
+    case "I": return dv.getInt32(p, le);
+    case "J": return dv.getBigInt64(p, le);
+    case "F": return dv.getFloat32(p, le);
+    case "D": return dv.getFloat64(p, le);
   }
   throw new Error(`bad kind ${k}`);
 }
 
-function dvWrite(dv: DataView, p: number, k: string, v: any) {
+function dvWrite(dv: DataView, p: number, k: string, v: any, le = true) {
   switch (k) {
     case "Z": case "B": dv.setInt8(p, v); return;
-    case "S": case "C": dv.setInt16(p, v, true); return;
-    case "I": dv.setInt32(p, v, true); return;
-    case "J": dv.setBigInt64(p, v, true); return;
-    case "F": dv.setFloat32(p, v, true); return;
-    case "D": dv.setFloat64(p, v, true); return;
+    case "S": case "C": dv.setInt16(p, v, le); return;
+    case "I": dv.setInt32(p, v, le); return;
+    case "J": dv.setBigInt64(p, v, le); return;
+    case "F": dv.setFloat32(p, v, le); return;
+    case "D": dv.setFloat64(p, v, le); return;
   }
   throw new Error(`bad kind ${k}`);
 }
@@ -134,6 +139,39 @@ export const intrinsics: Natives = {
   [`${U}compareAndExchangeByte(Ljava/lang/Object;JBB)B`]: (t, [, o, off, e, v]) => cas(t, o, off, "B", e, v),
   [`${U}compareAndExchangeShort(Ljava/lang/Object;JSS)S`]: (t, [, o, off, e, v]) => cas(t, o, off, "S", e, v),
 };
+
+// Unaligned access, intrinsics in HotSpot too: one native-order read or write
+// instead of the Java version's byte-by-byte assembly.
+// a primitive array access that the element-indexed path cannot do
+function unaligned(o: JObject | null, off: number, k: string): o is JArray {
+  if (!(o instanceof JArray)) return false;
+  const elem = o.cls.component!.prim;
+  return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
+}
+// Unsafe.convEndian, through a shared scratch view: a VM runs its Java
+// threads on one JS thread and this never yields, so calls cannot interleave.
+const swapView = new DataView(new ArrayBuffer(8));
+function convEndian(k: string, v: any, bigEndian: boolean): any {
+  if (!bigEndian) return v;
+  dvWrite(swapView, 0, k, v);
+  return dvRead(swapView, 0, k, false);
+}
+for (const [name, k] of [["Long", "J"], ["Int", "I"], ["Short", "S"], ["Char", "C"]]) {
+  const get = (t: JThread, o: JObject | null, offset: bigint, bigEndian: boolean) => {
+    const off = Number(offset);
+    if (unaligned(o, off, k)) return dvRead(view(o), off - ARRAY_BASE_OFFSET, k, !bigEndian);
+    return convEndian(k, unsafeGet(t, o, offset, k), bigEndian);
+  };
+  const put = (t: JThread, o: JObject | null, offset: bigint, v: any, bigEndian: boolean) => {
+    const off = Number(offset);
+    if (unaligned(o, off, k)) dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v, !bigEndian);
+    else unsafePut(t, o, offset, k, convEndian(k, v, bigEndian));
+  };
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, off]) => get(t, o, off, false);
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;JZ)${k}`] = (t, [, o, off, be]) => get(t, o, off, be !== 0);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, off, v]) => put(t, o, off, v, false);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k}Z)V`] = (t, [, o, off, v, be]) => put(t, o, off, v, be !== 0);
+}
 
 function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
   if (t.parkPermit) {

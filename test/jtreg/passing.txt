@@ -1711,6 +1711,7 @@ java/security/SecureRandom/GetAlgorithm.java
 java/security/SecureRandom/GetInstanceTest.java
 java/security/SecureRandom/MultiThreadTest.java
 java/security/SecureRandom/NextBytesNull.java
+java/security/SecureRandom/NoSync.java
 java/security/SecureRandom/Serialize.java
 java/security/SecureRandom/SerializedSeedTest.java
 java/security/SecureRandom/TestStrong.java

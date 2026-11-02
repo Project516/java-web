@@ -4,10 +4,13 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.util.HexFormat;
+import java.util.Arrays;
+import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-// SHA digests and BigInteger arithmetic, at sizes that reach their intrinsics.
+// SHA digests, AES and BigInteger arithmetic, at sizes that reach their intrinsics.
 public class CryptoMath {
   static final HexFormat HEX = HexFormat.of();
 
@@ -27,6 +30,25 @@ public class CryptoMath {
     Mac mac = Mac.getInstance("HmacSHA512");
     mac.init(new SecretKeySpec(data, 0, 40, "HmacSHA512"));
     System.out.println("hmac " + HEX.formatHex(mac.doFinal(data)));
+
+    for (int keyLen : new int[] {16, 24, 32}) {
+      SecretKeySpec key = new SecretKeySpec(data, keyLen, keyLen, "AES");
+      IvParameterSpec iv = new IvParameterSpec(data, 100, 16);
+      for (String mode : new String[] {"AES/ECB/NoPadding", "AES/CBC/PKCS5Padding", "AES/CTR/NoPadding"}) {
+        Cipher c = Cipher.getInstance(mode);
+        c.init(Cipher.ENCRYPT_MODE, key, mode.contains("ECB") ? null : iv);
+        byte[] enc = c.doFinal(data, 5, 160);
+        c.init(Cipher.DECRYPT_MODE, key, mode.contains("ECB") ? null : iv);
+        boolean back = Arrays.equals(c.doFinal(enc), Arrays.copyOfRange(data, 5, 165));
+        System.out.println(mode + " " + keyLen + " " + HEX.formatHex(MessageDigest.getInstance("SHA-256").digest(enc), 0, 8) + " " + back);
+      }
+      // in place, in and out overlapping
+      Cipher c = Cipher.getInstance("AES/ECB/NoPadding");
+      c.init(Cipher.ENCRYPT_MODE, key);
+      byte[] buf = Arrays.copyOf(data, 64);
+      c.doFinal(buf, 0, 48, buf, 16);
+      System.out.println("in place " + keyLen + " " + HEX.formatHex(buf, 16, 40));
+    }
 
     SecureRandom rnd = SecureRandom.getInstance("SHA1PRNG");
     rnd.setSeed(42);

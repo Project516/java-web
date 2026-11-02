@@ -137,6 +137,11 @@ const STRING_BUILDER = "java/lang/StringBuilder";
 
 const LONG_MIN = -(1n << 63n), LONG_MAX = (1n << 63n) - 1n;
 
+const VH = "java/lang/invoke/VarHandle";
+const VH_AD = "java/lang/invoke/VarHandle$AccessDescriptor";
+const VF = "java/lang/invoke/VarForm";
+const VH_CHECK = "checkAccessModeThenIsDirect(Ljava/lang/invoke/VarHandle$AccessDescriptor;)Z";
+
 const runtime = {
   JObject, JArray, Frame, NativeFrame, JavaThrow, PendingThrow, newArrayData,
   hooks,
@@ -149,6 +154,27 @@ const runtime = {
     return memberTarget(t, t.vm.getField(form, "java/lang/invoke/LambdaForm", "vmentry"));
   },
   memberTarget,
+  // Fills a VarHandle call site's cache [handle, implementation] when the
+  // guard would link straight to the implementation: it decides from the
+  // handle's final and stable fields and the site's AccessDescriptor, so the
+  // same handle always takes the same path. Indirect handles, and exact ones
+  // whose type check has not passed yet, are left uncached.
+  vhTarget(t: JThread, cell: any[], h: JObject | null, ad: JObject) {
+    const vm = t.vm;
+    // IndirectVarHandle overrides the check and is never direct
+    if (h === null || h.cls.selectMethod(VH_CHECK)?.cls.name !== VH) return;
+    if (vm.getField(h, VH, "exact")) {
+      const exact = (vm.getField(h, VH, "methodTypeTable") as JArray | null)?.a[vm.getField(ad, VH_AD, "type")];
+      if (!exact || exact !== vm.getField(ad, VH_AD, "symbolicMethodTypeExact")) return;
+    }
+    const vform = vm.getField(h, VH, "vform") as JObject;
+    const types = vm.getField(vform, VF, "methodType_table") as JArray;
+    if (types.a[vm.getField(ad, VH_AD, "type")] !== vm.getField(ad, VH_AD, "symbolicMethodTypeErased")) return;
+    const mn = (vm.getField(vform, VF, "memberName_table") as JArray | null)?.a[vm.getField(ad, VH_AD, "mode")] as JObject | null;
+    if (!mn) return;
+    cell[1] = memberTarget(t, mn);
+    cell[0] = h;
+  },
   virtualTarget(t: JThread, mn: JObject, recv: JObject | null, pc: number): JMethod {
     const m = memberTarget(t, mn);
     if (recv === null) npeAt(pc);
@@ -1196,7 +1222,15 @@ function genPolymorphic(g: Gen, pc: number, next: number, d: number, target: JMe
       let dd = d;
       let code = "";
       if (link.m.argSlots === n + 1) { code = `s${dd}=${K(link.appendix)};`; dd++; }
-      return code + genInvoke(g, 0xb8, pc, next, dd, link.m, g.top.m.cls, d, false);
+      code += genInvoke(g, 0xb8, pc, next, dd, link.m, g.top.m.cls, d, false);
+      if (link.m.cls.name !== "java/lang/invoke/VarHandleGuards" || !link.appendix) return code;
+      // the handle seen last here: call its implementation directly
+      const cell = K([null, null]);
+      const push = target.ret === "V" ? "" : `s${base}=t.ret;`;
+      return `if(${args[0]}!==null&&${args[0]}===${cell}[0]){f.pc=${pc};tm=${cell}[1];` +
+        `if(tm.jit!==null&&tm.cls.state===${INITIALIZED}&&(cf=rt.enter(t,tm,null))!==null){` +
+        `r=tm.jit(t,cf${args.map((x) => "," + x).join("")});if(r!==0){t.unpool(cf);${exit(pc, base, EXIT_SUSPEND)}}${push}}` +
+        `else{${call(pc, d)}}}else{rt.vhTarget(t,${cell},${args[0]},${K(link.appendix)});${code}}`;
     }
   }
   const push = target.ret === "V" ? "" : `s${base}=t.ret;`;
