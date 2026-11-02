@@ -148,7 +148,8 @@ function unaligned(o: JObject | null, off: number, k: string): o is JArray {
   const elem = o.cls.component!.prim;
   return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
 }
-// Unsafe.convEndian, through a scratch view
+// Unsafe.convEndian, through a shared scratch view: a VM runs its Java
+// threads on one JS thread and this never yields, so calls cannot interleave.
 const swapView = new DataView(new ArrayBuffer(8));
 function convEndian(k: string, v: any, bigEndian: boolean): any {
   if (!bigEndian) return v;

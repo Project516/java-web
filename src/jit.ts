@@ -161,6 +161,7 @@ const runtime = {
   // whose type check has not passed yet, are left uncached.
   vhTarget(t: JThread, cell: any[], h: JObject | null, ad: JObject) {
     const vm = t.vm;
+    // IndirectVarHandle overrides the check and is never direct
     if (h === null || h.cls.selectMethod(VH_CHECK)?.cls.name !== VH) return;
     if (vm.getField(h, VH, "exact")) {
       const exact = (vm.getField(h, VH, "methodTypeTable") as JArray | null)?.a[vm.getField(ad, VH_AD, "type")];

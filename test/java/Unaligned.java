@@ -34,6 +34,12 @@ public class Unaligned {
               + " " + buf.getFloat(28) + " " + buf.getInt(at + 1));
         }
       }
+      // a clone written through a view after the original was
+      byte[] orig = new byte[8];
+      ints.set(orig, 1, 0x11223344);
+      byte[] copy = orig.clone();
+      ints.set(copy, 1, 0x55667788);
+      System.out.println(order + " clone " + hex.formatHex(orig) + " " + hex.formatHex(copy));
       // an int buffer over a byte buffer, read through a long view
       ByteBuffer bb = ByteBuffer.allocate(40).order(order);
       bb.asIntBuffer().put(new int[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});

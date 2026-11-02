@@ -239,7 +239,8 @@ function aesLast(out: Int8Array, o: number, S: Int8Array, a: number, b: number, 
   out[o + 3] = S[d & 255] ^ k;
 }
 
-// AESCrypt.implEncryptBlock; callers have checked the bounds
+// AESCrypt.implEncryptBlock. Like HotSpot's intrinsic it does no bounds checks:
+// its callers (FeedbackCipher.encrypt and the modes) make them.
 function aesEncrypt(t: JThread, self: JObject, inp: Int8Array, i: number, out: Int8Array, o: number) {
   const { T1, T2, T3, T4, S, K: kSlot, limit: limitSlot } = aes(t, self);
   const K = (self.f[kSlot] as JArray).a as Int32Array, limit = self.f[limitSlot] as number;
