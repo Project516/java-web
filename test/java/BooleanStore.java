@@ -30,8 +30,13 @@ public class BooleanStore {
     if (changes != 1) throw new AssertionError(changes);
     var method = new Loader().define(bytes).getMethod("store", boolean[].class);
     for (int i = 0; i < 1000; i++) {
-      int value = (int) method.invoke(null, new boolean[1]);
+      int value = (int) method.invoke(null, new boolean[] { true });
       if (i == 0 || i == 999) System.out.println(value);
+    }
+    try {
+      method.invoke(null, (Object) null);
+    } catch (java.lang.reflect.InvocationTargetException e) {
+      System.out.println("hot null store: " + e.getCause().getClass().getName());
     }
   }
 }
