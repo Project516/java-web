@@ -2,7 +2,7 @@
 // what HotSpot prints, with the same exit code.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -110,6 +110,29 @@ function flags(file: string, tool: string): string[] {
   const m = new RegExp(`^// ${tool}: (.*)$`, "m").exec(readFileSync(join(src, file), "utf8"));
   return m ? m[1].split(" ") : [];
 }
+
+test("host symlinks resolve before parent components", { skip: process.platform === "win32" }, () => {
+  const classes = join(root, "build", "test-paths");
+  mkdirSync(classes, { recursive: true });
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "paths", "SymlinkDotDot.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-links-"));
+  const setup = (name: string) => {
+    const work = join(dir, name, "work"), target = join(dir, name, "target");
+    mkdirSync(work, { recursive: true });
+    mkdirSync(join(target, "dir"), { recursive: true });
+    symlinkSync(join(target, "dir"), join(work, "link"), "dir");
+    writeFileSync(join(work, "file"), "lexical");
+    writeFileSync(join(target, "file"), "target");
+    return ["-cp", classes, "SymlinkDotDot", work, target];
+  };
+  try {
+    const ref = spawnSync(hotspot("java"), setup("hotspot"), { encoding: "utf8" });
+    const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...setup("vm")], { encoding: "utf8" });
+    assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function javacFlags(file: string): string[] {
   return flags(file, "javac");

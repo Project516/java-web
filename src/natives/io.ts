@@ -4,7 +4,6 @@
 import { JArray, JObject } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
-import { normalize } from "../fs.ts";
 import type { Stat, VFS } from "../fs.ts";
 import { closeSockFd } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
@@ -146,7 +145,7 @@ export function endsInDot(p: string): boolean {
 }
 
 export function resolvePath(t: JThread, p: string): string {
-  return normalize(p.startsWith("/") ? p : `${t.vm.opts.cwd ?? "/"}/${p}`);
+  return t.vm.fs.resolvePath(p.startsWith("/") ? p : `${t.vm.opts.cwd ?? "/"}/${p}`);
 }
 
 function notFound(path: string, why = "No such file or directory"): never {

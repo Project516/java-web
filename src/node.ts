@@ -35,6 +35,18 @@ export class NodeBackend implements Backend {
   private host(p: string) {
     return this.root === "/" ? p : this.root + p;
   }
+  resolvePath(p: string): string | null {
+    if (this.root !== "/") return null;
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      try {
+        return fs.realpathSync.native(path.dirname(p)) + "/" + path.basename(p);
+      } catch {
+        return null;
+      }
+    }
+  }
   stat(p: string): Stat | null {
     if (!this.writable && this.stats.has(p)) return this.stats.get(p)!;
     let st: Stat | null = null;

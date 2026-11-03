@@ -16,6 +16,8 @@ export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/u
 
 export interface Backend {
   readonly writable: boolean;
+  // A host backend can follow symlinks before resolving parent components.
+  resolvePath?(path: string): string | null;
   stat(path: string): Stat | null;
   read(path: string): Uint8Array | null;
   // bytes [off, off + len) of a file, for backends that can read part of one
@@ -52,6 +54,17 @@ export function normalize(path: string): string {
 export class VFS {
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
+
+  resolvePath(path: string): string {
+    const normalized = normalize(path);
+    if (!path.includes("/..")) return normalized;
+    const r = this.resolve(normalized);
+    if (!r?.[0].resolvePath) return normalized;
+    const prefix = normalized.slice(0, normalized.length - r[1].length);
+    const raw = prefix === "" ? path : path.startsWith(prefix + "/") ? path.slice(prefix.length) : r[1];
+    const resolved = r[0].resolvePath(raw);
+    return resolved === null ? normalized : normalize(prefix + resolved);
+  }
 
   mount(prefix: string, backend: Backend) {
     prefix = normalize(prefix);
