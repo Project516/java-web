@@ -495,8 +495,17 @@ export class JVM {
     c.initThread = t;
     try {
       if (!c.isInterface && c.superclass && c.superclass.state !== INITIALIZED) yield* this.initGen(t, c.superclass);
-      for (const i of c.interfaces) {
-        if (i.state !== INITIALIZED && i.methods.some((m) => !m.isAbstract && !m.isStatic)) yield* this.initGen(t, i);
+      if (!c.isInterface && c.interfaces.length) {
+        const seen = new Set<JClass>();
+        const interfaces: JClass[] = [];
+        const visit = (i: JClass) => {
+          if (seen.has(i)) return;
+          seen.add(i);
+          for (const parent of i.interfaces) visit(parent);
+          if (i.methods.some((m) => !m.isAbstract && !m.isStatic)) interfaces.push(i);
+        };
+        for (const i of c.interfaces) visit(i);
+        for (const i of interfaces) if (i.state !== INITIALIZED) yield* this.initGen(t, i);
       }
       this.applyConstantValues(c);
       const clinit = c.methodMap.get("<clinit>()V");

@@ -1,7 +1,7 @@
 // Bytecode interpreter and the per-thread run loop.
 
 import {
-  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, newArrayData,
+  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData,
 } from "./runtime.ts";
 import {
   Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, TERMINATED, WAITING, fromNative,
@@ -149,9 +149,12 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
         case 0x47: case 0x48: case 0x49: case 0x4a: sp -= 2; locals[code[pc] - 0x47] = stack[sp]; pc++; break;
         case 0x4b: case 0x4c: case 0x4d: case 0x4e: locals[code[pc] - 0x4b] = stack[--sp]; pc++; break;
         // array stores
-        case 0x4f: case 0x51: case 0x54: case 0x55: case 0x56:
+        case 0x4f: case 0x51: case 0x55: case 0x56:
           v = stack[--sp]; idx = stack[--sp]; o = stack[--sp];
           arr(o, idx)[idx] = v; pc++; break;
+        case 0x54:
+          v = stack[--sp]; idx = stack[--sp]; o = stack[--sp];
+          arr(o, idx)[idx] = o!.cls.name === "[Z" ? v & 1 : v; pc++; break;
         case 0x50: case 0x52:
           sp -= 2; v = stack[sp]; idx = stack[--sp]; o = stack[--sp];
           arr(o, idx)[idx] = v; pc++; break;
@@ -230,7 +233,7 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
         case 0x86: stack[sp - 1] = Math.fround(stack[sp - 1]); pc++; break;
         case 0x87: stack[sp++] = undefined; pc++; break;
         case 0x88: sp--; stack[sp - 1] = Number(BigInt.asIntN(32, stack[sp - 1])); pc++; break;
-        case 0x89: sp--; stack[sp - 1] = Math.fround(Number(stack[sp - 1])); pc++; break;
+        case 0x89: sp--; stack[sp - 1] = longToFloat(stack[sp - 1]); pc++; break;
         case 0x8a: stack[sp - 2] = Number(stack[sp - 2]); pc++; break;
         case 0x8b: stack[sp - 1] = f2i(stack[sp - 1]); pc++; break;
         case 0x8c: stack[sp - 1] = f2l(stack[sp - 1]); stack[sp++] = undefined; pc++; break;
