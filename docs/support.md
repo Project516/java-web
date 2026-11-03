@@ -10,6 +10,9 @@ java-web targets headless Java: console apps, libraries and javac.
   drawing on a `BufferedImage`, and JavaBeans. So does `java.xml`, including
   XML Schema validation and DTDs from the JDK's built-in catalog.
 - `jrt:/` URLs read the JDK's resources but not its class files.
+- `Deflater` writes valid DEFLATE streams using stored blocks. Compression
+  levels and strategies currently do not reduce output size; compressed bytes
+  and compression ratios differ from HotSpot's zlib output.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
   processes, and native libraries other than JS natives.
 
@@ -66,7 +69,9 @@ Locales other than English need `cheerpjInit({ localeData: true })`, or
   `javaProperties` sets its own), and that proxy turns each request into a
   `fetch`. The browser's rules apply: CORS, and no `http:` requests from an
   `https:` page. A failed fetch is a 502 response. Redirects are followed by
-  `fetch`, and a response body is read whole before Java sees it. Raw sockets
+  `fetch`, even when Java disables redirect following: a browser's manual
+  redirect response hides the status and `Location` header. A response body is
+  read whole before Java sees it. Raw sockets
   to other hosts still fail.
 - The browser does the TLS for `https:`. The proxy answers `CONNECT host:port`
   and then reads plain HTTP in the tunnel, and `fetch` does the TLS and checks
