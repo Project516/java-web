@@ -102,7 +102,7 @@ export const STATUS_SLEEPING = 0x00e1, STATUS_WAITING = 0x0191, STATUS_TIMED_WAI
 export const STATUS_PARKED = 0x0291, STATUS_PARKED_TIMED = 0x02a1, STATUS_BLOCKED = 0x0401;
 
 // compiled frames nested on one JS stack before calls go through the run loop
-const MAX_DIRECT = 120;
+export const MAX_DIRECT = 120;
 
 let nextId = 1;
 
@@ -129,6 +129,9 @@ export class JThread {
   // run loop last entered compiled code
   ret: any = undefined;
   base = 0;
+  // what is left of the run loop's budget while compiled code runs: its
+  // loops and the calls it interprets in place spend it
+  slice = 0;
   // wakes the thread early from sleep, park or wait, for interrupt/unpark
   wake: (() => void) | null = null;
   // set when the bottom frame finishes

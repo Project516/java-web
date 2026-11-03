@@ -48,6 +48,7 @@ export const hooks = {
   popFrame: null as unknown as (t: JThread, f: Frame) => void,
   findHandler: null as unknown as (t: JThread, f: Frame, pc: number, exc: JObject) => number,
   checkStack: null as unknown as (t: JThread) => void,
+  callNested: null as unknown as (t: JThread, m: JMethod, args: any[]) => any,
 };
 
 let disabled = typeof process !== "undefined" && !!process.env?.JW_NOJIT;
@@ -129,7 +130,7 @@ function at(e: PendingThrow, pc: number | undefined): PendingThrow {
 }
 
 // results of runtime.slowCall
-const PUSHED = Object.freeze({ pushed: true }), INTERPRET = Object.freeze({ interpret: true });
+export const PUSHED = Object.freeze({ pushed: true }), INTERPRET = Object.freeze({ interpret: true });
 
 const STRING_BUILDER = "java/lang/StringBuilder";
 
@@ -189,10 +190,12 @@ const runtime = {
     f.sp = sp;
     return f;
   },
-  // A call that is not direct: a native's result, PUSHED once a native that
-  // must wait is on the stack, or INTERPRET for the run loop to make the call.
+  // A call that is not direct: the result of a native or an interpreted
+  // method, PUSHED once the callee's frames must finish in the run loop, or
+  // INTERPRET for the run loop to make the call.
   slowCall(t: JThread, m: JMethod, args: any[]): any {
-    if (m.native === null || m.isAbstract) return INTERPRET;
+    if (m.isAbstract) return INTERPRET;
+    if (m.native === null) return m.code ? hooks.callNested(t, m, args) : INTERPRET;
     let r;
     try {
       r = m.native(t, args);
@@ -580,7 +583,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const out: string[] = [];
   // direct calls pass arguments as parameters and a frame without arrays
   out.push(`return function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
-  out.push(`let pc=f.pc,bud=4000,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
+  out.push(`let pc=f.pc,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
   out.push(`if(L===null){${params.map((p, i) => `${L(i)}=${p};`).join("")}}else{${Array.from({ length: nl }, (_, i) => `${L(i)}=L[${i}];`).join("")}${Array.from({ length: ns }, (_, i) => `${S(i)}=S[${i}];`).join("")}}`);
   out.push(`X:{for(;;){try{switch(pc){`);
   out.push(...top.out);
@@ -688,7 +691,9 @@ function insn(g: Gen, b: Body, pc: number) {
   const top = (k = 0) => S(d - 1 - k);
   const jump = (target: number) => {
     if (region) return `{${region.pcVar}=${target};continue R${region.id};}`;
-    if (target <= pc) return `{if(--bud===0)${g.exit(target, b.a.depth.get(target)!, EXIT_SUSPEND)}pc=${target};continue;}`;
+    // loops spend the thread's slice wherever they are on the stack, so a loop
+    // calling others' loops still yields
+    if (target <= pc) return `{if(--t.slice<=0)${g.exit(target, b.a.depth.get(target)!, EXIT_SUSPEND)}pc=${target};continue;}`;
     return `{pc=${target};continue;}`;
   };
   const idx2 = u16(c, pc + 1);
