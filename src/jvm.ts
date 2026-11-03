@@ -17,11 +17,13 @@ import {
   Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
   TERMINATED, WAITING,
 } from "./thread.ts";
-import type { NativeGen } from "./thread.ts";
+import type { NativeGen, Request } from "./thread.ts";
 import { intrinsics, natives as builtinNatives } from "./natives/index.ts";
 import { invokePolymorphic, linkCallSite, resolveConstant } from "./indy.ts";
 import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
+import { dumpVM, restoreVM, snapshotKey } from "./snapshot.ts";
+import type { SnapshotImage } from "./snapshot.ts";
 import type { LibraryRequest } from "./library.ts";
 import type { HostNative } from "./hostnatives.ts";
 import { PROXY_HOST, PROXY_PORT } from "./http-proxy.ts";
@@ -65,7 +67,19 @@ export interface JvmOptions {
   env?: Record<string, string>;
   // lets the default loopback sockets reach http: and https: URLs through a virtual proxy; also sets the proxy system properties and the TLS pass-through provider
   fetch?: typeof fetch;
+  // boot snapshots: build names the VM code and java.home image; load returns
+  // a saved image for a key or null, and after a boot, save keeps the one taken
+  // if wants says to take one
+  snapshots?: {
+    build: string;
+    load: (key: string) => SnapshotImage | null;
+    wants: (key: string) => boolean;
+    save: (image: SnapshotImage) => void;
+  };
 }
+
+// what a resumed thread body yields first, before the run under it returns
+const RESUMED = Object.freeze({ kind: "resume" }) as unknown as Request;
 
 // LauncherHelper launch modes
 export const LM_CLASS = 1, LM_JAR = 2;
@@ -103,6 +117,8 @@ export class JVM {
   private hiddenCount = 0;
   // for java.management: classes defined, threads started and the most alive at once
   classCount = 0;
+  // every class in creation order, while recording for a snapshot
+  readonly created: JClass[] | null;
   threadsStarted = 0;
   peakThreads = 0;
   exitCode: number | null = null;
@@ -118,6 +134,7 @@ export class JVM {
   readonly timers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(opts: JvmOptions) {
+    this.created = opts.snapshots ? [] : null;
     this.opts = opts;
     this.fs = opts.fs;
     const extra = ipv4Literal(opts.hostName);
@@ -218,6 +235,7 @@ export class JVM {
       c.prim = desc;
       c.state = INITIALIZED;
       this.prims.set(desc, c);
+      this.created?.push(c);
     }
     return c;
   }
@@ -236,6 +254,7 @@ export class JVM {
     a.state = INITIALIZED;
     c.arrayClass = a;
     this.loaderClasses(c.loader).set(name, a);
+    this.created?.push(a);
     return a;
   }
 
@@ -282,6 +301,7 @@ export class JVM {
     }
     c.state = LINKED;
     if (!hidden) map.set(cf.name, c);
+    this.created?.push(c);
     return c;
   }
 
@@ -333,6 +353,7 @@ export class JVM {
     const interfaces: JClass[] = [];
     for (const n of cf.interfaces) interfaces.push(yield* this.loadClassGen(t, loader, n));
     const c = this.defineLinked(cf, loader, superclass, interfaces, hidden);
+    if (this.created) c.bytes = bytes;
     if (pd) this.setField(this.mirror(c), "java/lang/Class", "protectionDomain", pd);
     return c;
   }
@@ -963,20 +984,25 @@ export class JVM {
     const vm = this;
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     t.daemon = this.getField(holder, "java/lang/Thread$FieldHolder", "daemon") === 1;
-    t.pushNative((function* () {
-      try {
-        yield t.callVirtual(obj, "run", "()V");
-      } catch (e) {
-        if (!(e instanceof JavaThrow)) throw e;
-        try {
-          yield t.callVirtual(obj, "dispatchUncaughtException", "(Ljava/lang/Throwable;)V", e.obj);
-        } catch {
-          // ignored like HotSpot does, after a report
-        }
-      }
-      yield* vm.exitThread(t);
-    })(), null, "V", false);
+    t.pushNative(this.threadBody(t, obj, false), null, "V", false);
     return t;
+  }
+
+  // Runs Thread.run, or with resumed, waits for the run already on the stack
+  // (a thread restored from a snapshot; the generator is stepped to its first
+  // yield before it is pushed).
+  *threadBody(t: JThread, obj: JObject, resumed: boolean): NativeGen {
+    try {
+      yield resumed ? RESUMED : t.callVirtual(obj, "run", "()V");
+    } catch (e) {
+      if (!(e instanceof JavaThrow)) throw e;
+      try {
+        yield t.callVirtual(obj, "dispatchUncaughtException", "(Ljava/lang/Throwable;)V", e.obj);
+      } catch {
+        // ignored like HotSpot does, after a report
+      }
+    }
+    yield* this.exitThread(t);
   }
 
   *exitThread(t: JThread): NativeGen {
@@ -1013,7 +1039,9 @@ export class JVM {
     // as the java launcher sets it
     if (!this.props.has("sun.java.command")) this.props.set("sun.java.command", [what, ...args].join(" "));
     const t = new JThread(this);
-    t.pushNative(this.mainGen(t, mode, what, args), null, "V", false);
+    t.pushNative(this.mainGen(t, mode, what, args, this.restore(t)), null, "V", false);
+    // mainGen halts; ending without it means a VM error killed the thread
+    t.onExit = () => this.halt(1);
     this.startThread(t);
     return this.exited;
   }
@@ -1023,7 +1051,7 @@ export class JVM {
   startLibrary(): Promise<void> {
     const t = new JThread(this);
     const started = new Promise<void>((resolve, reject) => {
-      t.pushNative(this.libraryGen(t, resolve, reject), null, "V", false);
+      t.pushNative(this.libraryGen(t, this.restore(t), resolve, reject), null, "V", false);
     });
     this.startThread(t);
     return started;
@@ -1044,9 +1072,9 @@ export class JVM {
     return this.library.request(req).then((r) => r.value);
   }
 
-  private *libraryGen(t: JThread, started: () => void, failed: (e: Error) => void): NativeGen {
+  private *libraryGen(t: JThread, restored: boolean, started: () => void, failed: (e: Error) => void): NativeGen {
     try {
-      yield* this.bootGen(t);
+      yield* this.startGen(t, restored);
     } catch (e) {
       failed(e instanceof Error ? e : new Error(String(e)));
       return;
@@ -1114,9 +1142,44 @@ export class JVM {
     }
   }
 
-  private *mainGen(t: JThread, mode: number, what: string, args: string[]): NativeGen {
-    const boot = (n: string) => this.loadBootOrFail(n);
+  // Loads the snapshot taken after a boot with the same inputs into the VM,
+  // with t as its main thread.
+  private restore(t: JThread): boolean {
+    const snaps = this.opts.snapshots;
+    if (!snaps) return false;
+    const key = snapshotKey(this, snaps.build);
+    const image = snaps.load(key);
+    if (image?.key !== key) return false;
+    restoreVM(this, image, t);
+    return true;
+  }
+
+  // Boots, or finishes a restore: the one property the key leaves out is set
+  // as a boot would have.
+  private *startGen(t: JThread, restored: boolean): NativeGen {
+    const snaps = this.opts.snapshots;
+    if (restored) {
+      const cmd = this.props.get("sun.java.command");
+      const system = this.loadBootOrFail("java/lang/System");
+      const set = system.methodMap.get("setProperty(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;")!;
+      if (cmd !== undefined) yield t.call(set, this.str("sun.java.command"), this.str(cmd));
+      return;
+    }
     yield* this.bootGen(t);
+    // a snapshot is only a cache: failing to make or keep one never fails the run
+    if (snaps) {
+      try {
+        const key = snapshotKey(this, snaps.build);
+        if (snaps.wants(key)) snaps.save(dumpVM(this, t, key));
+      } catch (e) {
+        this.debug("snapshot not saved:", e);
+      }
+    }
+  }
+
+  private *mainGen(t: JThread, mode: number, what: string, args: string[], restored: boolean): NativeGen {
+    const boot = (n: string) => this.loadBootOrFail(n);
+    yield* this.startGen(t, restored);
     let code = 0;
     try {
       const helper = boot("sun/launcher/LauncherHelper");

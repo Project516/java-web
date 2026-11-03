@@ -193,7 +193,8 @@ export class Monitor {
   // threads blocked entering the monitor
   entry: (() => void)[] = [];
   // threads in wait(), woken by notify
-  waiters: { t: JThread; wake: () => void }[] = [];
+  // threads in wait(), woken by notify, with the entry count they gave up
+  waiters: { t: JThread; wake: () => void; count: number }[] = [];
 }
 
 export class JClass {
@@ -226,6 +227,9 @@ export class JClass {
   // virtual dispatch cache, name+desc -> method
   vcache = new Map<string, JMethod | null>();
   // resolved constant pool entries: classes, fields, methods
+  // the bytes of a class defined by a Java class loader or as hidden, kept
+  // while recording for a snapshot
+  bytes?: Uint8Array;
   rcp: any[] = [];
   // values of ldc constants, by constant pool index
   ldc: any[] = [];

@@ -58,9 +58,9 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const count = mon.count;
   vm.releaseMonitor(mon);
   setThreadStatus(t, ms > 0n ? STATUS_TIMED_WAITING : STATUS_WAITING);
-  let entry: { t: JThread; wake: () => void } | null = null;
+  let entry: { t: JThread; wake: () => void; count: number } | null = null;
   yield t.block(interruptibleWait(t, ms > 0n ? Number(ms) : null, (wake) => {
-    entry = { t, wake };
+    entry = { t, wake, count };
     mon.waiters.push(entry);
   }));
   const i = mon.waiters.indexOf(entry!);
