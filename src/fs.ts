@@ -35,6 +35,7 @@ export interface Backend {
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
   chmod?(path: string, f: (mode: number) => number): boolean;
+  chmodError?(path: string): string | undefined;
   // whether the host allows reading (4) and executing (1), as access(2)
   access?(path: string, mode: number): boolean;
 }
@@ -198,6 +199,11 @@ export class VFS {
     const r = this.resolve(path);
     if (!r || !r[0].chmod) return undefined;
     return r[0].writable && r[0].chmod(r[1], f);
+  }
+
+  chmodError(path: string): string | undefined {
+    const r = this.resolve(path);
+    return r?.[0].chmodError?.(r[1]);
   }
 
   // access(2) on an existing path: mode is 4 read, 2 write, 1 execute

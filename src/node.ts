@@ -101,13 +101,19 @@ export class NodeBackend implements Backend {
       return (e as NodeJS.ErrnoException).code === "EACCES" || (e as NodeJS.ErrnoException).code === "EPERM";
     }
   }
+  private chmodErrors = new Map<string, string>();
   chmod(p: string, f: (mode: number) => number) {
     try {
       fs.chmodSync(this.host(p), f(fs.statSync(this.host(p)).mode & 0o7777));
+      this.chmodErrors.delete(p);
       return true;
-    } catch {
+    } catch (e) {
+      this.chmodErrors.set(p, (e as NodeJS.ErrnoException).code ?? "EIO");
       return false;
     }
+  }
+  chmodError(p: string) {
+    return this.chmodErrors.get(p);
   }
   access(p: string, mode: number) {
     try {

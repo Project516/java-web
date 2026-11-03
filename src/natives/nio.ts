@@ -10,14 +10,23 @@ import { closeFd, endsInDot, fileInode, fileOf, flush, flushOrThrow, openFile, r
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
-export const ENOENT = 2, EBADF = 9, EACCES = 13, EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21,
-  EINVAL = 22, EROFS = 30, ENOTEMPTY = 39, ENOSYS = 38;
+export const EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, ENOMEM = 12, EACCES = 13,
+  EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ENOSPC = 28, EROFS = 30,
+  ENOTEMPTY = 39, ENOSYS = 38, ELOOP = 40, ENOTSUP = 95, ESTALE = 116;
 
 const MESSAGES: Record<number, string> = {
+  [EPERM]: "Operation not permitted", [EINTR]: "Interrupted system call", [EIO]: "Input/output error",
+  [ENOMEM]: "Cannot allocate memory", [ENOSPC]: "No space left on device",
+  [ELOOP]: "Too many levels of symbolic links", [ENOTSUP]: "Operation not supported", [ESTALE]: "Stale file handle",
   [ENOENT]: "No such file or directory", [EBADF]: "Bad file descriptor", [EACCES]: "Permission denied",
   [EEXIST]: "File exists", [EXDEV]: "Invalid cross-device link", [ENOTDIR]: "Not a directory",
   [EISDIR]: "Is a directory", [EINVAL]: "Invalid argument", [EROFS]: "Read-only file system",
   [ENOTEMPTY]: "Directory not empty", [ENOSYS]: "Function not implemented",
+};
+
+const CHMOD_ERRNO: Record<string, number> = {
+  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, ENOTDIR, EINVAL, ENOSPC, EROFS, ELOOP,
+  ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE,
 };
 
 // Linux open(2) flags
@@ -44,6 +53,20 @@ function bytes(t: JThread, s: string): JObject {
 
 function path(t: JThread, addr: bigint) {
   return resolvePath(t, cstring(t, addr));
+}
+
+function chmod(t: JThread, p: string, mode: number) {
+  const fs = t.vm.fs;
+  const result = fs.chmod(p, (old) => (old & ~0o7777) | (mode & 0o7777));
+  if (result !== false) {
+    if (result === undefined && !fs.stat(p)) unixError(ENOENT);
+    return;
+  }
+  if (!fs.writable(p)) {
+    if (!fs.stat(p)) unixError(ENOENT);
+    unixError(EROFS);
+  }
+  unixError(CHMOD_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
 }
 
 function fillAttrs(t: JThread, attrs: JObject, p: string): number {
@@ -166,9 +189,7 @@ export const natives: Natives = {
   [`${N}symlink0(JJ)V`]: () => unixError(ENOSYS),
   [`${N}link0(JJ)V`]: () => unixError(ENOSYS),
   [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
-    const abs = path(t, p);
-    if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    if (!t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
+    chmod(t, path(t, p), mode);
   },
   [`${N}fchmod0(II)V`]: (t, [fd, mode]) => {
     const f = t.vm.state.get("fds")?.files.get(fd);
@@ -180,8 +201,8 @@ export const natives: Natives = {
       }
       return;
     }
-    if (!f.path || !t.vm.fs.stat(f.path)) unixError(ENOENT);
-    if (!t.vm.fs.chmod(f.path, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
+    if (!f.path) unixError(ENOENT);
+    chmod(t, f.path, mode);
   },
   [`${N}chown0(JII)V`]: () => undefined,
   [`${N}lchown0(JII)V`]: () => undefined,

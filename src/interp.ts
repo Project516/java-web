@@ -672,6 +672,9 @@ function* resolveHandler(t: JThread, f: Frame, exc: JObject, start: number): Nat
         if (e instanceof JavaThrow) exc = e.obj;
         else if (e instanceof PendingThrow) exc = yield* t.vm.newThrowable(t, e.cls, e.msg, null, e.ctor);
         else throw e;
+        // HotSpot restarts lookup at the failing handler's bytecode position.
+        f.pc = h.handler;
+        i = -1;
         continue;
       }
     }

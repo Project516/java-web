@@ -130,6 +130,7 @@ test("host symlinks resolve before parent components", { skip: process.platform 
   };
   try {
     const ref = spawnSync(hotspot("java"), setup("hotspot"), { encoding: "utf8" });
+    assert.equal(ref.status, 0, ref.stderr);
     const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...setup("vm")], { encoding: "utf8" });
     assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
   } finally {
