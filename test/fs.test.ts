@@ -29,6 +29,10 @@ test("host path resolution leaves other mounts and memory paths lexical", () => 
   assert.equal(hostCalls, 0);
   assert.equal(fs.resolvePath("/work/link/../file"), "/target/file");
   assert.equal(hostCalls, 1);
+  const mountRoot = new MemoryBackend();
+  Object.assign(mountRoot, { resolvePath: () => "/" });
+  fs.mount("/host", mountRoot);
+  assert.equal(fs.resolvePath("/host/dir/.."), "/host");
 
   const memory = new VFS();
   memory.mount("/files", new MemoryBackend());

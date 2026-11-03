@@ -119,10 +119,13 @@ test("host symlinks resolve before parent components", { skip: process.platform 
   const setup = (name: string) => {
     const work = join(dir, name, "work"), target = join(dir, name, "target");
     mkdirSync(work, { recursive: true });
+    mkdirSync(join(work, "dir"));
     mkdirSync(join(target, "dir"), { recursive: true });
     symlinkSync(join(target, "dir"), join(work, "link"), "dir");
     writeFileSync(join(work, "file"), "lexical");
     writeFileSync(join(target, "file"), "target");
+    writeFileSync(join(target, "victim"), "keep");
+    symlinkSync(join(target, "victim"), join(work, "last"));
     return ["-cp", classes, "SymlinkDotDot", work, target];
   };
   try {

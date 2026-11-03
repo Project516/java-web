@@ -38,13 +38,11 @@ export class NodeBackend implements Backend {
   resolvePath(p: string): string | null {
     if (this.root !== "/") return null;
     try {
-      return fs.realpathSync.native(p);
+      const name = path.basename(p);
+      if (name === "." || name === "..") return fs.realpathSync.native(p);
+      return fs.realpathSync.native(path.dirname(p)) + "/" + name;
     } catch {
-      try {
-        return fs.realpathSync.native(path.dirname(p)) + "/" + path.basename(p);
-      } catch {
-        return null;
-      }
+      return null;
     }
   }
   stat(p: string): Stat | null {

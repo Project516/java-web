@@ -1,7 +1,14 @@
 import java.lang.reflect.InvocationTargetException;
 
 public class LoaderCatch {
-  public static class E extends RuntimeException {}
+  public static class E extends RuntimeException {
+    public static boolean selfCatch() {
+      try { throw new E(); } catch (E e) { return true; }
+    }
+    public static boolean catchTask(Runnable task) {
+      try { task.run(); return false; } catch (E e) { return true; }
+    }
+  }
   public static class Caller {
     public static int calls;
     public static String run(Runnable task) {
@@ -62,5 +69,15 @@ public class LoaderCatch {
     Class<?> caller = new Loader("Caller", false).loadClass("LoaderCatch$Caller");
     System.out.println("parent " + caller.getMethod("run", Runnable.class).invoke(null, (Runnable) () -> { throw new E(); }));
     System.out.println("parent calls " + caller.getField("calls").get(null));
+    try (var in = LoaderCatch.class.getResourceAsStream("/LoaderCatch$E.class")) {
+      Class<?> hidden = java.lang.invoke.MethodHandles.lookup().defineHiddenClass(in.readAllBytes(), true).lookupClass();
+      RuntimeException exception = (RuntimeException) hidden.getConstructor().newInstance();
+      try {
+        System.out.println("hidden provided " + hidden.getMethod("catchTask", Runnable.class).invoke(null, (Runnable) () -> { throw exception; }));
+      } catch (InvocationTargetException e) {
+        System.out.println("hidden provided false");
+      }
+      System.out.println("hidden " + hidden.getMethod("selfCatch").invoke(null));
+    }
   }
 }

@@ -60,7 +60,7 @@ export class VFS {
     if (!path.includes("/..")) return normalized;
     const r = this.resolve(normalized);
     if (!r?.[0].resolvePath) return normalized;
-    const prefix = normalized.slice(0, normalized.length - r[1].length);
+    const prefix = r[1] === "/" && normalized !== "/" ? normalized : normalized.slice(0, normalized.length - r[1].length);
     const raw = prefix === "" ? path : path.startsWith(prefix + "/") ? path.slice(prefix.length) : r[1];
     const resolved = r[0].resolvePath(raw);
     return resolved === null ? normalized : normalize(prefix + resolved);

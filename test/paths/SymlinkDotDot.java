@@ -15,5 +15,7 @@ public class SymlinkDotDot {
     System.out.println("moved " + Files.readString(target.resolve("moved")));
     Files.delete(moved);
     System.out.println("deleted " + !Files.exists(target.resolve("moved")));
+    Files.delete(work.resolve("dir/../last"));
+    System.out.println("link target kept " + Files.exists(target.resolve("victim")));
   }
 }

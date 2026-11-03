@@ -646,7 +646,8 @@ function findHandler(vm: JVM, f: Frame, exc: JObject): number {
     if (h.catchType === 0) return h.handler;
     const cls = f.m.cls;
     const name = vm.cpClassName(cls, h.catchType);
-    const target = cls.rcp[h.catchType] ?? vm.findLoaded(cls.loader, name) ?? (cls.loader === null ? vm.loadBoot(name) : null);
+    const self = name === cls.cf?.name || name === cls.cf?.renamedFrom;
+    const target = cls.rcp[h.catchType] ?? (self ? cls : vm.findLoaded(cls.loader, name) ?? (cls.loader === null ? vm.loadBoot(name) : null));
     if (!target) return -i - 2;
     cls.rcp[h.catchType] = target;
     if (exc.cls.isSubclassOf(target)) return h.handler;
@@ -662,7 +663,9 @@ function* resolveHandler(t: JThread, f: Frame, exc: JObject, start: number): Nat
     if (f.pc < h.start || f.pc >= h.end) continue;
     if (h.catchType !== 0) {
       try {
-        const target = cls.rcp[h.catchType] ?? (yield* t.vm.loadClassGen(t, cls.loader, t.vm.cpClassName(cls, h.catchType)));
+        const name = t.vm.cpClassName(cls, h.catchType);
+        const self = name === cls.cf?.name || name === cls.cf?.renamedFrom;
+        const target = cls.rcp[h.catchType] ?? (self ? cls : yield* t.vm.loadClassGen(t, cls.loader, name));
         cls.rcp[h.catchType] = target;
         if (!exc.cls.isSubclassOf(target)) continue;
       } catch (e) {
