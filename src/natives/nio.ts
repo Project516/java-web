@@ -170,8 +170,9 @@ export const natives: Natives = {
     if (!t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
   },
   [`${N}fchmod0(II)V`]: (t, [fd, mode]) => {
-    const f = fileOf(t, fd);
-    if (!t.vm.fs.stat(f.path)) unixError(ENOENT);
+    const f = t.vm.state.get("fds")?.files.get(fd);
+    if (!f) unixError(EBADF);
+    if (!f.path || !t.vm.fs.stat(f.path)) unixError(ENOENT);
     if (!t.vm.fs.chmod(f.path, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
   },
   [`${N}chown0(JII)V`]: () => undefined,
