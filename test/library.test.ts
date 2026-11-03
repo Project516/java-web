@@ -52,7 +52,7 @@ test("calls run in order", async () => {
   assert.equal(await stat("Lib", "calls"), before + 3);
 });
 
-test("static calls select only public methods", async () => {
+test("static calls exclude private methods", async () => {
   assert.equal(await stat("Lib", "visible", "text"), "public");
   await assert.rejects(stat("Lib", "hidden"), /no static method hidden/);
 });

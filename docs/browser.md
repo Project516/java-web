@@ -69,7 +69,8 @@ try {
   rejection; call a setter to wait for the write.
 - Overloads are chosen by how well each argument fits the parameter type, then
   varargs as a last resort. Pass an array or the elements for a varargs parameter.
-  Library calls expose public methods, for both static and instance calls.
+  Instance calls expose public methods. Static calls also expose package-private
+  and protected helpers used by native callbacks; private methods are excluded.
 - Java strings are JS strings. Boxed `Integer`, `Double`, `Boolean` and the
   other numbers are JS primitives, and a JS number passed as an `Object` becomes
   an `Integer` when it is whole and a `Double` otherwise. Any other object is a proxy.
