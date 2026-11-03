@@ -70,9 +70,9 @@ interface ThreadRec {
 // What boot depends on: the properties the VM gives Java and the options that
 // change how boot classes run. A snapshot serves only a VM whose key is the
 // same. sun.java.command names the main class, which boot does not use; it is
-// set again after a restore.
+// set after boot.
 export function snapshotKey(vm: JVM, build: string): string {
-  // set after a restore; only whether there is one changes the boot
+  // only whether there is one changes the boot
   const vmProps = vmProperties(vm);
   const i = vmProps.indexOf("sun.java.command");
   if (i >= 0 && i % 2 === 0) vmProps[i + 1] = "";

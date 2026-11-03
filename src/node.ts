@@ -248,14 +248,15 @@ const KEEP_SNAPSHOTS = 16, KEEP_MARKERS = 256;
 // set by the build of dist/node.js: names its code and image
 declare const JAVA_WEB_BUILD: string;
 
-// What a snapshot is valid for: the VM code (every source file when run from
-// src/) and the java.home image, by the digest scripts/build-jdk.sh writes. An
-// image without one gets no snapshots.
-function buildId(vfs: VFS): string | null {
-  if (typeof JAVA_WEB_BUILD === "string") return JAVA_WEB_BUILD;
+// What a snapshot is valid for: the VM code and the java.home image. The
+// packaged image is part of the build's ID; any other image needs the digest
+// scripts/build-jdk.sh writes, and gets no snapshots without one.
+function buildId(vfs: VFS, packaged: boolean): string | null {
+  if (packaged) return typeof JAVA_WEB_BUILD === "string" ? JAVA_WEB_BUILD : null;
   const image = vfs.read("/jdk/lib/image.sha256");
   if (!image) return null;
   const h = createHash("sha256").update(image);
+  if (typeof JAVA_WEB_BUILD === "string") return h.update(JAVA_WEB_BUILD).digest("hex");
   const src = path.dirname(fileURLToPath(import.meta.url));
   for (const f of fs.readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort()) {
     h.update(f).update(fs.readFileSync(path.join(src, f)));
@@ -331,7 +332,7 @@ function nodeVm(o: NodeRunOptions): JVM {
     release: (_, ids) => vm.library.release(ids),
   });
   const snapDir = o.snapshotDir === undefined ? defaultSnapshotDir() : o.snapshotDir;
-  const build = snapDir ? buildId(vfs) : null;
+  const build = snapDir ? buildId(vfs, packaged) : null;
   const vm: JVM = new JVM({
     ...(snapDir && build ? { snapshots: snapshotCache(snapDir, build) } : {}),
     fs: vfs,

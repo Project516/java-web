@@ -126,8 +126,8 @@ export class JVM {
   private hiddenCount = 0;
   // for java.management: classes defined, threads started and the most alive at once
   classCount = 0;
-  // every class in creation order, while recording for a snapshot
-  readonly created: JClass[] | null;
+  // every class in creation order, until the snapshot after boot is taken
+  created: JClass[] | null;
   threadsStarted = 0;
   peakThreads = 0;
   exitCode: number | null = null;
@@ -1182,26 +1182,31 @@ export class JVM {
     else done(image);
   }
 
-  // Boots, or finishes a restore: the one property the key leaves out is set
-  // as a boot would have.
+  // Boots, or finishes a restore. Boot does not read sun.java.command, so with
+  // snapshots on it boots without one: a snapshot never holds a run's arguments.
   private *startGen(t: JThread, restored: boolean): NativeGen {
     const snaps = this.snapshots;
-    if (restored) {
-      const cmd = this.props.get("sun.java.command");
+    const cmd = snaps ? this.props.get("sun.java.command") : undefined;
+    if (!restored) {
+      if (cmd !== undefined) this.props.set("sun.java.command", "");
+      yield* this.bootGen(t);
+      // a snapshot is only a cache: failing to make or keep one never fails the run
+      if (snaps) {
+        try {
+          const key = snapshotKey(this, snaps.build);
+          if (snaps.wants(key)) snaps.save(dumpVM(this, t, key));
+        } catch (e) {
+          this.debug("snapshot not saved:", e);
+        }
+      }
+    }
+    for (const c of this.created ?? []) c.bytes = undefined;
+    this.created = null;
+    if (cmd !== undefined) {
+      this.props.set("sun.java.command", cmd);
       const system = this.loadBootOrFail("java/lang/System");
       const set = system.methodMap.get("setProperty(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;")!;
-      if (cmd !== undefined) yield t.call(set, this.str("sun.java.command"), this.str(cmd));
-      return;
-    }
-    yield* this.bootGen(t);
-    // a snapshot is only a cache: failing to make or keep one never fails the run
-    if (snaps) {
-      try {
-        const key = snapshotKey(this, snaps.build);
-        if (snaps.wants(key)) snaps.save(dumpVM(this, t, key));
-      } catch (e) {
-        this.debug("snapshot not saved:", e);
-      }
+      yield t.call(set, this.str("sun.java.command"), this.str(cmd));
     }
   }
 

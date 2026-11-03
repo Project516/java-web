@@ -62,6 +62,8 @@ test("a snapshot is taken on the second boot and restored on the third", async (
   assert.equal(files(dir, ".snap").length, 0);
   assert.deepEqual(await run(dir), expected);
   const [snap] = files(dir, ".snap");
+  // nor the arguments of the run that took it
+  assert.ok(!readFileSync(snap).includes("Boot a b"));
   const ino = age(snap);
   assert.deepEqual(await run(dir), expected);
   assert.ok(loaded(snap, ino));

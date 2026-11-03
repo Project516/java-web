@@ -98,7 +98,7 @@ Node, which is how the tests run.
 - **wire value**: a value as it crosses between the VM and JS (library.ts).
 - **boot snapshot**: the VM right after the JDK's boot, saved and loaded on
   later starts with the same key (build, class path, properties, options,
-  working directory) instead of booting. Kept in `~/.cache/java-web` under
-  Node and IndexedDB in browsers.
+  working directory) instead of booting. Kept in `~/.cache/java-web/snapshots`
+  under Node (docs/node.md) and IndexedDB in browsers.
 - **Sock**: a socket, event or epoll file descriptor behind the `sun.nio.ch` natives. A
   backend (host sockets under Node, loopback inside the VM) moves its bytes.
