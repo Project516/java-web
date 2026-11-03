@@ -1,3 +1,4 @@
+import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 
@@ -10,8 +11,9 @@ public class Boot {
     System.out.println(System.getProperty("snap.prop"));
     ReferenceQueue<Object> q = new ReferenceQueue<>();
     WeakReference<Object> w = new WeakReference<>(new Object(), q);
-    while (q.remove(10) == null) System.gc();
-    System.out.println("enqueued " + (w.get() == null));
+    Reference<?> r = null;
+    for (int i = 0; i < 100 && (r = q.remove(10)) == null; i++) System.gc();
+    System.out.println("enqueued " + (r == w));
     Thread t = new Thread(() -> System.out.println("thread " + Thread.currentThread().getName()), "worker");
     t.start();
     t.join();

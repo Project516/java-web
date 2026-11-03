@@ -43,11 +43,16 @@ async function stderrOf<T>(f: () => Promise<T>): Promise<[T, string]> {
 
 const files = (dir: string, ext: string) => readdirSync(dir).filter((f) => f.endsWith(ext)).map((f) => join(dir, f));
 
-// marks a snapshot unused, so a load shows in its time
+// Marks a snapshot unused. A load touches the same file, while booting and
+// saving again would rename a new one over it.
 function age(file: string) {
   utimesSync(file, new Date(0), new Date(0));
+  return statSync(file).ino;
 }
-const used = (file: string) => statSync(file).mtimeMs > 0;
+const loaded = (file: string, ino: number) => {
+  const s = statSync(file);
+  return s.mtimeMs > 0 && s.ino === ino;
+};
 
 test("a snapshot is taken on the second boot and restored on the third", async () => {
   const ref = spawnSync(hotspot("java"), ["-cp", out, "Boot", "a", "b"], { encoding: "utf8" });
@@ -57,9 +62,9 @@ test("a snapshot is taken on the second boot and restored on the third", async (
   assert.equal(files(dir, ".snap").length, 0);
   assert.deepEqual(await run(dir), expected);
   const [snap] = files(dir, ".snap");
-  age(snap);
+  const ino = age(snap);
   assert.deepEqual(await run(dir), expected);
-  assert.ok(used(snap));
+  assert.ok(loaded(snap, ino));
 });
 
 test("other properties boot without the snapshot", async () => {
@@ -67,10 +72,10 @@ test("other properties boot without the snapshot", async () => {
   await run(dir);
   await run(dir);
   const [snap] = files(dir, ".snap");
-  age(snap);
+  const ino = age(snap);
   const got = await run(dir, { "snap.prop": "x" });
   assert.equal(got.stdout.split("\n")[2], "x");
-  assert.ok(!used(snap));
+  assert.ok(!loaded(snap, ino));
 });
 
 test("library mode restores its own snapshot", async () => {
@@ -87,9 +92,9 @@ test("library mode restores its own snapshot", async () => {
   assert.equal(await where(), "null on main");
   assert.equal(await where(), "null on main");
   assert.equal(files(dir, ".snap").length, 2);
-  for (const f of files(dir, ".snap")) age(f);
+  const inos = new Map(files(dir, ".snap").map((f) => [f, age(f)]));
   assert.equal(await where(), "null on main");
-  assert.equal(files(dir, ".snap").filter(used).length, 1);
+  assert.equal([...inos].filter(([f, ino]) => loaded(f, ino)).length, 1);
 });
 
 test("a snapshot that cannot be saved leaves the run as it was", async () => {
@@ -116,9 +121,9 @@ test("a snapshot that cannot be restored is dropped and the VM boots", async () 
   assert.deepEqual(got, expected);
   assert.match(err, /boot snapshot not restored/);
   // the boot saved a good one in its place
-  age(snap);
+  const ino = age(snap);
   assert.deepEqual(await stderrOf(() => run(dir)), [expected, ""]);
-  assert.ok(used(snap));
+  assert.ok(loaded(snap, ino));
 });
 
 test("a module path turns snapshots off, since boot reads its modules", async () => {
