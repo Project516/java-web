@@ -4,11 +4,11 @@ import {
   INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData,
 } from "./runtime.ts";
 import {
-  Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, TERMINATED, WAITING, fromNative,
+  Frame, JThread, JavaThrow, MAX_DIRECT, NativeFrame, PendingThrow, RUNNABLE, TERMINATED, WAITING, fromNative,
 } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 import type { JVM } from "./jvm.ts";
-import { compileIfHot, hooks, noteBackedge } from "./jit.ts";
+import { INTERPRET, PUSHED, compileIfHot, hooks, noteBackedge } from "./jit.ts";
 
 const MAX_FRAMES = 6000;
 
@@ -86,6 +86,7 @@ Object.assign(hooks, {
   popFrame: (t: JThread, f: Frame) => popFrame(t, f),
   findHandler: findHandlerAt,
   checkStack: (t: JThread) => checkStack(t),
+  callNested,
 });
 
 export function interpret(t: JThread, f: Frame, budget: number): number {
@@ -290,16 +291,19 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
         case 0xac: case 0xae: case 0xb0:
           v = stack[sp - 1];
           popFrame(t, f);
-          deliver(t, v, m.ret, false);
+          if (f.direct) t.ret = v;
+          else deliver(t, v, m.ret, false);
           return budget;
         case 0xad: case 0xaf:
           v = stack[sp - 2];
           popFrame(t, f);
-          deliver(t, v, m.ret, false);
+          if (f.direct) t.ret = v;
+          else deliver(t, v, m.ret, false);
           return budget;
         case 0xb1:
           popFrame(t, f);
-          deliver(t, undefined, "V", false);
+          if (f.direct) t.ret = undefined;
+          else deliver(t, undefined, "V", false);
           return budget;
         // fields
         case 0xb2: case 0xb3: {
@@ -633,6 +637,8 @@ export function raise(t: JThread, exc: JObject) {
       return;
     }
     popFrame(t, f);
+    // the rest of the stack belongs to the compiled code that called f
+    if (f.direct) throw new JavaThrow(exc);
   }
 }
 
@@ -697,6 +703,48 @@ export function handleError(t: JThread, e: unknown) {
   else t.vm.internalError(t, e);
 }
 
+// Interprets a call from compiled code nested on the JS stack, as a direct
+// call runs, so the caller need not spill. Returns m's result, PUSHED when
+// the call must finish in the run loop (its frames stay and the caller
+// spills), or INTERPRET when the run loop must make the call.
+function callNested(t: JThread, m: JMethod, args: any[]): any {
+  if (m.isSynchronized || t.frames.length - t.base >= MAX_DIRECT || t.frames.length >= t.stackLimit) return INTERPRET;
+  if (m.jit === null && !m.noJit) compileIfHot(t, m);
+  const f = new Frame(m);
+  const locals = f.locals;
+  let slot = 0, i = 0;
+  if (!m.isStatic) locals[slot++] = args[i++];
+  for (const p of m.params) {
+    locals[slot] = args[i++];
+    slot += isWide(p) ? 2 : 1;
+  }
+  f.direct = true;
+  t.frames.push(f);
+  const depth = t.frames.length;
+  let budget = 20000;
+  for (;;) {
+    if (t.frames.length < depth) return t.ret;
+    const top = t.top;
+    if (!f.direct || budget <= 0 || t.state !== RUNNABLE || top instanceof NativeFrame || top.needLock) {
+      f.direct = false;
+      return PUSHED;
+    }
+    const jit = top.m.jit;
+    if (jit === null) budget = interpret(t, top, budget);
+    else {
+      const n = t.frames.length;
+      try {
+        jit(t, top);
+      } catch (e) {
+        if (t.frames.length < depth) throw e;
+        handleError(t, e);
+      }
+      // a call that returned is cheap; one left part done used up its own budget
+      budget -= t.frames[n - 1] === top ? 4000 : 1;
+    }
+  }
+}
+
 // Feeds a native frame its pending input and acts on what it yields.
 function stepNative(t: JThread, f: NativeFrame) {
   let r: IteratorResult<any, any>;
@@ -759,7 +807,7 @@ function stepNative(t: JThread, f: NativeFrame) {
 
 const entryStats = typeof process !== "undefined" && process.env?.JW_JIT_STATS ? new Map<string, number>() : null;
 if (entryStats) process.on("exit", () => {
-  console.error("-- run loop entries into compiled code");
+  console.error("-- run loop entries into compiled code", [...entryStats.values()].reduce((a, b) => a + b, 0));
   for (const [k, v] of [...entryStats].sort((a, b) => b[1] - a[1]).slice(0, 25)) console.error(String(v).padStart(8), k);
 });
 

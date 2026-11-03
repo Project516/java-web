@@ -48,6 +48,7 @@ export const hooks = {
   popFrame: null as unknown as (t: JThread, f: Frame) => void,
   findHandler: null as unknown as (t: JThread, f: Frame, pc: number, exc: JObject) => number,
   checkStack: null as unknown as (t: JThread) => void,
+  callNested: null as unknown as (t: JThread, m: JMethod, args: any[]) => any,
 };
 
 let disabled = typeof process !== "undefined" && !!process.env?.JW_NOJIT;
@@ -129,7 +130,7 @@ function at(e: PendingThrow, pc: number | undefined): PendingThrow {
 }
 
 // results of runtime.slowCall
-const PUSHED = Object.freeze({ pushed: true }), INTERPRET = Object.freeze({ interpret: true });
+export const PUSHED = Object.freeze({ pushed: true }), INTERPRET = Object.freeze({ interpret: true });
 
 const STRING_BUILDER = "java/lang/StringBuilder";
 
@@ -189,10 +190,12 @@ const runtime = {
     f.sp = sp;
     return f;
   },
-  // A call that is not direct: a native's result, PUSHED once a native that
-  // must wait is on the stack, or INTERPRET for the run loop to make the call.
+  // A call that is not direct: the result of a native or an interpreted
+  // method, PUSHED once the callee's frames must finish in the run loop, or
+  // INTERPRET for the run loop to make the call.
   slowCall(t: JThread, m: JMethod, args: any[]): any {
-    if (m.native === null || m.isAbstract) return INTERPRET;
+    if (m.isAbstract) return INTERPRET;
+    if (m.native === null) return m.code ? hooks.callNested(t, m, args) : INTERPRET;
     let r;
     try {
       r = m.native(t, args);

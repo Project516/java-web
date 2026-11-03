@@ -102,7 +102,7 @@ export const STATUS_SLEEPING = 0x00e1, STATUS_WAITING = 0x0191, STATUS_TIMED_WAI
 export const STATUS_PARKED = 0x0291, STATUS_PARKED_TIMED = 0x02a1, STATUS_BLOCKED = 0x0401;
 
 // compiled frames nested on one JS stack before calls go through the run loop
-const MAX_DIRECT = 120;
+export const MAX_DIRECT = 120;
 
 let nextId = 1;
 
