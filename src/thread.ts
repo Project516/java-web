@@ -101,6 +101,9 @@ export const STATUS_NEW = 0, STATUS_RUNNABLE = 5, STATUS_TERMINATED = 2;
 export const STATUS_SLEEPING = 0x00e1, STATUS_WAITING = 0x0191, STATUS_TIMED_WAITING = 0x01a1;
 export const STATUS_PARKED = 0x0291, STATUS_PARKED_TIMED = 0x02a1, STATUS_BLOCKED = 0x0401;
 
+// compiled frames nested on one JS stack before calls go through the run loop
+const MAX_DIRECT = 120;
+
 let nextId = 1;
 
 export class JThread {
@@ -139,8 +142,16 @@ export class JThread {
   // it spilled.
   private pool: (Frame | null)[] = [];
 
-  directFrame(m: JMethod): Frame {
+  // The pushed frame of a direct call to compiled m, or null when the call
+  // goes through the run loop: the stack is too deep or the monitor is taken.
+  enter(m: JMethod, recv: JObject | null): Frame | null {
     const d = this.frames.length;
+    if (d - this.base >= MAX_DIRECT || d >= this.stackLimit) return null;
+    let lock: JObject | null = null;
+    if (m.isSynchronized) {
+      lock = m.isStatic ? this.vm.mirror(m.cls) : recv!;
+      if (!this.vm.tryMonitorEnter(this, lock)) return null;
+    }
     // filled without holes, which would make V8 store it as a dictionary
     while (this.pool.length <= d) this.pool.push(this.pooled(m, this.pool.length));
     const f = this.pool[d] ?? (this.pool[d] = this.pooled(m, d));
@@ -150,9 +161,10 @@ export class JThread {
     f.sp = 0;
     f.locals = null as any;
     f.stack = null as any;
-    f.lock = null;
+    f.lock = lock;
     f.needLock = false;
     f.direct = true;
+    this.frames.push(f);
     return f;
   }
 

@@ -1,7 +1,7 @@
 // java.lang natives: Object, System, Thread, Throwable, String, Runtime, ...
 
 import { isHidden } from "./stackwalk.ts";
-import { gcStats } from "./management.ts";
+import { gcStats, javaHeap } from "./management.ts";
 import { assertionsEnabled } from "../assertions.ts";
 import { normalize } from "../fs.ts";
 import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData } from "../runtime.ts";
@@ -316,8 +316,11 @@ export const natives: Natives = {
   // Runtime
   "java/lang/Runtime.availableProcessors()I": () => 1,
   // free <= total <= max, as callers that compute available memory expect
-  "java/lang/Runtime.freeMemory()J": () => BigInt(Math.min(512 << 20, MAX_HEAP) / 2),
-  "java/lang/Runtime.totalMemory()J": () => BigInt(Math.min(512 << 20, MAX_HEAP)),
+  "java/lang/Runtime.freeMemory()J": () => {
+    const h = javaHeap();
+    return BigInt(h ? h.committed - h.used : Math.min(512 << 20, MAX_HEAP) / 2);
+  },
+  "java/lang/Runtime.totalMemory()J": () => BigInt(javaHeap()?.committed ?? Math.min(512 << 20, MAX_HEAP)),
   "java/lang/Runtime.maxMemory()J": () => BigInt(MAX_HEAP),
   // Collects where the engine allows it (node --expose-gc), in a new JS job:
   // a WeakRef read earlier in a job keeps its target alive until the job ends.

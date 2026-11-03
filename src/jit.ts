@@ -29,8 +29,6 @@ export type Compiled = (t: JThread, f: Frame) => number;
 const THRESHOLD = 500;
 const BACKEDGE_THRESHOLD = 2000;
 const MAX_CODE = 6000;
-// compiled frames nested on one JS stack before calls go through the run loop
-const MAX_DIRECT = 120;
 const MAX_FALLBACKS = 5000;
 // callees inlined as regions: bytecode outside throw-only blocks (HotSpot's
 // MaxInlineSize), nesting, and bytecode inlined into one compiled method
@@ -191,20 +189,6 @@ const runtime = {
     f.sp = sp;
     return f;
   },
-  // the pushed frame of a direct call to compiled m, or null when the call
-  // goes through the run loop: the stack is too deep or the monitor is taken
-  enter(t: JThread, m: JMethod, recv: JObject | null): Frame | null {
-    if (t.frames.length - t.base >= MAX_DIRECT || t.frames.length >= t.stackLimit) return null;
-    let lock: JObject | null = null;
-    if (m.isSynchronized) {
-      lock = m.isStatic ? t.vm.mirror(m.cls) : recv!;
-      if (!t.vm.tryMonitorEnter(t, lock)) return null;
-    }
-    const f = t.directFrame(m);
-    f.lock = lock;
-    t.frames.push(f);
-    return f;
-  },
   // A call that is not direct: a native's result, PUSHED once a native that
   // must wait is on the stack, or INTERPRET for the run loop to make the call.
   slowCall(t: JThread, m: JMethod, args: any[]): any {
@@ -295,7 +279,6 @@ const runtime = {
   },
   // raises exc from the run loop, once every compiled caller has spilled
   *rethrow(exc: JObject): Generator<never, void, unknown> { throw new JavaThrow(exc); },
-  MAX_DIRECT,
 };
 
 // ---- analysis ----------------------------------------------------------------
@@ -1187,7 +1170,7 @@ function genInvoke(
   const res = (v: string) => (ret === "V" ? "" : `s${base}=${v};`);
   // compiled callee: direct call
   const recv = target.isStatic ? "null" : args[0];
-  parts.push(`if(tm.jit!==null&&(cf=rt.enter(t,tm,${recv}))!==null){`);
+  parts.push(`if(tm.jit!==null&&(cf=t.enter(tm,${recv}))!==null){`);
   parts.push(`r=tm.jit(t,cf${args.map((x) => "," + x).join("")});if(r!==0){t.unpool(cf);${exit(pc, base, EXIT_SUSPEND)}}`);
   parts.push(`${res("t.ret")}}`);
   // a native callee runs here; anything else goes through the interpreter
@@ -1233,14 +1216,14 @@ function genPolymorphic(g: Gen, pc: number, next: number, d: number, target: JMe
       const cell = K([null, null]);
       const push = target.ret === "V" ? "" : `s${base}=t.ret;`;
       return `if(${args[0]}!==null&&${args[0]}===${cell}[0]){f.pc=${pc};tm=${cell}[1];` +
-        `if(tm.jit!==null&&tm.cls.state===${INITIALIZED}&&(cf=rt.enter(t,tm,null))!==null){` +
+        `if(tm.jit!==null&&tm.cls.state===${INITIALIZED}&&(cf=t.enter(tm,null))!==null){` +
         `r=tm.jit(t,cf${args.map((x) => "," + x).join("")});if(r!==0){t.unpool(cf);${exit(pc, base, EXIT_SUSPEND)}}${push}}` +
         `else{${call(pc, d)}}}else{rt.vhTarget(t,${cell},${args[0]},${K(link.appendix)});${code}}`;
     }
   }
   const push = target.ret === "V" ? "" : `s${base}=t.ret;`;
   return `f.pc=${pc};${select}` +
-    `if(tm.jit!==null&&tm.cls.state===${INITIALIZED}&&(cf=rt.enter(t,tm,${callArgs[0] ?? "null"}))!==null){` +
+    `if(tm.jit!==null&&tm.cls.state===${INITIALIZED}&&(cf=t.enter(tm,${callArgs[0] ?? "null"}))!==null){` +
     `r=tm.jit(t,cf${callArgs.map((x) => "," + x).join("")});if(r!==0){t.unpool(cf);${exit(pc, base, EXIT_SUSPEND)}}` +
     `${push}}else{${call(pc, d)}}`;
 }
