@@ -465,11 +465,20 @@ export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): 
     case Tag.Class: return vm.mirror(yield* vm.loadClassGen(t, cls.loader, className(cp, idx)));
   }
   const cached = cls.ldc[idx];
-  if (cached !== undefined && e.tag !== Tag.Dynamic) return cached;
+  if (cached !== undefined) {
+    if (e.tag !== Tag.Dynamic) return cached;
+    const desc = utf8(cp, cp[e.b]!.b);
+    return isPrim(desc) ? yield* box(t, desc, cached) : cached;
+  }
   let v: any;
   if (e.tag === Tag.MethodType) v = yield* methodType(vm, t, cls.loader, utf8(cp, e.a));
   else if (e.tag === Tag.MethodHandle) v = yield* methodHandleConstant(vm, t, cls, cpArg(cls, idx) as MethodHandleRef);
-  else if (e.tag === Tag.Dynamic) return yield* dynamicConstant(vm, t, cls, idx);
+  else if (e.tag === Tag.Dynamic) {
+    v = yield* dynamicConstant(vm, t, cls, idx);
+    const desc = utf8(cp, cp[e.b]!.b);
+    cls.ldc[idx] = isPrim(desc) && v !== null ? vm.getField(v, v.cls.name, "value") : v;
+    return v;
+  }
   else throw new PendingThrow("java/lang/InternalError", `bad constant tag ${e.tag}`);
   cls.ldc[idx] = v;
   return v;

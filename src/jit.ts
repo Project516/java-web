@@ -884,7 +884,7 @@ function insn(g: Gen, b: Body, pc: number) {
     }
     case 0xba: {
       const site = m.cache?.[pc];
-      if (!site || region) { emit(slow(pc, d)); break; }
+      if (!site || site instanceof PendingThrow || site instanceof JavaThrow || region) { emit(slow(pc, d)); break; }
       let dd = d;
       if (site.appendix !== undefined) { emit(`${S(dd)}=${K(site.appendix)};`); dd++; }
       emit(genInvoke(g, 0xb8, pc, next, dd, site.m, cls, d));
