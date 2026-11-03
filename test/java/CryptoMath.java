@@ -1,16 +1,19 @@
 import java.math.BigInteger;
+import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.Signature;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.util.HexFormat;
 import java.util.Arrays;
 import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-// SHA digests, AES and BigInteger arithmetic, at sizes that reach their intrinsics.
+// SHA digests, AES, BigInteger and P-256 arithmetic, at sizes that reach their intrinsics.
 public class CryptoMath {
   static final HexFormat HEX = HexFormat.of();
 
@@ -66,6 +69,39 @@ public class CryptoMath {
     RSAPrivateCrtKey k = (RSAPrivateCrtKey) kpg.generateKeyPair().getPrivate();
     System.out.println("rsa " + hash(k.getModulus()) + " " + hash(k.getPrivateExponent()));
     System.out.println("prime " + BigInteger.probablePrime(512, rnd).bitLength() + " " + new BigInteger("1000000007").isProbablePrime(50));
+
+    long[] edges = {0, 1, -1, 2, Long.MIN_VALUE, Long.MAX_VALUE, 0xffffffffL, 1L << 32, -(1L << 32), 0x123456789abcdefL};
+    long hi = 0, uhi = 0;
+    for (long x : edges) for (long y : edges) {
+      hi = hi * 31 + Math.multiplyHigh(x, y);
+      uhi = uhi * 31 + Math.unsignedMultiplyHigh(x, y);
+    }
+    System.out.println("multiplyHigh " + hi + " " + uhi);
+
+    // P-256 key pairs, agreement and signatures, all from seeded randomness
+    KeyPairGenerator ec = KeyPairGenerator.getInstance("EC");
+    SecureRandom ecRnd = SecureRandom.getInstance("SHA1PRNG");
+    ecRnd.setSeed(11);
+    ec.initialize(256, ecRnd);
+    KeyPair alice = ec.generateKeyPair(), bob = ec.generateKeyPair();
+    KeyAgreement ka = KeyAgreement.getInstance("ECDH");
+    ka.init(alice.getPrivate());
+    ka.doPhase(bob.getPublic(), true);
+    byte[] shared = ka.generateSecret();
+    ka.init(bob.getPrivate());
+    ka.doPhase(alice.getPublic(), true);
+    System.out.println("ecdh " + HEX.formatHex(shared, 0, 8) + " " + Arrays.equals(shared, ka.generateSecret()));
+    Signature sign = Signature.getInstance("SHA256withECDSA");
+    sign.initSign(alice.getPrivate(), ecRnd);
+    sign.update(data);
+    byte[] sig = sign.sign();
+    Signature verify = Signature.getInstance("SHA256withECDSA");
+    verify.initVerify(alice.getPublic());
+    verify.update(data);
+    boolean good = verify.verify(sig);
+    verify.initVerify(bob.getPublic());
+    verify.update(data);
+    System.out.println("ecdsa " + hash(new BigInteger(1, sig)) + " " + good + " " + verify.verify(sig));
   }
 
   static String hash(BigInteger x) throws Exception {
