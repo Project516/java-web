@@ -1166,6 +1166,7 @@ export class JVM {
     if (!snaps) return start(false);
     const key = snapshotKey(this, snaps.build);
     const done = (image: SnapshotImage | null) => {
+      // an async load can finish after the VM was halted
       if (image?.key !== key || this.exitCode !== null) return start(false);
       try {
         restoreVM(this, image, t);
