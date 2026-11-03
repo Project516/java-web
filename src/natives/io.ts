@@ -129,20 +129,13 @@ function table(t: JThread): FdTable {
 export function fileInode(t: JThread, path: string): number {
   let inodes = t.vm.state.get("inodes") as Map<string, number> | undefined;
   if (!inodes) t.vm.state.set("inodes", (inodes = new Map()));
-  let next = t.vm.state.get("inodeNext") as number | undefined;
-  if (next === undefined) {
-    next = inodes.size + 2;
-    t.vm.state.set("inodeNext", next);
+  const ino = inodes.get(path);
+  if (ino === undefined) {
+    const next = (t.vm.state.get("inodeNext") as number | undefined) ?? 2;
+    inodes.set(path, next);
+    t.vm.state.set("inodeNext", next + 1);
+    return next;
   }
-  const files = table(t).files.values();
-  for (const f of files) {
-    if (f.detached?.path === path && f.ino === inodes.get(path)) inodes.set(path, next++);
-  }
-  t.vm.state.set("inodeNext", next);
-  let ino = inodes.get(path);
-  if (ino === undefined) inodes.set(path, (ino = next++));
-  t.vm.state.set("inodeNext", next);
-  for (const f of table(t).files.values()) if (f.path === path) f.ino = ino;
   return ino;
 }
 
@@ -277,6 +270,13 @@ export function renamePath(t: JThread, from: string, to: string): boolean {
   // a file the rename replaced stays open, unlinked
   for (const f of replaced) f.path = "";
   for (const f of open) f.path = to + f.path.slice(from.length);
+  const inodes = t.vm.state.get("inodes") as Map<string, number> | undefined;
+  if (inodes) {
+    const moved = [...inodes].filter(([p]) => p === from || p.startsWith(from + "/"));
+    for (const p of inodes.keys()) if (p === to || p.startsWith(to + "/")) inodes.delete(p);
+    for (const [p] of moved) inodes.delete(p);
+    for (const [p, ino] of moved) inodes.set(to + p.slice(from.length), ino);
+  }
   return true;
 }
 
@@ -288,6 +288,7 @@ export function removePath(t: JThread, abs: string): boolean {
     return false;
   }
   for (const f of open) f.path = "";
+  t.vm.state.get("inodes")?.delete(abs);
   return true;
 }
 

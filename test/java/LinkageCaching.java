@@ -9,6 +9,10 @@ public class LinkageCaching {
   static int bootstrapCalls;
   static int constantCalls;
   static int errorCalls;
+  static int customCalls;
+  public static class CustomError extends LinkageError {
+    public CustomError() { super("custom bootstrap error"); }
+  }
 
   public static CallSite bootstrap(MethodHandles.Lookup lookup, String name, MethodType type) {
     if (++bootstrapCalls == 1) throw new IllegalStateException("first attempt");
@@ -26,6 +30,11 @@ public class LinkageCaching {
   public static CallSite error(MethodHandles.Lookup lookup, String name, MethodType type) {
     errorCalls++;
     throw new AssertionError("bootstrap assertion");
+  }
+
+  public static CallSite custom(MethodHandles.Lookup lookup, String name, MethodType type) {
+    customCalls++;
+    throw new CustomError();
   }
 
   public static CallSite withArgument(MethodHandles.Lookup lookup, String name, MethodType type, Object value) {
@@ -49,6 +58,8 @@ public class LinkageCaching {
     DynamicConstantDesc<?> reverse = DynamicConstantDesc.ofNamed(constantBootstrap, "reverse", CD_String);
     DirectMethodHandleDesc error = MethodHandleDesc.ofMethod(DirectMethodHandleDesc.Kind.STATIC, owner, "error",
         MethodTypeDesc.of(CD_CallSite, CD_MethodHandles_Lookup, CD_String, CD_MethodType));
+    DirectMethodHandleDesc custom = MethodHandleDesc.ofMethod(DirectMethodHandleDesc.Kind.STATIC, owner, "custom",
+        MethodTypeDesc.of(CD_CallSite, CD_MethodHandles_Lookup, CD_String, CD_MethodType));
     MethodTypeDesc type = MethodTypeDesc.of(CD_String);
     MethodTypeDesc longType = MethodTypeDesc.of(CD_long);
     byte[] bytes = ClassFile.of().build(ClassDesc.of("GeneratedLinkage"), writer -> {
@@ -65,6 +76,8 @@ public class LinkageCaching {
           code -> code.invokedynamic(DynamicCallSiteDesc.of(argumentBootstrap, "reverse", type, reverse)).areturn());
       writer.withMethodBody("error", type, ACC_PUBLIC | ACC_STATIC,
           code -> code.invokedynamic(DynamicCallSiteDesc.of(error, "error", type)).areturn());
+      writer.withMethodBody("custom", type, ACC_PUBLIC | ACC_STATIC,
+          code -> code.invokedynamic(DynamicCallSiteDesc.of(custom, "custom", type)).areturn());
     });
     Class<?> generated = new Loader().define(bytes);
     Method invoke = generated.getMethod("invoke");
@@ -101,5 +114,13 @@ public class LinkageCaching {
       }
     }
     System.out.println("error calls " + errorCalls);
+    for (int i = 0; i < 2; i++) {
+      try {
+        generated.getMethod("custom").invoke(null);
+      } catch (InvocationTargetException e) {
+        System.out.println("custom " + i + ": " + e.getCause().getClass().getName());
+      }
+    }
+    System.out.println("custom calls " + customCalls);
   }
 }

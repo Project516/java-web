@@ -621,6 +621,10 @@ export function raise(t: JThread, exc: JObject) {
       return;
     }
     const h = findHandler(t.vm, f, exc);
+    if (h < -1) {
+      t.pushNative(resolveHandler(t, f, exc, -h - 2), null, "V", true);
+      return;
+    }
     if (h >= 0) {
       if (t.frames.length < MAX_FRAMES - 500) t.stackLimit = MAX_FRAMES;
       f.sp = 0;
@@ -632,16 +636,53 @@ export function raise(t: JThread, exc: JObject) {
   }
 }
 
+// Negative values below -1 identify an unresolved handler's table index.
 function findHandler(vm: JVM, f: Frame, exc: JObject): number {
   const handlers = f.m.code!.handlers;
   const pc = f.pc;
-  for (const h of handlers) {
+  for (let i = 0; i < handlers.length; i++) {
+    const h = handlers[i];
     if (pc < h.start || pc >= h.end) continue;
     if (h.catchType === 0) return h.handler;
-    const name = vm.cpClassName(f.m.cls, h.catchType);
-    for (let c: JClass | null = exc.cls; c; c = c.superclass) if (c.name === name) return h.handler;
+    const cls = f.m.cls;
+    const name = vm.cpClassName(cls, h.catchType);
+    const target = cls.rcp[h.catchType] ?? vm.findLoaded(cls.loader, name) ?? (cls.loader === null ? vm.loadBoot(name) : null);
+    if (!target) return -i - 2;
+    cls.rcp[h.catchType] = target;
+    if (exc.cls.isSubclassOf(target)) return h.handler;
   }
   return -1;
+}
+
+function* resolveHandler(t: JThread, f: Frame, exc: JObject, start: number): NativeGen {
+  const cls = f.m.cls;
+  const handlers = f.m.code!.handlers;
+  for (let i = start; i < handlers.length; i++) {
+    const h = handlers[i];
+    if (f.pc < h.start || f.pc >= h.end) continue;
+    if (h.catchType !== 0) {
+      try {
+        const target = cls.rcp[h.catchType] ?? (yield* t.vm.loadClassGen(t, cls.loader, t.vm.cpClassName(cls, h.catchType)));
+        cls.rcp[h.catchType] = target;
+        if (!exc.cls.isSubclassOf(target)) continue;
+      } catch (e) {
+        if (e instanceof JavaThrow) exc = e.obj;
+        else if (e instanceof PendingThrow) exc = yield* t.vm.newThrowable(t, e.cls, e.msg, null, e.ctor);
+        else throw e;
+        continue;
+      }
+    }
+    if (t.frames.length < MAX_FRAMES - 500) t.stackLimit = MAX_FRAMES;
+    f.sp = 1;
+    f.stack[0] = exc;
+    f.pc = h.handler;
+    return;
+  }
+  // Unwind the throwing frame while keeping this native frame on top.
+  const resolver = t.frames.pop()!;
+  popFrame(t, f);
+  t.frames.push(resolver);
+  throw new JavaThrow(exc);
 }
 
 export function handleError(t: JThread, e: unknown) {

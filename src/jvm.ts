@@ -454,7 +454,7 @@ export class JVM {
     const cache = f.m.cache ??= [];
     const pc = f.pc;
     const site = cache[pc];
-    if (site instanceof PendingThrow || site instanceof JavaThrow) throw site;
+    if (site instanceof PendingThrow) throw site;
     if (site !== undefined) return site;
     t.pushNative((function* (vm: JVM) {
       try {
@@ -464,8 +464,7 @@ export class JVM {
           const cls = e.obj.cls;
           const detail = vm.getField(e.obj, "java/lang/Throwable", "detailMessage");
           // HotSpot recreates cached bootstrap errors without their original cause.
-          cache[pc] = vm.loadBoot(cls.name) === cls
-            ? new PendingThrow(cls.name, detail === null ? null : vm.jsString(detail)) : e;
+          cache[pc] = new PendingThrow(cls.name, detail === null ? null : vm.jsString(detail));
         } else if (e instanceof PendingThrow && vm.loadBoot(e.cls)?.isAssignableTo(vm.loadBootOrFail("java/lang/LinkageError"))) {
           cache[pc] = e;
         }

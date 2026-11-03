@@ -7,6 +7,7 @@ import { preCloseSock } from "../sockets.ts";
 import { sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import { closeFd, endsInDot, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
+import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
 export const ENOENT = 2, EBADF = 9, EACCES = 13, EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21,
@@ -172,6 +173,13 @@ export const natives: Natives = {
   [`${N}fchmod0(II)V`]: (t, [fd, mode]) => {
     const f = t.vm.state.get("fds")?.files.get(fd);
     if (!f) unixError(EBADF);
+    if (f.detached) {
+      const files = t.vm.state.get("fds").files as Map<number, OpenFile>;
+      for (const open of files.values()) {
+        if (open.contents === f.contents && open.detached) open.detached.stat.mode = mode & 0o7777;
+      }
+      return;
+    }
     if (!f.path || !t.vm.fs.stat(f.path)) unixError(ENOENT);
     if (!t.vm.fs.chmod(f.path, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
   },
@@ -411,7 +419,7 @@ Object.assign(natives, {
   "sun/nio/ch/FileKey.init(Ljava/io/FileDescriptor;[J)V": (t: JThread, [fd, info]: any[]) => {
     const f = chanFile(t, fd);
     info.a[0] = 1n;
-    info.a[1] = BigInt(inode(t, f.path));
+    info.a[1] = BigInt(f.ino ?? fileInode(t, f.path));
   },
   "sun/nio/ch/UnixDispatcher.init()V": () => undefined,
   "sun/nio/ch/UnixDispatcher.preClose0(Ljava/io/FileDescriptor;)V": (t: JThread, [fd]: any[]) => preCloseSock(t.vm.state, fdNum(t, fd)),

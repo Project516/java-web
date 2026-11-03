@@ -28,14 +28,24 @@ public class FstatAfterUnlink {
       Field descriptor = FileDescriptor.class.getDeclaredField("fd");
       descriptor.setAccessible(true);
       int fd = descriptor.getInt(file.getFD());
+      long originalInode = (long) value(stat(fd), "ino");
+      Path renamed = path.resolveSibling(path.getFileName() + ".renamed");
+      Files.move(path, renamed);
+      path = renamed;
+      if ((long) value(stat(fd), "ino") != originalInode) throw new AssertionError("renamed inode changed");
       Files.delete(path);
       file.write(new byte[5]);
+      Method chmod = Class.forName("sun.nio.fs.UnixNativeDispatcher").getDeclaredMethod("fchmod", int.class, int.class);
+      chmod.setAccessible(true);
+      chmod.invoke(null, fd, 0640);
       Files.writeString(path, "fresh");
       Object attrs = stat(fd);
       boolean regular = (boolean) value(attrs, "isRegularFile");
       long size = (long) value(attrs, "size");
       long ino = (long) value(attrs, "ino");
+      if (ino != originalInode) throw new AssertionError("detached inode changed");
       int links = (int) value(attrs, "nlink");
+      if (((int) value(attrs, "mode") & 0777) != 0640) throw new AssertionError("detached permissions");
       try (RandomAccessFile fresh = new RandomAccessFile(path.toFile(), "r")) {
         if (ino == (long) value(stat(descriptor.getInt(fresh.getFD())), "ino"))
           throw new AssertionError("detached descriptor has replacement inode");
