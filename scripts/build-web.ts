@@ -4,6 +4,7 @@
 // Run `pnpm jdk` first.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { build } from "esbuild";
@@ -21,8 +22,17 @@ if (!existsSync(join(jdk, "lib", "packages.txt"))) throw new Error("run `pnpm jd
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(join(dist, "samples"), { recursive: true });
 
+// names the VM code and JDK image, for the worker's boot snapshots
+const buildId = createHash("sha256");
+for (const f of readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort()) {
+  buildId.update(f).update(readFileSync(join(root, "src", f)));
+}
+for (const f of ["release", "lib/packages.txt"]) buildId.update(readFileSync(join(jdk, f)));
+const define = { JAVA_WEB_BUILD: JSON.stringify(buildId.digest("hex")) };
+
 for (const [entry, out] of [["api.ts", "java-web.js"], ["worker.ts", "java-web-worker.js"]]) {
   await build({
+    define,
     entryPoints: [join(root, "src", "browser", entry)],
     outfile: join(dist, out),
     bundle: true,

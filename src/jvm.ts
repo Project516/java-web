@@ -72,7 +72,7 @@ export interface JvmOptions {
   // if wants says to take one
   snapshots?: {
     build: string;
-    load: (key: string) => SnapshotImage | null;
+    load: (key: string) => SnapshotImage | null | Promise<SnapshotImage | null>;
     wants: (key: string) => boolean;
     save: (image: SnapshotImage) => void;
   };
@@ -1039,10 +1039,12 @@ export class JVM {
     // as the java launcher sets it
     if (!this.props.has("sun.java.command")) this.props.set("sun.java.command", [what, ...args].join(" "));
     const t = new JThread(this);
-    t.pushNative(this.mainGen(t, mode, what, args, this.restore(t)), null, "V", false);
-    // mainGen halts; ending without it means a VM error killed the thread
-    t.onExit = () => this.halt(1);
-    this.startThread(t);
+    this.restore(t, (restored) => {
+      t.pushNative(this.mainGen(t, mode, what, args, restored), null, "V", false);
+      // mainGen halts; ending without it means a VM error killed the thread
+      t.onExit = () => this.halt(1);
+      this.startThread(t);
+    });
     return this.exited;
   }
 
@@ -1050,11 +1052,12 @@ export class JVM {
   // library, one call at a time on the main thread, as in CheerpJ's library mode.
   startLibrary(): Promise<void> {
     const t = new JThread(this);
-    const started = new Promise<void>((resolve, reject) => {
-      t.pushNative(this.libraryGen(t, this.restore(t), resolve, reject), null, "V", false);
+    return new Promise<void>((resolve, reject) => {
+      this.restore(t, (restored) => {
+        t.pushNative(this.libraryGen(t, restored, resolve, reject), null, "V", false);
+        this.startThread(t);
+      });
     });
-    this.startThread(t);
-    return started;
   }
 
   private lib: Library | null = null;
@@ -1143,15 +1146,19 @@ export class JVM {
   }
 
   // Loads the snapshot taken after a boot with the same inputs into the VM,
-  // with t as its main thread.
-  private restore(t: JThread): boolean {
+  // with t as its main thread, then starts it; synchronously when load is.
+  private restore(t: JThread, start: (restored: boolean) => void) {
     const snaps = this.opts.snapshots;
-    if (!snaps) return false;
+    if (!snaps) return start(false);
     const key = snapshotKey(this, snaps.build);
+    const done = (image: SnapshotImage | null) => {
+      const restored = image?.key === key && this.exitCode === null;
+      if (restored) restoreVM(this, image, t);
+      start(restored);
+    };
     const image = snaps.load(key);
-    if (image?.key !== key) return false;
-    restoreVM(this, image, t);
-    return true;
+    if (image instanceof Promise) image.then(done, () => done(null));
+    else done(image);
   }
 
   // Boots, or finishes a restore: the one property the key leaves out is set

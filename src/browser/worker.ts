@@ -5,7 +5,8 @@
 import { MemoryBackend, VFS } from "../fs.ts";
 import { JVM } from "../jvm.ts";
 import { HttpBackend, addIndex, parsePack } from "./http.ts";
-import { persist } from "./idb.ts";
+import { loadSnapshot, persist, saveSnapshot } from "./idb.ts";
+import type { SnapshotImage } from "../snapshot.ts";
 import type { LibraryError, LibraryReply } from "../library.ts";
 import type { NativeReply } from "../bridge.ts";
 import type { FromWorker, InitMessage, ToWorker } from "./protocol.ts";
@@ -111,8 +112,31 @@ function fileClosed(path: string) {
   if (data) post({ type: "download", name: path.slice(path.lastIndexOf("/") + 1), data: data.slice() });
 }
 
+// set by the build: the VM code and JDK image a snapshot is valid for
+declare const JAVA_WEB_BUILD: string;
+
+// Boot snapshots of this page's VMs, also kept in IndexedDB for later loads.
+// A VM changes the image it restores, so each gets a copy.
+const snapshots = new Map<string, SnapshotImage>();
+const snapshotCache = {
+  build: JAVA_WEB_BUILD,
+  load: async (key: string) => {
+    const image = snapshots.get(key) ?? await loadSnapshot(key);
+    if (!image) return null;
+    snapshots.set(key, image);
+    return structuredClone(image);
+  },
+  wants: () => true,
+  save: (image: SnapshotImage) => {
+    const copy = structuredClone(image);
+    snapshots.set(image.key, copy);
+    saveSnapshot(copy);
+  },
+};
+
 function newVm(classpath: string[], vmId: number): JVM {
   return new JVM({
+    snapshots: snapshotCache,
     fs: vfs!,
     javaHome: "/jdk",
     classpath,
