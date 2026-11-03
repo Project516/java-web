@@ -583,7 +583,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const out: string[] = [];
   // direct calls pass arguments as parameters and a frame without arrays
   out.push(`return function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
-  out.push(`let pc=f.pc,bud=4000,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
+  out.push(`let pc=f.pc,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
   out.push(`if(L===null){${params.map((p, i) => `${L(i)}=${p};`).join("")}}else{${Array.from({ length: nl }, (_, i) => `${L(i)}=L[${i}];`).join("")}${Array.from({ length: ns }, (_, i) => `${S(i)}=S[${i}];`).join("")}}`);
   out.push(`X:{for(;;){try{switch(pc){`);
   out.push(...top.out);
@@ -691,7 +691,9 @@ function insn(g: Gen, b: Body, pc: number) {
   const top = (k = 0) => S(d - 1 - k);
   const jump = (target: number) => {
     if (region) return `{${region.pcVar}=${target};continue R${region.id};}`;
-    if (target <= pc) return `{if(--bud===0)${g.exit(target, b.a.depth.get(target)!, EXIT_SUSPEND)}pc=${target};continue;}`;
+    // loops spend the thread's slice wherever they are on the stack, so a loop
+    // calling others' loops still yields
+    if (target <= pc) return `{if(--t.slice<=0)${g.exit(target, b.a.depth.get(target)!, EXIT_SUSPEND)}pc=${target};continue;}`;
     return `{pc=${target};continue;}`;
   };
   const idx2 = u16(c, pc + 1);

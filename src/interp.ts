@@ -721,16 +721,15 @@ function callNested(t: JThread, m: JMethod, args: any[]): any {
   f.direct = true;
   t.frames.push(f);
   const depth = t.frames.length;
-  let budget = 20000;
   for (;;) {
     if (t.frames.length < depth) return t.ret;
     const top = t.top;
-    if (!f.direct || budget <= 0 || t.state !== RUNNABLE || top instanceof NativeFrame || top.needLock) {
+    if (!f.direct || t.slice <= 0 || t.state !== RUNNABLE || top instanceof NativeFrame || top.needLock) {
       f.direct = false;
       return PUSHED;
     }
     const jit = top.m.jit;
-    if (jit === null) budget = interpret(t, top, budget);
+    if (jit === null) t.slice = interpret(t, top, t.slice);
     else {
       const n = t.frames.length;
       try {
@@ -740,7 +739,7 @@ function callNested(t: JThread, m: JMethod, args: any[]): any {
         handleError(t, e);
       }
       // a call that returned is cheap; one left part done used up its own budget
-      budget -= t.frames[n - 1] === top ? 4000 : 1;
+      t.slice -= t.frames[n - 1] === top ? 4000 : 1;
     }
   }
 }
@@ -842,12 +841,13 @@ export function runThread(t: JThread, budget: number) {
     if (jit !== null) {
       if (entryStats) countEntry(t, f);
       t.base = t.frames.length;
+      t.slice = budget;
       try {
         jit(t, f);
       } catch (e) {
         handleError(t, e);
       }
-      budget -= 4000;
+      budget = t.slice - 4000;
     } else budget = interpret(t, f, budget);
   }
   if (t.frames.length === 0 && t.state !== TERMINATED) terminate(t);

@@ -129,6 +129,9 @@ export class JThread {
   // run loop last entered compiled code
   ret: any = undefined;
   base = 0;
+  // what is left of the run loop's budget while compiled code runs: its
+  // loops and the calls it interprets in place spend it
+  slice = 0;
   // wakes the thread early from sleep, park or wait, for interrupt/unpark
   wake: (() => void) | null = null;
   // set when the bottom frame finishes
