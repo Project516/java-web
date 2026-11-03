@@ -119,3 +119,8 @@ Natives run on the page's main thread while Java runs in a Worker, so a typed
 array argument is a copy; what the native writes to it goes back to Java when it
 returns. Output goes to the element with id `console`, or to the display. `/files/`
 is writable storage, kept in IndexedDB.
+
+After a VM boots, the worker keeps a snapshot of it, in memory and in
+IndexedDB (the 4 most recently used). Later runs with the same class path and
+`cheerpjInit` options start from it instead of booting, in this page and in
+later visits.

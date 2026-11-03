@@ -51,6 +51,19 @@ resolves to the exit code. Its options:
 - `hostName` (what `InetAddress.getLocalHost()` reports), `maxRssMb`, `jdk`, `debug`
 - `fetch`: sockets stay inside the VM, and `http:` requests go to this `fetch`, as in the browser
 
+- `snapshotDir`: where boot snapshots are kept, or `null` for none (see below)
+
 `startLibrary(options)` starts a VM in library mode, and `libraryOf(vm)` is its
 `lib`, used as `cheerpjRunLibrary`'s result is in the browser. `vm.halt(0)`
 stops it.
+
+## Boot snapshots
+
+Most of a start is the JDK's own boot. The second time a setup boots, java-web
+saves the VM as it is after boot, and later starts with the same setup load it
+instead, which is about three times faster. A setup is the java-web build, the
+working directory, the class path, system properties and VM options: boot
+reads all of them. The snapshots, about 1 MB each, are kept in
+`$XDG_CACHE_HOME/java-web/snapshots` (`~/.cache/java-web/snapshots`), the 16
+most recently used. Set `JAVA_WEB_SNAPSHOT_DIR` to keep them elsewhere, or to
+an empty value to turn them off.

@@ -44,6 +44,7 @@ Node, which is how the tests run.
 - `src/interp.ts` bytecode interpreter and per-thread run loop
 - `src/jvm.ts` loading, linking, initialization, resolution, scheduler, boot
 - `src/indy.ts` invokedynamic, method handles
+- `src/snapshot.ts` boot snapshots: saving and restoring the VM as it is after boot
 - `src/library.ts` library mode in the VM: object handles, calls, field access,
   value conversion; `src/bridge.ts` the JS proxies over it
 - `src/natives/` JS implementations of JDK native methods, by package;
@@ -95,5 +96,9 @@ Node, which is how the tests run.
 - **handle**: how the VM names a Java object it gave to JS; the page's proxy
   holds it until the proxy is dropped.
 - **wire value**: a value as it crosses between the VM and JS (library.ts).
+- **boot snapshot**: the VM right after the JDK's boot, saved and loaded on
+  later starts with the same key (build, class path, properties, options,
+  working directory) instead of booting. Kept in `~/.cache/java-web` under
+  Node and IndexedDB in browsers.
 - **Sock**: a socket, event or epoll file descriptor behind the `sun.nio.ch` natives. A
   backend (host sockets under Node, loopback inside the VM) moves its bytes.
