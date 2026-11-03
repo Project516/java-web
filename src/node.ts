@@ -40,7 +40,7 @@ export class NodeBackend implements Backend {
     let st: Stat | null = null;
     try {
       const s = fs.statSync(this.host(p));
-      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs };
+      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777 };
     } catch {
       st = null;
     }

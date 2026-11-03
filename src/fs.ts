@@ -4,6 +4,8 @@ export interface Stat {
   dir: boolean;
   size: number;
   mtime: number;
+  // permission and special bits, when the backend can report them
+  mode?: number;
   // a character device; it streams and is never read whole
   device?: boolean;
 }

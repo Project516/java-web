@@ -51,7 +51,7 @@ function fillAttrs(t: JThread, attrs: JObject, p: string): number {
   if (!st) return ENOENT;
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
   const writable = vm.fs.writable(p);
-  const mode = st.device ? S_IFCHR | 0o666 : st.dir ? S_IFDIR | (writable ? 0o755 : 0o555) : S_IFREG | (writable ? 0o644 : 0o444);
+  const mode = st.device ? S_IFCHR | 0o666 : (st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
   const sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
   vm.setField(attrs, A, "st_mode", mode);
   vm.setField(attrs, A, "st_ino", BigInt(inode(t, p)));
@@ -164,8 +164,16 @@ export const natives: Natives = {
   [`${N}readlink0(J)[B`]: () => unixError(EINVAL),
   [`${N}symlink0(JJ)V`]: () => unixError(ENOSYS),
   [`${N}link0(JJ)V`]: () => unixError(ENOSYS),
-  [`${N}chmod0(JI)V`]: () => undefined,
-  [`${N}fchmod0(II)V`]: () => undefined,
+  [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
+    const abs = path(t, p);
+    if (!t.vm.fs.stat(abs)) unixError(ENOENT);
+    if (!t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
+  },
+  [`${N}fchmod0(II)V`]: (t, [fd, mode]) => {
+    const f = fileOf(t, fd);
+    if (!t.vm.fs.stat(f.path)) unixError(ENOENT);
+    if (!t.vm.fs.chmod(f.path, (old) => (old & ~0o7777) | (mode & 0o7777))) unixError(EROFS);
+  },
   [`${N}chown0(JII)V`]: () => undefined,
   [`${N}lchown0(JII)V`]: () => undefined,
   [`${N}fchown0(III)V`]: () => undefined,
