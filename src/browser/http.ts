@@ -63,6 +63,10 @@ export function addIndex(pack: Pack, text: string) {
 
 const BLOCK = 64 << 10;
 
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
 function compressed(xhr: XMLHttpRequest): boolean {
   const enc = xhr.getResponseHeader("Content-Encoding");
   return !!enc && enc !== "identity";
@@ -96,7 +100,7 @@ export class HttpBackend implements Backend {
 
   private request(method: string, path: string): XMLHttpRequest | null {
     const xhr = new XMLHttpRequest();
-    xhr.open(method, this.base + encodeURI(path), false);
+    xhr.open(method, this.base + encodePath(path), false);
     if (method === "GET") xhr.responseType = "arraybuffer";
     try {
       xhr.send();
@@ -170,7 +174,7 @@ export class HttpBackend implements Backend {
       let end = b;
       while (end < last && !blocks.has(end + 1)) end++;
       const xhr = new XMLHttpRequest();
-      xhr.open("GET", this.base + encodeURI(path), false);
+      xhr.open("GET", this.base + encodePath(path), false);
       xhr.responseType = "arraybuffer";
       xhr.setRequestHeader("Range", `bytes=${b * BLOCK}-${(end + 1) * BLOCK - 1}`);
       try {
