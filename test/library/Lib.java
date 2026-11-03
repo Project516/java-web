@@ -1,5 +1,8 @@
 // Static methods called from JS in library mode.
 public class Lib {
+  public static String visible(Object value) { return "public"; }
+  private static String visible(String value) { return "private"; }
+  private static String hidden() { return "private"; }
   static int calls;
 
   public static String greet(String name) {

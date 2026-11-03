@@ -69,9 +69,15 @@ try {
   rejection; call a setter to wait for the write.
 - Overloads are chosen by how well each argument fits the parameter type, then
   varargs as a last resort. Pass an array or the elements for a varargs parameter.
+  Library calls expose public methods, for both static and instance calls.
 - Java strings are JS strings. Boxed `Integer`, `Double`, `Boolean` and the
   other numbers are JS primitives, and a JS number passed as an `Object` becomes
   an `Integer` when it is whole and a `Double` otherwise. Any other object is a proxy.
+- Java `long` and boxed `Long` results are JS numbers, following
+  [CheerpJ's LiveConnect conversion rules](https://cheerpj.com/docs/reference/CJ3Library).
+  Values outside the JS safe-integer range can lose precision. Return a string
+  or `long[]` (a `BigInt64Array`) when every bit must be preserved. JS `bigint`
+  arguments can be passed to Java `long` parameters without losing precision.
 - Arrays are copies. A primitive array is a typed array (`Int32Array` for `int[]`,
   `Int8Array` for `byte[]`, `Uint8Array` for `boolean[]`) and a reference array is
   a JS array. A typed array you pass to a call is updated with what Java wrote

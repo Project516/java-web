@@ -500,7 +500,7 @@ export class Library {
     for (const c of classes) {
       for (const m of c.methods) {
         if (m.name !== name || m.isStatic !== isStatic || m.access & ACC_SYNTHETIC || seen.has(m.key)) continue;
-        if (!isStatic && !(m.access & ACC_PUBLIC)) continue;
+        if (!(m.access & ACC_PUBLIC)) continue;
         seen.add(m.key);
         out.push(m);
       }

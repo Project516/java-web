@@ -52,6 +52,11 @@ test("calls run in order", async () => {
   assert.equal(await stat("Lib", "calls"), before + 3);
 });
 
+test("static calls select only public methods", async () => {
+  assert.equal(await stat("Lib", "visible", "text"), "public");
+  await assert.rejects(stat("Lib", "hidden"), /no static method hidden/);
+});
+
 test("objects are handles that name their class once", async () => {
   const a = await make(Counter, "a");
   assert.equal(a.cls, "Lib$Counter");
