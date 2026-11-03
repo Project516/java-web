@@ -17,7 +17,7 @@ import { NodeBackend } from "../src/node.ts";
 const root = join(import.meta.dirname, "..");
 const jdk = join(root, "build", "jdk");
 const dist = join(root, "dist");
-if (!existsSync(join(jdk, "lib", "packages.txt"))) throw new Error("run `pnpm jdk` first");
+if (!existsSync(join(jdk, "lib", "image.sha256"))) throw new Error("run `pnpm jdk` first");
 
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(join(dist, "samples"), { recursive: true });
@@ -27,7 +27,7 @@ const buildId = createHash("sha256");
 for (const f of readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort()) {
   buildId.update(f).update(readFileSync(join(root, "src", f)));
 }
-for (const f of ["release", "lib/packages.txt"]) buildId.update(readFileSync(join(jdk, f)));
+buildId.update(readFileSync(join(jdk, "lib", "image.sha256")));
 const define = { JAVA_WEB_BUILD: JSON.stringify(buildId.digest("hex")) };
 
 for (const [entry, out] of [["api.ts", "java-web.js"], ["worker.ts", "java-web-worker.js"]]) {
@@ -52,6 +52,7 @@ await build({
   format: "esm",
   target: "node23",
   banner: { js: "#!/usr/bin/env node" },
+  define,
 });
 cpSync(join(root, "types", "node.d.ts"), join(dist, "node.d.ts"));
 

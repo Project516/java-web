@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
-import { JVM, LM_CLASS, LM_JAR } from "./jvm.ts";
+import { JVM, LM_CLASS, LM_JAR, SnapshotError } from "./jvm.ts";
 import type { SnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend } from "./image.ts";
@@ -245,19 +245,27 @@ function defaultSnapshotDir(): string | null {
 
 const KEEP_SNAPSHOTS = 16, KEEP_MARKERS = 256;
 
-// Boot snapshots kept in dir, one file per key. The build covers this code
-// (every source file when run from src/) and the java.home image. A key's
-// snapshot is taken the second time it boots, so one-off setups leave only
-// an empty marker.
-function snapshotCache(dir: string, vfs: VFS) {
-  const h = createHash("sha256");
-  const self = fileURLToPath(import.meta.url);
-  const files = self.endsWith(".ts")
-    ? fs.readdirSync(path.dirname(self), { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort().map((f) => path.join(path.dirname(self), f))
-    : [self];
-  for (const f of files) h.update(f).update(fs.readFileSync(f));
-  for (const f of ["/jdk/release", "/jdk/lib/packages.txt"]) h.update(vfs.read(f) ?? new Uint8Array(0));
-  const build = h.digest("hex");
+// set by the build of dist/node.js: names its code and image
+declare const JAVA_WEB_BUILD: string;
+
+// What a snapshot is valid for: the VM code (every source file when run from
+// src/) and the java.home image, by the digest scripts/build-jdk.sh writes. An
+// image without one gets no snapshots.
+function buildId(vfs: VFS): string | null {
+  if (typeof JAVA_WEB_BUILD === "string") return JAVA_WEB_BUILD;
+  const image = vfs.read("/jdk/lib/image.sha256");
+  if (!image) return null;
+  const h = createHash("sha256").update(image);
+  const src = path.dirname(fileURLToPath(import.meta.url));
+  for (const f of fs.readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort()) {
+    h.update(f).update(fs.readFileSync(path.join(src, f)));
+  }
+  return h.digest("hex");
+}
+
+// Boot snapshots kept in dir, one file per key. A key's snapshot is taken the
+// second time it boots, so one-off setups leave only an empty marker.
+function snapshotCache(dir: string, build: string) {
   const name = (key: string) => path.join(dir, createHash("sha256").update(key).digest("hex").slice(0, 32));
   const file = (key: string) => name(key) + ".snap";
   // keeps the most recently used of each kind
@@ -289,6 +297,7 @@ function snapshotCache(dir: string, vfs: VFS) {
         return (e as NodeJS.ErrnoException).code === "EEXIST";
       }
     },
+    drop: (key: string) => fs.rmSync(file(key), { force: true }),
     save: (image: SnapshotImage) => {
       const tmp = `${file(image.key)}.${process.pid}.tmp`;
       try {
@@ -322,8 +331,9 @@ function nodeVm(o: NodeRunOptions): JVM {
     release: (_, ids) => vm.library.release(ids),
   });
   const snapDir = o.snapshotDir === undefined ? defaultSnapshotDir() : o.snapshotDir;
+  const build = snapDir ? buildId(vfs) : null;
   const vm: JVM = new JVM({
-    ...(snapDir ? { snapshots: snapshotCache(snapDir, vfs) } : {}),
+    ...(snapDir && build ? { snapshots: snapshotCache(snapDir, build) } : {}),
     fs: vfs,
     javaHome: "/jdk",
     classpath,
@@ -367,17 +377,30 @@ function nodeVm(o: NodeRunOptions): JVM {
   return vm;
 }
 
+// A snapshot that cannot be restored is dropped, and a second VM boots.
+function retried<T>(start: () => Promise<T>): Promise<T> {
+  return start().catch((e) => {
+    if (!(e instanceof SnapshotError)) throw e;
+    process.stderr.write(`java-web: ${e.message}\n`);
+    return start();
+  });
+}
+
 export function runNode(o: NodeRunOptions): Promise<number> {
-  const vm = nodeVm(o);
-  return o.jar ? vm.run(LM_JAR, path.resolve(o.jar), o.args ?? []) : vm.run(LM_CLASS, o.mainClass!, o.args ?? []);
+  return retried(() => {
+    const vm = nodeVm(o);
+    return o.jar ? vm.run(LM_JAR, path.resolve(o.jar), o.args ?? []) : vm.run(LM_CLASS, o.mainClass!, o.args ?? []);
+  });
 }
 
 // A VM in library mode. libraryOf(vm) is its `lib`, as cheerpjRunLibrary
 // returns it in the browser; vm.halt stops it.
-export async function startLibrary(o: NodeRunOptions): Promise<JVM> {
-  const vm = nodeVm(o);
-  await vm.startLibrary();
-  return vm;
+export function startLibrary(o: NodeRunOptions): Promise<JVM> {
+  return retried(async () => {
+    const vm = nodeVm(o);
+    await vm.startLibrary();
+    return vm;
+  });
 }
 
 export function libraryOf(vm: object): any {

@@ -1,7 +1,8 @@
 // Boot snapshots: a VM restored from one behaves as one that booted.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { deserialize, serialize } from "node:v8";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -26,6 +27,18 @@ async function run(snapshotDir: string | null, props: Record<string, string> = {
   const chunks: Uint8Array[] = [];
   const code = await runNode({ classpath: [out], mainClass: "Boot", args: ["a", "b"], props, snapshotDir, stdout: (b) => chunks.push(b) });
   return { code, stdout: Buffer.concat(chunks).toString("utf8") };
+}
+
+// java-web's own messages go to the process's stderr
+async function stderrOf<T>(f: () => Promise<T>): Promise<[T, string]> {
+  const write = process.stderr.write;
+  let text = "";
+  process.stderr.write = ((s: string | Uint8Array) => { text += s; return true; }) as typeof write;
+  try {
+    return [await f(), text];
+  } finally {
+    process.stderr.write = write;
+  }
 }
 
 const files = (dir: string, ext: string) => readdirSync(dir).filter((f) => f.endsWith(ext)).map((f) => join(dir, f));
@@ -88,4 +101,28 @@ test("a snapshot that cannot be saved leaves the run as it was", async () => {
   mkdirSync(marker.replace(/\.seen$/, ".snap"));
   assert.deepEqual(await run(dir), expected);
   assert.deepEqual(files(dir, ".tmp"), []);
+});
+
+test("a snapshot that cannot be restored is dropped and the VM boots", async () => {
+  const dir = cacheDir();
+  const expected = await run(null);
+  await run(dir);
+  await run(dir);
+  const [snap] = files(dir, ".snap");
+  const image = deserialize(readFileSync(snap));
+  image.classes.at(-1).name = "no/such/Class";
+  writeFileSync(snap, serialize(image));
+  const [got, err] = await stderrOf(() => run(dir));
+  assert.deepEqual(got, expected);
+  assert.match(err, /boot snapshot not restored/);
+  // the boot saved a good one in its place
+  age(snap);
+  assert.deepEqual(await stderrOf(() => run(dir)), [expected, ""]);
+  assert.ok(used(snap));
+});
+
+test("a module path turns snapshots off, since boot reads its modules", async () => {
+  const dir = cacheDir();
+  for (let i = 0; i < 2; i++) await run(dir, { "jdk.module.path": cacheDir() });
+  assert.deepEqual(readdirSync(dir), []);
 });

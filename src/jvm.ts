@@ -75,6 +75,8 @@ export interface JvmOptions {
     load: (key: string) => SnapshotImage | null | Promise<SnapshotImage | null>;
     wants: (key: string) => boolean;
     save: (image: SnapshotImage) => void;
+    // forgets a snapshot that could not be restored
+    drop: (key: string) => void;
   };
 }
 
@@ -83,6 +85,13 @@ const RESUMED = Object.freeze({ kind: "resume" }) as unknown as Request;
 
 // LauncherHelper launch modes
 export const LM_CLASS = 1, LM_JAR = 2;
+
+// Rejects run and startLibrary when a snapshot could not be restored. The
+// snapshot is dropped, so a new VM with the same options boots.
+export class SnapshotError extends Error {}
+
+// properties under which boot reads application files, which a key does not cover
+const BOOT_READS_APP = /^(java\.system\.class\.loader|jdk\.module\.(path|upgrade\.path|patch\.\d+))$/;
 
 const YIELD = (() => {
   if (typeof setImmediate === "function") return (fn: () => void) => setImmediate(fn);
@@ -1039,13 +1048,13 @@ export class JVM {
     // as the java launcher sets it
     if (!this.props.has("sun.java.command")) this.props.set("sun.java.command", [what, ...args].join(" "));
     const t = new JThread(this);
-    this.restore(t, (restored) => {
+    return new Promise((resolve, reject) => this.restore(t, (restored) => {
       t.pushNative(this.mainGen(t, mode, what, args, restored), null, "V", false);
       // mainGen halts; ending without it means a VM error killed the thread
       t.onExit = () => this.halt(1);
       this.startThread(t);
-    });
-    return this.exited;
+      resolve(this.exited);
+    }, reject));
   }
 
   // Starts the VM with no main class; Java can then be called through
@@ -1056,7 +1065,7 @@ export class JVM {
       this.restore(t, (restored) => {
         t.pushNative(this.libraryGen(t, restored, resolve, reject), null, "V", false);
         this.startThread(t);
-      });
+      }, reject);
     });
   }
 
@@ -1145,16 +1154,28 @@ export class JVM {
     }
   }
 
+  private get snapshots() {
+    for (const k of this.props.keys()) if (BOOT_READS_APP.test(k)) return undefined;
+    return this.opts.snapshots;
+  }
+
   // Loads the snapshot taken after a boot with the same inputs into the VM,
   // with t as its main thread, then starts it; synchronously when load is.
-  private restore(t: JThread, start: (restored: boolean) => void) {
-    const snaps = this.opts.snapshots;
+  private restore(t: JThread, start: (restored: boolean) => void, failed: (e: SnapshotError) => void) {
+    const snaps = this.snapshots;
     if (!snaps) return start(false);
     const key = snapshotKey(this, snaps.build);
     const done = (image: SnapshotImage | null) => {
-      const restored = image?.key === key && this.exitCode === null;
-      if (restored) restoreVM(this, image, t);
-      start(restored);
+      if (image?.key !== key || this.exitCode !== null) return start(false);
+      try {
+        restoreVM(this, image, t);
+      } catch (e) {
+        // the VM is half restored; a new one boots
+        this.halt(1);
+        snaps.drop(key);
+        return failed(new SnapshotError(`boot snapshot not restored: ${e instanceof Error ? e.message : e}`, { cause: e }));
+      }
+      start(true);
     };
     const image = snaps.load(key);
     if (image instanceof Promise) image.then(done, () => done(null));
@@ -1164,7 +1185,7 @@ export class JVM {
   // Boots, or finishes a restore: the one property the key leaves out is set
   // as a boot would have.
   private *startGen(t: JThread, restored: boolean): NativeGen {
-    const snaps = this.opts.snapshots;
+    const snaps = this.snapshots;
     if (restored) {
       const cmd = this.props.get("sun.java.command");
       const system = this.loadBootOrFail("java/lang/System");
