@@ -49,12 +49,21 @@ export function gcStats(vm: JVM): GcStats {
   return s;
 }
 
-function jsHeap(): { used: number; committed: number } {
+// The JS heap as Java sees it, with used <= committed <= -Xmx; primitive
+// arrays are typed arrays, outside the JS heap. Null where the engine cannot tell.
+export function javaHeap(): { used: number; committed: number } | null {
+  let used: number, committed: number;
   const node = (globalThis as any).process?.memoryUsage?.();
-  if (node) return { used: node.heapUsed, committed: node.heapTotal };
   const chrome = (globalThis as any).performance?.memory;
-  if (chrome) return { used: chrome.usedJSHeapSize, committed: chrome.totalJSHeapSize };
-  return { used: 0, committed: 0 };
+  if (node) {
+    used = node.heapUsed + node.arrayBuffers;
+    committed = node.heapTotal + node.arrayBuffers;
+  } else if (chrome) {
+    used = chrome.usedJSHeapSize;
+    committed = chrome.totalJSHeapSize;
+  } else return null;
+  committed = Math.min(Math.max(used, committed), MAX_HEAP);
+  return { used: Math.min(used, committed), committed };
 }
 
 function* beans(t: JThread): NativeGen {
@@ -94,11 +103,9 @@ function* poolUsage(t: JThread, self: JObject): NativeGen {
   return yield* heapUsage(t);
 }
 
-// MemoryUsage needs used <= committed <= max; node's heap does not know -Xmx
 function* heapUsage(t: JThread): NativeGen {
-  const h = jsHeap();
-  const committed = Math.min(Math.max(h.used, h.committed), MAX_HEAP);
-  return yield* usage(t, 0, Math.min(h.used, committed), committed, MAX_HEAP);
+  const h = javaHeap() ?? { used: 0, committed: 0 };
+  return yield* usage(t, 0, h.used, h.committed, MAX_HEAP);
 }
 
 function liveThreads(vm: JVM): JThread[] {
