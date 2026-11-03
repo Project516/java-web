@@ -1,7 +1,7 @@
-// The methods HotSpot replaces with intrinsics for SHA digests, AES blocks
-// and BigInteger arithmetic. As bytecode they run on Java longs, which are JS
-// BigInts here, so a 64-bit step allocates; these do the same work on
-// numbers, or on one BigInt for a whole multiplication.
+// The methods HotSpot replaces with intrinsics for SHA digests, AES blocks,
+// BigInteger and elliptic-curve field arithmetic. As bytecode they run on Java
+// longs, which are JS BigInts here, so a 64-bit step allocates; these do the
+// same work on numbers, or in far fewer BigInt steps.
 
 import type { JArray, JObject } from "../runtime.ts";
 import type { JThread } from "../thread.ts";
@@ -13,6 +13,7 @@ const SHA2 = "sun/security/provider/SHA2";
 const SHA5 = "sun/security/provider/SHA5";
 const BI = "java/math/BigInteger";
 const AES = "com/sun/crypto/provider/AESCrypt";
+const P256 = "sun/security/util/math/intpoly/MontgomeryIntegerPolynomialP256";
 
 // the `state` field's slot in each digest class
 const stateSlots = new WeakMap<JVM, Map<string, number>>();
@@ -260,7 +261,70 @@ function aesEncrypt(t: JThread, self: JObject, inp: Int8Array, i: number, out: I
   aesLast(out, o + 12, S, t3, t0, t1, t2, K[k + 3]);
 }
 
+// MontgomeryIntegerPolynomialP256.mult: r = a * b * 2^-260 mod p over five
+// 52-bit limbs, step for step as the Java code, whose limbs are below 2^52
+// (HotSpot's x64 intrinsic reads only those bits too). Every value stays
+// below 2^63 until the final subtraction, so exact BigInt steps give its
+// 64-bit results without wrapping.
+const LIMB = 0xfffffffffffffn;
+const P256_MOD = [0xfffffffffffffn, 0xfffffffffffn, 0n, 0x1000000000n, 0xffffffff0000n];
+const d = [0n, 0n, 0n, 0n, 0n], dd = [0n, 0n, 0n, 0n, 0n], c = Array<bigint>(9).fill(0n);
+
+function p256Mult(av: BigInt64Array, bv: BigInt64Array, r: BigInt64Array) {
+  const a0 = av[0] & LIMB, a1 = av[1] & LIMB, a2 = av[2] & LIMB, a3 = av[3] & LIMB, a4 = av[4] & LIMB;
+  const b = [bv[0] & LIMB, bv[1] & LIMB, bv[2] & LIMB, bv[3] & LIMB, bv[4] & LIMB];
+  const a = [a0, a1, a2, a3, a4];
+  for (let i = 0; i < 5; i++) {
+    for (let j = 0; j < 5; j++) {
+      const p = a[i] * b[j];
+      d[j] = p & LIMB;
+      dd[j] = p >> 52n;
+    }
+    // row i reduces out column i: add it, then the multiple of p that clears it
+    if (i > 0) d[0] += c[i];
+    const n = d[0] & LIMB;
+    for (let j = 0; j < 5; j++) {
+      const q = n * P256_MOD[j];
+      dd[j] += q >> 52n;
+      d[j] += q & LIMB;
+    }
+    if (i < 4) {
+      c[i + 1] = (i === 0 ? 0n : c[i + 1]) + d[1] + dd[0] + (d[0] >> 52n);
+      for (let j = 2; j < 5; j++) c[i + j] = (i === 0 ? 0n : c[i + j]) + d[j] + dd[j - 1];
+      c[i + 5] = dd[4];
+    }
+  }
+  // the last row carries through
+  let c5 = c[5] + d[1] + dd[0] + (d[0] >> 52n);
+  let c6 = c[6] + d[2] + dd[1] + (c5 >> 52n);
+  let c7 = c[7] + d[3] + dd[2] + (c6 >> 52n);
+  let c8 = c[8] + d[4] + dd[3] + (c7 >> 52n);
+  const c9 = dd[4] + (c8 >> 52n);
+  c5 &= LIMB; c6 &= LIMB; c7 &= LIMB; c8 &= LIMB;
+  // subtract p once; keep the difference unless it went negative
+  let c0 = c5 - P256_MOD[0];
+  let c1 = c6 - P256_MOD[1] + (c0 >> 52n);
+  c0 &= LIMB;
+  let c2 = c7 - P256_MOD[2] + (c1 >> 52n);
+  c1 &= LIMB;
+  let c3 = c8 - P256_MOD[3] + (c2 >> 52n);
+  c2 &= LIMB;
+  const c4 = c9 - P256_MOD[4] + (c3 >> 52n);
+  c3 &= LIMB;
+  if (c4 < 0n) {
+    r[0] = c5; r[1] = c6; r[2] = c7; r[3] = c8; r[4] = c9;
+  } else {
+    r[0] = c0; r[1] = c1; r[2] = c2; r[3] = c3; r[4] = c4;
+  }
+}
+
 export const intrinsics: Natives = {
+  "java/lang/Math.multiplyHigh(JJ)J": (_t, [x, y]) => ((x as bigint) * (y as bigint)) >> 64n,
+  "java/lang/Math.unsignedMultiplyHigh(JJ)J": (_t, [x, y]) =>
+    BigInt.asIntN(64, (BigInt.asUintN(64, x as bigint) * BigInt.asUintN(64, y as bigint)) >> 64n),
+  [`${P256}.mult([J[J[J)V`]: (_t, [, a, b, r]) =>
+    p256Mult((a as JArray).a as BigInt64Array, (b as JArray).a as BigInt64Array, (r as JArray).a as BigInt64Array),
+
   [`${AES}.implEncryptBlock([BI[BI)V`]: (t, [self, inp, i, out, o]) =>
     aesEncrypt(t, self, (inp as JArray).a as Int8Array, i, (out as JArray).a as Int8Array, o),
 
