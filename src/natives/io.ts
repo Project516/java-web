@@ -5,7 +5,7 @@ import { JArray, JObject } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import { normalize } from "../fs.ts";
-import type { VFS } from "../fs.ts";
+import type { Stat, VFS } from "../fs.ts";
 import { closeSockFd } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
@@ -23,6 +23,8 @@ export class OpenFile {
   pos = 0;
   writable: boolean;
   contents: Contents;
+  ino?: number;
+  detached?: { path: string; stat: Stat; writable: boolean };
   constructor(path: string, data: Uint8Array, writable: boolean, contents?: Contents) {
     this.path = path;
     this.contents = contents ?? { data, size: data.length, dirty: false };
@@ -122,6 +124,26 @@ function table(t: JThread): FdTable {
   let tab = t.vm.state.get("fds") as FdTable | undefined;
   if (!tab) t.vm.state.set("fds", (tab = { next: 3, files: new Map() }));
   return tab;
+}
+
+export function fileInode(t: JThread, path: string): number {
+  let inodes = t.vm.state.get("inodes") as Map<string, number> | undefined;
+  if (!inodes) t.vm.state.set("inodes", (inodes = new Map()));
+  let next = t.vm.state.get("inodeNext") as number | undefined;
+  if (next === undefined) {
+    next = inodes.size + 2;
+    t.vm.state.set("inodeNext", next);
+  }
+  const files = table(t).files.values();
+  for (const f of files) {
+    if (f.detached?.path === path && f.ino === inodes.get(path)) inodes.set(path, next++);
+  }
+  t.vm.state.set("inodeNext", next);
+  let ino = inodes.get(path);
+  if (ino === undefined) inodes.set(path, (ino = next++));
+  t.vm.state.set("inodeNext", next);
+  for (const f of table(t).files.values()) if (f.path === path) f.ino = ino;
+  return ino;
 }
 
 // rmdir fails on a path ending in "." or "..": "." stays the working directory
@@ -245,18 +267,34 @@ export function renamePath(t: JThread, from: string, to: string): boolean {
   const files = [...table(t).files.values()];
   const under = (f: OpenFile, p: string) => f.path === p || f.path.startsWith(p + "/");
   const open = files.filter((f) => under(f, from));
+  const replaced = files.filter((f) => !open.includes(f) && under(f, to));
+  for (const f of replaced) detachFile(t, f);
   for (const f of open) flush(t, f);
-  if (!t.vm.fs.rename(from, to)) return false;
+  if (!t.vm.fs.rename(from, to)) {
+    for (const f of replaced) f.detached = undefined;
+    return false;
+  }
   // a file the rename replaced stays open, unlinked
-  for (const f of files) if (!open.includes(f) && under(f, to)) f.path = "";
+  for (const f of replaced) f.path = "";
   for (const f of open) f.path = to + f.path.slice(from.length);
   return true;
 }
 
 export function removePath(t: JThread, abs: string): boolean {
-  if (!t.vm.fs.remove(abs)) return false;
-  for (const f of table(t).files.values()) if (f.path === abs) f.path = "";
+  const open = [...table(t).files.values()].filter((f) => f.path === abs);
+  for (const f of open) detachFile(t, f);
+  if (!t.vm.fs.remove(abs)) {
+    for (const f of open) f.detached = undefined;
+    return false;
+  }
+  for (const f of open) f.path = "";
   return true;
+}
+
+function detachFile(t: JThread, f: OpenFile) {
+  f.ino ??= fileInode(t, f.path);
+  const stat = t.vm.fs.stat(f.path);
+  if (stat) f.detached = { path: f.path, stat, writable: t.vm.fs.writable(f.path) };
 }
 
 function fdOf(t: JThread, stream: JObject, owner: string): number {
