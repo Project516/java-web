@@ -35,12 +35,22 @@ export class NodeBackend implements Backend {
   private host(p: string) {
     return this.root === "/" ? p : this.root + p;
   }
+  resolvePath(p: string): string | null {
+    if (this.root !== "/") return null;
+    try {
+      const name = path.basename(p);
+      if (name === "." || name === "..") return fs.realpathSync.native(p);
+      return fs.realpathSync.native(path.dirname(p)) + "/" + name;
+    } catch {
+      return null;
+    }
+  }
   stat(p: string): Stat | null {
     if (!this.writable && this.stats.has(p)) return this.stats.get(p)!;
     let st: Stat | null = null;
     try {
       const s = fs.statSync(this.host(p));
-      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs };
+      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777 };
     } catch {
       st = null;
     }
@@ -91,13 +101,19 @@ export class NodeBackend implements Backend {
       return (e as NodeJS.ErrnoException).code === "EACCES" || (e as NodeJS.ErrnoException).code === "EPERM";
     }
   }
+  private chmodErrors = new Map<string, string>();
   chmod(p: string, f: (mode: number) => number) {
     try {
       fs.chmodSync(this.host(p), f(fs.statSync(this.host(p)).mode & 0o7777));
+      this.chmodErrors.delete(p);
       return true;
-    } catch {
+    } catch (e) {
+      this.chmodErrors.set(p, (e as NodeJS.ErrnoException).code ?? "EIO");
       return false;
     }
+  }
+  chmodError(p: string) {
+    return this.chmodErrors.get(p);
   }
   access(p: string, mode: number) {
     try {

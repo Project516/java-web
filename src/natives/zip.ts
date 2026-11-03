@@ -63,6 +63,7 @@ class Deflate {
   }
   // the header names the dictionary; compression would also use it
   setDictionary(d: Uint8Array) {
+    if (this.wrap && this.headerDone && !this.ended) throw new PendingThrow("java/lang/IllegalArgumentException");
     if (this.wrap && !this.headerDone) this.dictId = adler32(1, d) >>> 0;
   }
   private put(...bytes: number[]) {
@@ -87,6 +88,7 @@ class Deflate {
   }
   // flush: 0 none, 2 sync, 3 full, 4 finish. Returns [read, written].
   run(input: Uint8Array, output: Uint8Array, flush: number): [number, number] {
+    if (output.length === 0) return [0, 0];
     let read = 0, written = this.drain(output, 0);
     if (this.pendLen) {
       this.lastFlush = -1;

@@ -2,21 +2,31 @@
 // native memory; failures throw UnixException(errno) like the real natives.
 
 import type { JObject } from "../runtime.ts";
+import type { Stat } from "../fs.ts";
 import { preCloseSock } from "../sockets.ts";
 import { sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
-import { closeFd, endsInDot, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
+import { closeFd, endsInDot, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
-export const ENOENT = 2, EBADF = 9, EACCES = 13, EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21,
-  EINVAL = 22, EROFS = 30, ENOTEMPTY = 39, ENOSYS = 38;
+export const EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, ENOMEM = 12, EACCES = 13,
+  EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ENOSPC = 28, EROFS = 30,
+  ENOTEMPTY = 39, ENOSYS = 38, ELOOP = 40, ENOTSUP = 95, ESTALE = 116;
 
 const MESSAGES: Record<number, string> = {
+  [EPERM]: "Operation not permitted", [EINTR]: "Interrupted system call", [EIO]: "Input/output error",
+  [ENOMEM]: "Cannot allocate memory", [ENOSPC]: "No space left on device",
+  [ELOOP]: "Too many levels of symbolic links", [ENOTSUP]: "Operation not supported", [ESTALE]: "Stale file handle",
   [ENOENT]: "No such file or directory", [EBADF]: "Bad file descriptor", [EACCES]: "Permission denied",
   [EEXIST]: "File exists", [EXDEV]: "Invalid cross-device link", [ENOTDIR]: "Not a directory",
   [EISDIR]: "Is a directory", [EINVAL]: "Invalid argument", [EROFS]: "Read-only file system",
   [ENOTEMPTY]: "Directory not empty", [ENOSYS]: "Function not implemented",
+};
+
+const CHMOD_ERRNO: Record<string, number> = {
+  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, ENOTDIR, EINVAL, ENOSPC, EROFS, ELOOP,
+  ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE,
 };
 
 // Linux open(2) flags
@@ -45,26 +55,43 @@ function path(t: JThread, addr: bigint) {
   return resolvePath(t, cstring(t, addr));
 }
 
+function chmod(t: JThread, p: string, mode: number) {
+  const fs = t.vm.fs;
+  const result = fs.chmod(p, (old) => (old & ~0o7777) | (mode & 0o7777));
+  if (result !== false) {
+    if (result === undefined && !fs.stat(p)) unixError(ENOENT);
+    return;
+  }
+  if (!fs.writable(p)) {
+    if (!fs.stat(p)) unixError(ENOENT);
+    unixError(EROFS);
+  }
+  unixError(CHMOD_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
+}
+
 function fillAttrs(t: JThread, attrs: JObject, p: string): number {
   syncPath(t, p);
   const st = t.vm.fs.stat(p);
   if (!st) return ENOENT;
+  fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p));
+  return 0;
+}
+
+function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: number, size = st.size, nlink = 1) {
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
-  const writable = vm.fs.writable(p);
-  const mode = st.device ? S_IFCHR | 0o666 : st.dir ? S_IFDIR | (writable ? 0o755 : 0o555) : S_IFREG | (writable ? 0o644 : 0o444);
+  const mode = st.device ? S_IFCHR | 0o666 : (st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
   const sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
   vm.setField(attrs, A, "st_mode", mode);
-  vm.setField(attrs, A, "st_ino", BigInt(inode(t, p)));
+  vm.setField(attrs, A, "st_ino", BigInt(ino));
   vm.setField(attrs, A, "st_dev", 1n);
-  vm.setField(attrs, A, "st_nlink", 1);
+  vm.setField(attrs, A, "st_nlink", nlink);
   vm.setField(attrs, A, "st_uid", 1000);
   vm.setField(attrs, A, "st_gid", 1000);
-  vm.setField(attrs, A, "st_size", BigInt(st.size));
+  vm.setField(attrs, A, "st_size", BigInt(size));
   for (const k of ["atime", "mtime", "ctime"]) {
     vm.setField(attrs, A, `st_${k}_sec`, sec);
     vm.setField(attrs, A, `st_${k}_nsec`, nsec);
   }
-  return 0;
 }
 
 // open mount table handles: whether the one entry has been read
@@ -72,15 +99,6 @@ function mountTables(t: JThread): Map<number, boolean> {
   let m = t.vm.state.get("mntent") as Map<number, boolean> | undefined;
   if (!m) t.vm.state.set("mntent", (m = new Map()));
   return m;
-}
-
-// stable inode numbers so file keys compare equal for the same path
-function inode(t: JThread, p: string): number {
-  let m = t.vm.state.get("inodes") as Map<string, number> | undefined;
-  if (!m) t.vm.state.set("inodes", (m = new Map()));
-  let n = m.get(p);
-  if (n === undefined) m.set(p, (n = m.size + 2));
-  return n;
 }
 
 interface Dir { names: string[]; pos: number }
@@ -108,6 +126,10 @@ export const natives: Natives = {
     const files = t.vm.state.get("fds")?.files;
     const f = files?.get(fd);
     if (!f) unixError(EBADF);
+    if (f.detached) {
+      fillStat(t, attrs, f.detached.stat, f.detached.writable, f.ino ?? fileInode(t, f.detached.path), f.size, 0);
+      return;
+    }
     fillAttrs(t, attrs, f.path);
   },
   [`${N}access0(JI)I`]: (t, [p, amode]) => {
@@ -124,7 +146,9 @@ export const natives: Natives = {
     if (st?.dir && write) unixError(EISDIR);
     if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
     try {
-      return openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0);
+      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0);
+      fileOf(t, fd).ino = fileInode(t, abs);
+      return fd;
     } catch (e) {
       if (e instanceof PendingThrow) unixError(t.vm.fs.writable(abs) ? ENOENT : EROFS);
       throw e;
@@ -164,8 +188,22 @@ export const natives: Natives = {
   [`${N}readlink0(J)[B`]: () => unixError(EINVAL),
   [`${N}symlink0(JJ)V`]: () => unixError(ENOSYS),
   [`${N}link0(JJ)V`]: () => unixError(ENOSYS),
-  [`${N}chmod0(JI)V`]: () => undefined,
-  [`${N}fchmod0(II)V`]: () => undefined,
+  [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
+    chmod(t, path(t, p), mode);
+  },
+  [`${N}fchmod0(II)V`]: (t, [fd, mode]) => {
+    const f = t.vm.state.get("fds")?.files.get(fd);
+    if (!f) unixError(EBADF);
+    if (f.detached) {
+      const files = t.vm.state.get("fds").files as Map<number, OpenFile>;
+      for (const open of files.values()) {
+        if (open.contents === f.contents && open.detached) open.detached.stat.mode = mode & 0o7777;
+      }
+      return;
+    }
+    if (!f.path) unixError(ENOENT);
+    chmod(t, f.path, mode);
+  },
   [`${N}chown0(JII)V`]: () => undefined,
   [`${N}lchown0(JII)V`]: () => undefined,
   [`${N}fchown0(III)V`]: () => undefined,
@@ -402,7 +440,7 @@ Object.assign(natives, {
   "sun/nio/ch/FileKey.init(Ljava/io/FileDescriptor;[J)V": (t: JThread, [fd, info]: any[]) => {
     const f = chanFile(t, fd);
     info.a[0] = 1n;
-    info.a[1] = BigInt(inode(t, f.path));
+    info.a[1] = BigInt(f.ino ?? fileInode(t, f.path));
   },
   "sun/nio/ch/UnixDispatcher.init()V": () => undefined,
   "sun/nio/ch/UnixDispatcher.preClose0(Ljava/io/FileDescriptor;)V": (t: JThread, [fd]: any[]) => preCloseSock(t.vm.state, fdNum(t, fd)),

@@ -605,6 +605,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   out.push(`default:return rt.viaInterpreter(t,f);}}catch(e){`);
   if (g.regions.length) out.push(deoptCatch(g));
   out.push(`if(e instanceof rt.JavaThrow){const h=H.findHandler(t,f,pc,e.obj);if(h>=0){${S(0)}=e.obj;pc=h;continue;}`);
+  out.push(`if(h< -1){x=pc*${exitCode(1, 0, 0)}+${EXIT_ERROR};xe=e;if(f.direct)f.direct=false;break X;}`);
   out.push(`H.popFrame(t,f);if(f.direct)throw e;H.raise(t,e.obj);return 1;}`);
   out.push(`x=(e instanceof rt.PendingThrow&&e.pc!==undefined?e.pc:pc)*${exitCode(1, 0, 0)}+${EXIT_ERROR};xe=e;if(f.direct)f.direct=false;break X;}}}`);
   // the shared exit: spill into the frame's arrays, then leave as x says
@@ -884,7 +885,7 @@ function insn(g: Gen, b: Body, pc: number) {
     }
     case 0xba: {
       const site = m.cache?.[pc];
-      if (!site || region) { emit(slow(pc, d)); break; }
+      if (!site || site instanceof PendingThrow || region) { emit(slow(pc, d)); break; }
       let dd = d;
       if (site.appendix !== undefined) { emit(`${S(dd)}=${K(site.appendix)};`); dd++; }
       emit(genInvoke(g, 0xb8, pc, next, dd, site.m, cls, d));

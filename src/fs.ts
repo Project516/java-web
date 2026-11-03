@@ -4,6 +4,8 @@ export interface Stat {
   dir: boolean;
   size: number;
   mtime: number;
+  // permission and special bits, when the backend can report them
+  mode?: number;
   // a character device; it streams and is never read whole
   device?: boolean;
 }
@@ -14,6 +16,8 @@ export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/u
 
 export interface Backend {
   readonly writable: boolean;
+  // A host backend can follow symlinks before resolving parent components.
+  resolvePath?(path: string): string | null;
   stat(path: string): Stat | null;
   read(path: string): Uint8Array | null;
   // bytes [off, off + len) of a file, for backends that can read part of one
@@ -31,6 +35,7 @@ export interface Backend {
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
   chmod?(path: string, f: (mode: number) => number): boolean;
+  chmodError?(path: string): string | undefined;
   // whether the host allows reading (4) and executing (1), as access(2)
   access?(path: string, mode: number): boolean;
 }
@@ -50,6 +55,17 @@ export function normalize(path: string): string {
 export class VFS {
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
+
+  resolvePath(path: string): string {
+    const normalized = normalize(path);
+    if (!path.includes("/..")) return normalized;
+    const r = this.resolve(normalized);
+    if (!r?.[0].resolvePath) return normalized;
+    const prefix = r[1] === "/" && normalized !== "/" ? normalized : normalized.slice(0, normalized.length - r[1].length);
+    const raw = prefix === "" ? path : path.startsWith(prefix + "/") ? path.slice(prefix.length) : r[1];
+    const resolved = r[0].resolvePath(raw);
+    return resolved === null ? normalized : normalize(prefix + resolved);
+  }
 
   mount(prefix: string, backend: Backend) {
     prefix = normalize(prefix);
@@ -183,6 +199,11 @@ export class VFS {
     const r = this.resolve(path);
     if (!r || !r[0].chmod) return undefined;
     return r[0].writable && r[0].chmod(r[1], f);
+  }
+
+  chmodError(path: string): string | undefined {
+    const r = this.resolve(path);
+    return r?.[0].chmodError?.(r[1]);
   }
 
   // access(2) on an existing path: mode is 4 read, 2 write, 1 execute
