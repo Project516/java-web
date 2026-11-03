@@ -36,6 +36,30 @@ public class NestedCalls {
 
   static int npe(int[] a) { pad(8); pad(9); return a[0]; }
 
+  // cold, called by compiled hotCaller, which is called by cold outerCatch:
+  // its exception passes compiled code to reach outerCatch's handler
+  static int coldThrow(int x) {
+    pad(x);
+    pad(10);
+    if (x < 0) throw new IllegalArgumentException("neg " + x);
+    return x;
+  }
+
+  static int hotCaller(int x, boolean call) {
+    pad(x);
+    pad(11);
+    return call ? coldThrow(x) : x;
+  }
+
+  static int outerCatch(int x) {
+    pad(x);
+    try {
+      return hotCaller(x, true);
+    } catch (IllegalArgumentException e) {
+      return e.getMessage().length() - 100;
+    }
+  }
+
   static int locked(int x) {
     synchronized (LOCK) {
       return x * 2;
@@ -94,6 +118,7 @@ public class NestedCalls {
         if (firstNpe == null) firstNpe = where(e);
       }
       if (k % 100 == 0) acc += joined(k);
+      if (k % 10 == 0) acc += outerCatch(k % 20 == 0 ? -k : k);
     }
     System.out.println(acc + " " + dacc + " " + counter + " " + thrown + " " + inside + " " + nulls + " " + noise);
     System.out.println(firstThrow);
@@ -108,6 +133,8 @@ public class NestedCalls {
   }
 
   public static void main(String[] args) throws InterruptedException {
+    hotCaller(1, true);
+    for (int k = 0; k < 600; k++) hotCaller(k, false);
     run();
   }
 }
