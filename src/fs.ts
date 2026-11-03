@@ -256,7 +256,7 @@ export class MemoryBackend implements Backend {
 
   rename(from: string, to: string) {
     const f = this.files.get(from);
-    if (!f || !this.dirs.has(parentOf(to))) return false;
+    if (!f || this.dirs.has(to) || !this.dirs.has(parentOf(to))) return false;
     this.files.delete(from);
     this.files.set(to, f);
     this.changed(from, null);
