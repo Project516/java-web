@@ -227,6 +227,7 @@ const ERRNO: Record<string, string> = {
   ENOSPC: "No space left on device", EFBIG: "File too large", EDQUOT: "Disk quota exceeded",
   EACCES: "Permission denied", EPERM: "Operation not permitted", EROFS: "Read-only file system",
   ENOENT: "No such file or directory", ENAMETOOLONG: "File name too long", ENOTDIR: "Not a directory",
+  EIO: "Input/output error", ELOOP: "Too many levels of symbolic links",
 };
 
 // Where Java learns of a write that failed: HotSpot reports it from write(),
