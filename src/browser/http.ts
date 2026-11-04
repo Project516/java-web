@@ -56,6 +56,9 @@ export function parsePack(buf: ArrayBuffer): Pack {
 export class PackIndex extends Map<string, number> {
   readonly modules = new Map<string, Uint8Array>();
   private readonly pack: Pack;
+  // directory -> names in it, built for the entries there were at the time
+  private dirs: Map<string, string[]> | null = null;
+  private dirsSize = 0;
 
   constructor(pack: Pack) {
     super([["/", -1]]);
@@ -70,6 +73,24 @@ export class PackIndex extends Map<string, number> {
   override has(path: string) {
     this.load(path);
     return super.has(path);
+  }
+
+  // The names in each directory. Entries are only ever added, so a change in
+  // size means new ones.
+  children(): Map<string, string[]> {
+    if (this.dirs && this.dirsSize === this.size) return this.dirs;
+    const dirs = new Map<string, string[]>();
+    for (const p of this.keys()) {
+      if (p === "/") continue;
+      const i = p.lastIndexOf("/");
+      const parent = i === 0 ? "/" : p.slice(0, i);
+      let names = dirs.get(parent);
+      if (!names) dirs.set(parent, (names = []));
+      names.push(p.slice(i + 1));
+    }
+    this.dirs = dirs;
+    this.dirsSize = this.size;
+    return dirs;
   }
 
   // Parses the lines of the module path is in. The module directories
@@ -297,9 +318,5 @@ export function listIndex(idx: PackIndex, path: string): string[] | null {
   if (idx.get(path) !== -1) return null;
   const prefix = path === "/" ? "/" : path + "/";
   idx.load(prefix);
-  const out: string[] = [];
-  for (const p of idx.keys()) {
-    if (p.startsWith(prefix) && p.length > prefix.length && !p.slice(prefix.length).includes("/")) out.push(p.slice(prefix.length));
-  }
-  return out;
+  return [...(idx.children().get(path) ?? [])];
 }
