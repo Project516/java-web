@@ -169,7 +169,9 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   let data: Uint8Array;
   if (!st) {
     if (!write) notFound(path);
-    if (!fs.write(abs, new Uint8Array(0))) notFound(path, fs.writable(abs) ? "No such file or directory" : "Read-only file system");
+    if (!fs.write(abs, new Uint8Array(0))) {
+      notFound(path, ERRNO[fs.writeError(abs) ?? ""] ?? (fs.writable(abs) ? "No such file or directory" : "Read-only file system"));
+    }
     data = new Uint8Array(0);
   } else {
     if (write && !fs.writable(abs)) notFound(path, "Read-only file system");
@@ -224,7 +226,7 @@ export function flush(t: JThread, f: OpenFile): boolean {
 const ERRNO: Record<string, string> = {
   ENOSPC: "No space left on device", EFBIG: "File too large", EDQUOT: "Disk quota exceeded",
   EACCES: "Permission denied", EPERM: "Operation not permitted", EROFS: "Read-only file system",
-  ENOENT: "No such file or directory",
+  ENOENT: "No such file or directory", ENAMETOOLONG: "File name too long", ENOTDIR: "Not a directory",
 };
 
 // Where Java learns of a write that failed: HotSpot reports it from write(),
