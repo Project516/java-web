@@ -14,7 +14,7 @@
 // caller spill too, and later delivers its result through the frame like an
 // interpreted call.
 
-import { Tag, utf8 } from "./classfile.ts";
+import { cpEntry, Tag, utf8 } from "./classfile.ts";
 import {
   ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc,
 } from "./runtime.ts";
@@ -708,7 +708,7 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x11: emit(`${S(d)}=${s16(c, pc + 1)};`); break;
     case 0x12: case 0x13: case 0x14: {
       const i = op === 0x12 ? c[pc + 1] : idx2;
-      const e = cp[i]!;
+      const e = cpEntry(cp, i)!;
       if (e.tag === Tag.Integer || e.tag === Tag.Float || e.tag === Tag.Double) emit(`${S(d)}=${numLit(e.value as number)};`);
       else if (e.tag === Tag.Long) emit(`${S(d)}=${e.value}n;`);
       else {
@@ -966,7 +966,7 @@ function fuseConcat(g: Gen, b: Body, pc: number): { pieces: string[]; end: numbe
     else if (op === 0x12 || op === 0x13) {
       const i = op === 0x12 ? c[p + 1] : u16(c, p + 1);
       const v = cls.ldc[i];
-      if (cls.cf!.cp[i]!.tag !== Tag.String || v === undefined) return null;
+      if (cpEntry(cls.cf!.cp, i)!.tag !== Tag.String || v === undefined) return null;
       pieces.push(() => g.K(v));
       p += op === 0x12 ? 2 : 3;
     } else return null;
@@ -1249,12 +1249,12 @@ function stackDelta(cls: JClass, c: Uint8Array, pc: number): number {
   const op = c[pc];
   const cp = cls.cf!.cp;
   const fieldSize = (idx: number) => {
-    const nat = cp[cp[idx]!.b]!;
+    const nat = cpEntry(cp, cpEntry(cp, idx)!.b)!;
     return isWide(utf8(cp, nat.b)) ? 2 : 1;
   };
   const methodSlots = (idx: number, withReceiver: boolean) => {
-    const e = cp[idx]!;
-    const nat = cp[e.b]!;
+    const e = cpEntry(cp, idx)!;
+    const nat = cpEntry(cp, e.b)!;
     const { params, ret } = parseMethodDesc(utf8(cp, nat.b));
     let n = withReceiver ? 1 : 0;
     for (const p of params) n += isWide(p) ? 2 : 1;

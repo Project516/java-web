@@ -5,7 +5,7 @@
 // the same thing the JDK bootstraps do with the ClassFile API, minus the
 // cost of running that machinery in the interpreter.
 
-import { Tag, className, utf8 } from "./classfile.ts";
+import { cpEntry, Tag, className, utf8 } from "./classfile.ts";
 import { ClassWriter } from "./classwriter.ts";
 import type { Code } from "./classwriter.ts";
 import {
@@ -42,14 +42,14 @@ export type BsmArg =
 
 export function cpArg(cls: JClass, idx: number): BsmArg {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   switch (e.tag) {
     case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: return { kind: "value", tag: e.tag, value: e.value };
     case Tag.String: return { kind: "value", tag: e.tag, value: utf8(cp, e.a) };
     case Tag.Class: return { kind: "class", name: className(cp, idx) };
     case Tag.MethodType: return { kind: "mt", desc: utf8(cp, e.a) };
     case Tag.MethodHandle: {
-      const ref = cp[e.b]!, nat = cp[ref.b]!;
+      const ref = cpEntry(cp, e.b)!, nat = cpEntry(cp, ref.b)!;
       return {
         kind: "mh", refKind: e.a, owner: className(cp, ref.a), name: utf8(cp, nat.a), desc: utf8(cp, nat.b),
         iface: ref.tag === Tag.InterfaceMethodref,
@@ -434,9 +434,9 @@ function* methodHandleConstant(vm: JVM, t: JThread, cls: JClass, mh: MethodHandl
 
 function* dynamicConstant(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cp[e.b]!;
+  const nat = cpEntry(cp, e.b)!;
   const bsmHandle = yield* constantObject(vm, t, cls, bsm.ref);
   const type: JClass = yield* typeOf(t, cls, utf8(cp, nat.b));
   const args = yield* staticArgs(vm, t, cls, bsm.args);
@@ -455,7 +455,7 @@ function* staticArgs(vm: JVM, t: JThread, cls: JClass, idxs: number[]): NativeGe
 // The Java object for a loadable constant, boxing primitives.
 export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   switch (e.tag) {
     case Tag.Integer: return yield* box(t, "I", e.value);
     case Tag.Float: return yield* box(t, "F", e.value);
@@ -467,7 +467,7 @@ export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): 
   const cached = cls.ldc[idx];
   if (cached !== undefined) {
     if (e.tag !== Tag.Dynamic) return cached;
-    const desc = utf8(cp, cp[e.b]!.b);
+    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
     return isPrim(desc) ? yield* box(t, desc, cached) : cached;
   }
   let v: any;
@@ -475,7 +475,7 @@ export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): 
   else if (e.tag === Tag.MethodHandle) v = yield* methodHandleConstant(vm, t, cls, cpArg(cls, idx) as MethodHandleRef);
   else if (e.tag === Tag.Dynamic) {
     v = yield* dynamicConstant(vm, t, cls, idx);
-    const desc = utf8(cp, cp[e.b]!.b);
+    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
     cls.ldc[idx] = isPrim(desc) && v !== null ? vm.getField(v, v.cls.name, "value") : v;
     return v;
   }
@@ -487,10 +487,10 @@ export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): 
 // ldc of a MethodType, MethodHandle or dynamic constant.
 export function* resolveConstant(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   const v = yield* constantObject(vm, t, cls, idx);
   if (e.tag === Tag.Dynamic) {
-    const desc = utf8(cp, cp[e.b]!.b);
+    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
     if (isPrim(desc)) return v === null ? null : vm.getField(v, v.cls.name, "value");
   }
   return v;
@@ -498,9 +498,9 @@ export function* resolveConstant(vm: JVM, t: JThread, cls: JClass, idx: number):
 
 function* linkGeneral(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cp[e.b]!;
+  const nat = cpEntry(cp, e.b)!;
   const bsmHandle = yield* constantObject(vm, t, cls, bsm.ref);
   const type = yield* methodType(vm, t, cls.loader, utf8(cp, nat.b));
   const args = yield* staticArgs(vm, t, cls, bsm.args);
@@ -515,9 +515,9 @@ function* linkGeneral(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen 
 
 export function* linkCallSite(vm: JVM, t: JThread, cls: JClass, idx: number): Generator<any, CallSite, any> {
   const cp = cls.cf!.cp;
-  const e = cp[idx]!;
+  const e = cpEntry(cp, idx)!;
   const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cp[e.b]!;
+  const nat = cpEntry(cp, e.b)!;
   const name = utf8(cp, nat.a), desc = utf8(cp, nat.b);
   const ref = cpArg(cls, bsm.ref) as MethodHandleRef;
   const args = bsm.args.map((a) => cpArg(cls, a));
