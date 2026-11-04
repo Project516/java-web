@@ -42,8 +42,6 @@ export class ImageBackend implements Backend {
     return size === undefined || size < 0 ? null : this.readRange(p, 0, size);
   }
 
-  canReadRange(p: string) { return !this.pack.index?.has("/lib/modules") || p === "/lib/modules"; }
-
   readRange(p: string, off: number, len: number): Uint8Array | null {
     const size = this.pack.index!.get(p);
     if (size === undefined || size < 0) return null;
