@@ -18,7 +18,8 @@ java-web targets headless Java: console apps, libraries and javac.
 ## Locales
 
 Locales other than English need `cheerpjInit({ localeData: true })`, or
-  `--locale-data` under Node (`localeData: true` for `runNode`). Turn it on
+  `--locale-data` under Node (`localeData: true` for `runNode`). Adding
+  `jdk.localedata` or `ALL-SYSTEM` with `--add-modules` turns it on too. Turn it on
   when a program formats numbers, dates or currencies, or prints month and day
   names, for a locale other than English: for example
   `String.format(Locale.GERMANY, ...)`, or a German default locale. Without it,

@@ -173,6 +173,11 @@ export class JVM {
     const index = this.fs.read(`${opts.javaHome}/lib/packages.txt`);
     if (!index) throw new Error(`no JDK at ${opts.javaHome}; run pnpm jdk`);
     // modules the file system hides are left out
+    // Locale data is left out as --limit-modules would leave it, unless asked
+    // for, or named by --add-modules (by name or as ALL-SYSTEM).
+    const addmods = [...this.props].filter(([k]) => k.startsWith("jdk.module.addmods.")).flatMap(([, v]) => v.split(","));
+    const noLocales = this.image !== null && !opts.localeData && !this.props.has("jdk.module.limitmods") &&
+      !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata");
     const present = new Map<string, boolean>();
     for (const line of new TextDecoder().decode(index).split("\n")) {
       const sp = line.indexOf(" ");
@@ -180,11 +185,9 @@ export class JVM {
       const mod = line.slice(0, sp);
       let has = present.get(mod);
       if (has === undefined) present.set(mod, (has = this.image !== null || this.fs.stat(`${opts.javaHome}/modules/${mod}`) !== null));
-      if (has && !(this.image && !opts.localeData && !this.props.has("jdk.module.limitmods") && mod === "jdk.localedata")) {
-        this.bootPackages.set(line.slice(sp + 1), mod);
-      }
+      if (has && !(noLocales && mod === "jdk.localedata")) this.bootPackages.set(line.slice(sp + 1), mod);
     }
-    if (this.image && !opts.localeData && !this.props.has("jdk.module.limitmods")) {
+    if (noLocales) {
       const release = this.fs.read(`${opts.javaHome}/release`);
       const modules = release && /(?:^|\n)MODULES="([^"]+)"/.exec(new TextDecoder().decode(release));
       if (!modules) throw new Error("JDK release has no module list");
