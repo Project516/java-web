@@ -180,13 +180,21 @@ export class VFS {
 
   remove(path: string): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].remove?.(r[1]);
+    if (!r || !r[0].writable || !r[0].remove?.(r[1])) return false;
+    this.setTimes.delete(normalize(path));
+    return true;
   }
 
   rename(from: string, to: string): boolean {
     const a = this.resolve(from), b = this.resolve(to);
-    if (!a || !b || a[0] !== b[0] || !a[0].writable) return false;
-    return !!a[0].rename?.(a[1], b[1]);
+    if (!a || !b || a[0] !== b[0] || !a[0].writable || !a[0].rename?.(a[1], b[1])) return false;
+    // set times move with the files, which keep their times
+    const src = normalize(from), dst = normalize(to);
+    const under = (p: string, root: string) => p === root || p.startsWith(root + "/");
+    const moved = [...this.setTimes].filter(([p]) => under(p, src));
+    for (const p of [...this.setTimes.keys()]) if (under(p, src) || under(p, dst)) this.setTimes.delete(p);
+    for (const [p, set] of moved) this.setTimes.set(dst + p.slice(src.length), set);
+    return true;
   }
 
   writable(path: string): boolean {

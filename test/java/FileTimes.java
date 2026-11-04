@@ -21,6 +21,12 @@ public class FileTimes {
       FileTime dirTime = Files.readAttributes(dir, BasicFileAttributes.class).lastModifiedTime();
       Files.getFileAttributeView(file, BasicFileAttributeView.class).setTimes(dirTime, null, null);
       System.out.println("dir time " + Files.getLastModifiedTime(file).equals(dirTime));
+      // the exact time moves with the file
+      FileTime exact = FileTime.from(1762300000123456789L, TimeUnit.NANOSECONDS);
+      Files.setLastModifiedTime(file, exact);
+      Path moved = Files.move(file, dir.resolve("g"));
+      System.out.println("moved " + Files.getLastModifiedTime(moved).equals(exact));
+      Files.move(moved, file);
       File f = file.toFile();
       f.setLastModified(1762300000123L);
       System.out.println("File " + f.lastModified() + " " + Files.getLastModifiedTime(file).toMillis());

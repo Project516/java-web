@@ -454,7 +454,10 @@ export const natives: Natives = {
   },
   [`${UFS}.getLastModifiedTime0(Ljava/io/File;)J`]: (t, [, f]) => {
     const st = t.vm.fs.stat(resolvePath(t, pathOf(t, f)));
-    return st?.mtimeNs !== undefined ? st.mtimeNs / 1_000_000n : BigInt(Math.floor(st?.mtime ?? 0));
+    if (st?.mtimeNs === undefined) return BigInt(Math.floor(st?.mtime ?? 0));
+    // down, as HotSpot divides a negative time
+    const ms = st.mtimeNs / 1_000_000n;
+    return st.mtimeNs < 0n && ms * 1_000_000n !== st.mtimeNs ? ms - 1n : ms;
   },
   [`${UFS}.getLength0(Ljava/io/File;)J`]: (t, [, f]) => {
     const abs = resolvePath(t, pathOf(t, f));
