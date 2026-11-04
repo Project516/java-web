@@ -9,17 +9,17 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImageBackend } from "../src/image.ts";
-import { parsePack, listIndex } from "../src/browser/http.ts";
+import { listIndex, packedRange, parsePack } from "../src/browser/http.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
 const enc = new TextEncoder();
 
 // the boot.pack layout: [u16 path length][path][u32 size][bytes], repeated
-function pack(entries: [string, string][]): Uint8Array {
+function pack(entries: [string, string | Uint8Array][]): Uint8Array {
   const parts: number[] = [];
   for (const [p, d] of entries) {
-    const name = enc.encode(p), data = enc.encode(d);
+    const name = enc.encode(p), data = typeof d === "string" ? enc.encode(d) : d;
     parts.push(name.length >> 8, name.length & 255, ...name);
     parts.push(data.length >>> 24, (data.length >> 16) & 255, (data.length >> 8) & 255, data.length & 255, ...data);
   }
@@ -30,13 +30,14 @@ test("ImageBackend reads the index, packed files and module images", () => {
   const dir = mkdtempSync(join(tmpdir(), "jw-image-"));
   try {
     mkdirSync(join(dir, "jdk"));
-    // java.base.jar holds "BOOTabcdef", the other image "XYZ"
-    writeFileSync(join(dir, "jdk", "java.base.jar"), "BOOTabcdef");
+    // image.jar holds "BOOTabcdef", the other image "XYZ"
+    writeFileSync(join(dir, "jdk", "image.jar"), "BOOTabcdef");
     writeFileSync(join(dir, "jdk", "jdk.other.jar"), "XYZ");
-    writeFileSync(join(dir, "jdk", "jdk.localedata.txt"), "d /modules/jdk.localedata\nf /modules/jdk.localedata/L 3 jdk.other:0");
     writeFileSync(join(dir, "boot.pack"), pack([
-      ["/index.txt", "d /lib\nf /lib/boot 4 java.base:0\nf /lib/rest 6 java.base:4\nf /lib/cut 6 jdk.other:1\nd /modules\nd /modules/jdk.other\nf /modules/jdk.other/x 3 jdk.other:0"],
+      ["/index.txt", "d /lib\nf /lib/boot 4 image:0\nf /lib/rest 6 image:4\nf /lib/cut 6 jdk.other:1\nd /modules\nd /modules/jdk.other\nf /modules/jdk.other/x 3 jdk.other:0"],
       ["/lib/boot", "BOOT"],
+      // a packed part of /lib/rest, which reads come from before the image
+      ["@1:/lib/rest", "BCD"],
     ]));
     const b = new ImageBackend(dir);
     assert.deepEqual(b.stat("/lib"), { dir: true, size: 0, mtime: 0 });
@@ -48,7 +49,8 @@ test("ImageBackend reads the index, packed files and module images", () => {
     const text = (d: Uint8Array | null) => d && new TextDecoder().decode(d);
     assert.equal(text(b.read("/lib/boot")), "BOOT");
     assert.equal(text(b.read("/lib/rest")), "abcdef");
-    assert.equal(text(b.readRange("/lib/rest", 2, 3)), "cde");
+    assert.equal(text(b.readRange("/lib/rest", 1, 2)), "BC");
+    assert.equal(text(b.readRange("/lib/rest", 3, 2)), "de");
     // a range is cut at the file's end, not read into the next file
     assert.equal(text(b.readRange("/lib/boot", 2, 10)), "OT");
     assert.equal(text(b.readRange("/lib/rest", 4, 10)), "ef");
@@ -56,9 +58,7 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(b.read("/lib"), null);
     // past the end of a damaged image
     assert.equal(b.read("/lib/cut"), null);
-    assert.equal(b.stat("/modules/jdk.localedata"), null);
-    assert.equal(text(new ImageBackend(dir, true).read("/modules/jdk.localedata/L")), "XYZ");
-    rmSync(join(dir, "jdk", "java.base.jar"));
+    rmSync(join(dir, "jdk", "image.jar"));
     assert.throws(() => new ImageBackend(dir), /no packaged JDK image/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -66,30 +66,36 @@ test("ImageBackend reads the index, packed files and module images", () => {
 });
 
 test("compact index keeps paths, sizes, offsets, and directory order", () => {
-  const buf = pack([["/index.prefix", "0 d /lib\n0 f /lib/one 3 java.base:0\n7 two 4 java.base:3 javac\n0 d /modules"]]);
+  const buf = pack([["/index.prefix", "0 d /lib\n0 f /lib/one 3 image:0\n7 two 4 image:3 javac\n0 d /modules"]]);
   const image = parsePack(buf.buffer as ArrayBuffer);
   assert.deepEqual([...image.index!], [["/", -1], ["/lib", -1], ["/lib/one", 3], ["/lib/two", 4], ["/modules", -1]]);
   assert.deepEqual(listIndex(image.index!, "/lib"), ["one", "two"]);
-  assert.deepEqual(image.offsets.get("/lib/two"), { image: "/java.base.jar", at: 3 });
+  assert.deepEqual(image.offsets.get("/lib/two"), { image: "/image.jar", at: 3 });
   assert.equal(image.lazy.get("/lib/two"), "javac");
 });
 
-test("a module's index lines are parsed when a path in it is first looked up", () => {
+test("packed image ranges are found by offset, and a lazy pack lists its own", () => {
+  const spans = new Uint8Array(16);
+  const dv = new DataView(spans.buffer);
+  [100, 110, 200, 205].forEach((v, i) => dv.setUint32(i * 4, v));
   const buf = pack([
-    ["/index.prefix", "0 d /modules\n0 d /modules/a\n0 d /modules/a/p\n0 d /modules/b"],
-    ["/index/a.prefix", "0 f /modules/a/p/X.class 5 a:0\n15 Y.class 6 a:5 javac"],
-    ["/index/b.prefix", "0 f /modules/b/Z.class 7 b:0"],
+    ["@10:/lib/modules", "abcdef"],
+    ["@0:/lib/modules", "0123"],
+    ["@50:/lib/modules", "XY"],
+    ["@lazy:javac:/lib/modules", spans],
   ]);
   const image = parsePack(buf.buffer as ArrayBuffer);
+  const text = (d: Uint8Array | undefined) => d && new TextDecoder().decode(d);
   assert.equal(image.files.size, 0);
-  assert.equal(image.offsets.size, 0);
-  assert.deepEqual(listIndex(image.index!, "/modules/a/p"), ["X.class", "Y.class"]);
-  assert.equal(image.index!.get("/modules/a/p/Y.class"), 6);
-  assert.deepEqual(image.offsets.get("/modules/a/p/Y.class"), { image: "/a.jar", at: 5 });
-  assert.equal(image.lazy.get("/modules/a/p/Y.class"), "javac");
-  assert.equal(image.offsets.has("/modules/b/Z.class"), false);
-  assert.equal(image.index!.has("/modules/b/Z.class"), true);
-  assert.deepEqual(listIndex(image.index!, "/modules"), ["a", "b"]);
+  assert.equal(text(packedRange(image, "/lib/modules", 1, 3)), "123");
+  assert.equal(text(packedRange(image, "/lib/modules", 12, 4)), "cdef");
+  assert.equal(text(packedRange(image, "/lib/modules", 50, 2)), "XY");
+  // across two parts, past a part's end, or between parts: not packed
+  assert.equal(packedRange(image, "/lib/modules", 3, 8), undefined);
+  assert.equal(packedRange(image, "/lib/modules", 14, 3), undefined);
+  assert.equal(packedRange(image, "/lib/modules", 30, 1), undefined);
+  assert.equal(packedRange(image, "/lib/other", 0, 1), undefined);
+  assert.deepEqual(image.lazyRanges.get("/lib/modules"), { name: "javac", spans: [100, 110, 200, 205] });
 });
 
 const node = join(root, "dist", "node.js");

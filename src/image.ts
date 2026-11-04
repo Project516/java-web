@@ -1,10 +1,10 @@
 // The JDK image as `pnpm build` packages it in dist/, read from disk under
-// Node: boot.pack holds the index and the files a typical start reads, and
-// every other file is read at its offset in jdk/<module>.jar.
+// Node: boot.pack holds the index and the files and image ranges a typical
+// start reads, and the rest is read at its offset in jdk/image.jar.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { addIndex, listIndex, parsePack } from "./browser/http.ts";
+import { listIndex, packedRange, parsePack } from "./browser/http.ts";
 import type { Pack } from "./browser/http.ts";
 import type { Backend, Stat } from "./fs.ts";
 
@@ -13,15 +13,14 @@ export class ImageBackend implements Backend {
   private readonly dir: string;
   private readonly pack: Pack;
 
-  // dir holds boot.pack and jdk/; localeData adds jdk.localedata's files
-  constructor(dir: string, localeData = false) {
+  // dir holds boot.pack and jdk/
+  constructor(dir: string) {
     this.dir = path.resolve(dir);
-    if (!fs.existsSync(path.join(this.dir, "jdk", "java.base.jar"))) {
+    if (!fs.existsSync(path.join(this.dir, "jdk", "image.jar"))) {
       throw new Error(`no packaged JDK image in ${this.dir}: boot.pack needs jdk/ next to it`);
     }
     const buf = fs.readFileSync(path.join(this.dir, "boot.pack"));
     this.pack = parsePack(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-    if (localeData) addIndex(this.pack, fs.readFileSync(path.join(this.dir, "jdk", "jdk.localedata.txt"), "utf8"));
   }
 
   stat(p: string): Stat | null {
@@ -42,6 +41,8 @@ export class ImageBackend implements Backend {
     len = Math.max(0, Math.min(len, size - off));
     const packed = this.pack.files.get(p);
     if (packed) return packed.subarray(off, off + len);
+    const part = packedRange(this.pack, p, off, len);
+    if (part) return part;
     const at = this.pack.offsets.get(p);
     if (!at) return null;
     const out = new Uint8Array(len);

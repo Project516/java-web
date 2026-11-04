@@ -23,6 +23,15 @@ import type { NetBackend } from "./sockets.ts";
 // A host directory exposed read-only (or writable) inside the VFS.
 const MAX_FILE = 512 << 20;
 
+// The JDK image is read for every boot class, by every VM in the process, so
+// each image file stays open once opened.
+const imageFds = new Map<string, number>();
+function imageFd(file: string): number {
+  let fd = imageFds.get(file);
+  if (fd === undefined) imageFds.set(file, (fd = fs.openSync(file, "r")));
+  return fd;
+}
+
 export class NodeBackend implements Backend {
   readonly root: string;
   readonly writable: boolean;
@@ -72,10 +81,11 @@ export class NodeBackend implements Backend {
   // Other open files keep their buffered contents even if the host removes them.
   canReadRange(p: string) { return !this.writable && p === "/lib/modules"; }
   readRange(p: string, off: number, len: number): Uint8Array | null {
+    const image = p === "/lib/modules" && !this.writable;
     try {
-      const fd = fs.openSync(this.host(p), "r");
+      const fd = image ? imageFd(this.host(p)) : fs.openSync(this.host(p), "r");
       try {
-        if (!fs.fstatSync(fd).isFile()) return null;
+        if (!image && !fs.fstatSync(fd).isFile()) return null;
         const out = new Uint8Array(len);
         let n = 0;
         while (n < len) {
@@ -84,7 +94,9 @@ export class NodeBackend implements Backend {
           n += got;
         }
         return out.subarray(0, n);
-      } finally { fs.closeSync(fd); }
+      } finally {
+        if (!image) fs.closeSync(fd);
+      }
     } catch { return null; }
   }
   list(p: string) {
@@ -342,8 +354,7 @@ function nodeVm(o: NodeRunOptions): JVM {
   if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
     throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
   }
-  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(jdk));
-  if (!o.localeData) vfs.hide("/jdk/modules/jdk.localedata");
+  vfs.mount("/jdk", packaged ? new ImageBackend(here) : new NodeBackend(jdk));
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
   const natives = o.natives ?? {};

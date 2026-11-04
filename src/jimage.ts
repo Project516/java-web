@@ -30,12 +30,10 @@ export class JImage {
 
   read(module: string, name: string): Uint8Array | null {
     const full = `/${module}/${name}`;
+    const utf = modifiedUtf8(full);
+    // ImageStringsReader.hashCode
     const hash = (seed: number) => {
-      for (let i = 0; i < full.length; i++) {
-        const c = full.charCodeAt(i);
-        const bytes = c === 0 ? [0xc0, 0x80] : c < 0x80 ? [c] : c < 0x800 ? [0xc0 | (c >> 6), 0x80 | (c & 63)] : [0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)];
-        for (const b of bytes) seed = Math.imul(seed, 0x01000193) ^ b;
-      }
+      for (const b of utf) seed = Math.imul(seed, 0x01000193) ^ b;
       return (seed & 0x7fffffff) % this.count;
     };
     const redirect = this.view.getInt32(28 + hash(0x01000193) * 4, true);
@@ -68,4 +66,15 @@ export class JImage {
     if (!data || data.length !== attrs[7]) throw new Error(`cannot read image resource: ${full}`);
     return data;
   }
+}
+
+function modifiedUtf8(s: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c !== 0 && c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return out;
 }

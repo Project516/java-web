@@ -392,8 +392,8 @@ async function runCase(tc: TestCase): Promise<Record<string, unknown>> {
       if (err) return { status: "skip", why: `javac: ${err}` };
       continue;
     }
-    // Some tests load every class in the image; leave them enough heap under the 1.5 GB scope.
-    const ours = await exec("node", ["--max-old-space-size=1024", vm, "--jdk", join(root, "build", "jdk"), "--locale-data", ...preview, ...exportsFlags(tc), ...a.opts, ...props(tc), ...cp, ...entry(a), ...a.args], work, timeout);
+    // with every module, as HotSpot has
+    const ours = await exec("node", [vm, "--jdk", join(root, "build", "jdk"), "--locale-data", ...preview, ...exportsFlags(tc), ...a.opts, ...props(tc), ...cp, ...entry(a), ...a.args], work, timeout);
     total += ours.ms;
     if (!ours.ok) return { status: ours.timedOut ? "timeout" : "fail", ms: total, refMs, why: ours.tail };
   }

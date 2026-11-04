@@ -85,8 +85,18 @@ class Recorder implements Backend {
   constructor(inner: Backend) { this.inner = inner; }
   stat(p: string) { return this.inner.stat(p); }
   list(p: string) { return this.inner.list(p); }
+  // parts of files read in ranges (the JDK image), as [start, end) by path
+  readonly ranges = new Map<string, [number, number][]>();
   canReadRange(p: string) { return this.inner.canReadRange?.(p) ?? !!this.inner.readRange; }
-  readRange(p: string, off: number, len: number) { return this.inner.readRange?.(p, off, len) ?? null; }
+  readRange(p: string, off: number, len: number) {
+    const d = this.inner.readRange?.(p, off, len) ?? null;
+    if (d) {
+      let r = this.ranges.get(p);
+      if (!r) this.ranges.set(p, (r = []));
+      r.push([off, off + d.length]);
+    }
+    return d;
+  }
   read(p: string) {
     const d = this.inner.read(p);
     if (d) this.seen.add(p);
@@ -98,7 +108,6 @@ for (const main of ["Hello", "Primes", "Shapes"]) {
   const vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
   vfs.mount("/jdk", recorder);
-  vfs.hide("/jdk/modules/jdk.localedata");
   vfs.mount("/tmp", new MemoryBackend());
   vfs.mount("/app", new NodeBackend(dist));
   const vm = new JVM({
@@ -116,7 +125,6 @@ const javacRecorder = new Recorder(new NodeBackend(jdk));
   const vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
   vfs.mount("/jdk", javacRecorder);
-  vfs.hide("/jdk/modules/jdk.localedata");
   vfs.mount("/tmp", new MemoryBackend());
   vfs.mount("/files", new MemoryBackend());
   vfs.mount("/app", new NodeBackend(dist));
@@ -132,50 +140,64 @@ const javacRecorder = new Recorder(new NodeBackend(jdk));
   vm.halt(0);
 }
 const javacFiles = [...javacRecorder.seen].filter((p) => !recorder.seen.has(p)).sort();
+
+// Sorted [start, end) spans covering the given ones. Spans less than GAP apart
+// join, since a pack entry costs more than a few bytes of filler.
+const GAP = 256;
+function merge(spans: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [s, e] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1] + GAP) last[1] = Math.max(last[1], e);
+    else out.push([s, e]);
+  }
+  return out;
+}
+// the parts of spans that covered leaves out
+function subtract(spans: [number, number][], covered: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let [s, e] of spans) {
+    for (const [cs, ce] of covered) {
+      if (ce <= s || cs >= e) continue;
+      if (cs > s) out.push([s, cs]);
+      s = Math.max(s, ce);
+      if (s >= e) break;
+    }
+    if (s < e) out.push([s, e]);
+  }
+  return out;
+}
+const bootRanges = new Map([...recorder.ranges].map(([p, r]) => [p, merge(r)]));
+const javacRanges = new Map([...javacRecorder.ranges].map(([p, r]) => [p, subtract(merge(r), bootRanges.get(p) ?? [])]));
+const rangeEntries = (ranges: Map<string, [number, number][]>, src: Recorder) =>
+  [...ranges].flatMap(([p, spans]) => spans.map(([s, e]): [string, Uint8Array] => [`@${s}:${p}`, src.readRange(p, s, e - s)!]));
 const inJavacPack = new Set(javacFiles);
 
-// The image is one file per module, jdk/<module>.jar, read in ranges. Files
-// outside the modules go with java.base, which every start reads. The index
-// says where each file is, so the worker can stat and list offline. Files of a
-// package sit together, so one block read serves several classes.
+// Every java.home file goes in one file, jdk/image.jar, read in ranges:
+// lib/modules (the jimage with every class) and the conf/ and lib/ files
+// around it. The index says where each file is, so the worker can stat and
+// list offline.
 const lines: string[] = [];
-// a module's file lines, which a start parses only once it reads that module
-const moduleLines = new Map<string, string[]>();
-// jdk.localedata's lines go in jdk/jdk.localedata.txt, which a page fetches only with localeData on
-const localeLines: string[] = [];
-const images = new Map<string, { parts: Uint8Array[]; size: number }>();
-const imageOf = (rel: string) => /^\/modules\/([^/]+)\//.exec(rel)?.[1] ?? "java.base";
+const parts: Uint8Array[] = [];
+let imageSize = 0;
 const walk = (dir: string) => {
   for (const name of readdirSync(dir).sort()) {
     const p = join(dir, name);
     const rel = "/" + relative(jdk, p);
     if (rel === "/legal") continue;
     const st = statSync(p);
-    const out = rel.startsWith("/modules/jdk.localedata") ? localeLines : lines;
     if (st.isDirectory()) {
-      out.push(`d ${rel}`);
+      lines.push(`d ${rel}`);
       walk(p);
     } else {
-      const name = imageOf(rel);
-      let image = images.get(name);
-      if (!image) images.set(name, (image = { parts: [], size: 0 }));
-      const module = out === lines ? /^\/modules\/([^/]+)\//.exec(rel)?.[1] : undefined;
-      let fileLines = out;
-      if (module) {
-        fileLines = moduleLines.get(module) ?? [];
-        moduleLines.set(module, fileLines);
-      }
-      fileLines.push(`f ${rel} ${st.size} ${name}:${image.size}${inJavacPack.has(rel) ? " javac" : ""}`);
-      image.parts.push(readFileSync(p));
-      image.size += st.size;
+      lines.push(`f ${rel} ${st.size} image:${imageSize}${inJavacPack.has(rel) ? " javac" : ""}`);
+      parts.push(readFileSync(p));
+      imageSize += st.size;
     }
   }
 };
 walk(jdk);
-writeFileSync(join(dist, "jdk", "jdk.localedata.txt"), localeLines.join("\n"));
-for (const [name, image] of images) writeFileSync(join(dist, "jdk", `${name}.jar`), Buffer.concat(image.parts));
-const imageSize = [...images.values()].reduce((n, i) => n + i.size, 0);
-const largest = [...images].sort((a, b) => b[1].size - a[1].size)[0];
+writeFileSync(join(dist, "jdk", "image.jar"), Buffer.concat(parts));
 // OpenJDK's licenses and notices ship next to the image as plain files
 cpSync(join(jdk, "legal"), join(dist, "jdk", "legal"), { recursive: true, dereference: true });
 
@@ -211,10 +233,20 @@ function prefixCode(lines: string[]) {
     return `${n} ${line.slice(n)}`;
   }).join("\n"));
 }
+const lazySpans = (name: string, ranges: Map<string, [number, number][]>): [string, Uint8Array][] => [...ranges].filter(([, r]) => r.length).map(([p, spans]) => {
+  const data = new Uint8Array(spans.length * 8);
+  const dv = new DataView(data.buffer);
+  spans.forEach(([s, e], i) => { dv.setUint32(i * 8, s); dv.setUint32(i * 8 + 4, e); });
+  return [`@lazy:${name}:${p}`, data];
+});
 const boot = writePack(join(dist, "boot.pack"), [
+  ...rangeEntries(bootRanges, recorder),
+  ...lazySpans("javac", javacRanges),
   ["/index.prefix", prefixCode(lines)],
-  ...[...moduleLines].map(([m, l]): [string, Uint8Array] => [`/index/${m}.prefix`, prefixCode(l)]),
   ...[...recorder.seen].sort().map((p): [string, Uint8Array] => [p, recorder.read(p)!]),
 ]);
-const javacPack = writePack(join(dist, "jdk", "javac.pack"), javacFiles.map((p) => [p, javacRecorder.read(p)!]));
-console.log(`dist/ ready: boot.pack ${boot}, jdk/javac.pack ${javacPack}, jdk/<module>.jar ${(imageSize / 2 ** 20).toFixed(0)} MB in ${images.size} files, the largest ${largest[0]} at ${(largest[1].size / 2 ** 20).toFixed(0)} MB`);
+const javacPack = writePack(join(dist, "jdk", "javac.pack"), [
+  ...javacFiles.map((p): [string, Uint8Array] => [p, javacRecorder.read(p)!]),
+  ...rangeEntries(javacRanges, javacRecorder),
+]);
+console.log(`dist/ ready: boot.pack ${boot}, jdk/javac.pack ${javacPack}, jdk/image.jar ${(imageSize / 2 ** 20).toFixed(0)} MB`);

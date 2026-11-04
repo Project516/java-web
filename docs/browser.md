@@ -5,9 +5,11 @@ The npm package holds the built files: `java-web.js`, `java-web-worker.js`,
 and load `java-web.js` with a classic `<script>` tag. It finds the other files
 next to itself, or where `cheerpjInit({ runtime: "/path/to/dist/" })` says.
 
-- The server should answer range requests for the `jdk/<module>.jar` files,
-  so a page reads only the classes it needs. A host that compresses ranged
-  responses still works, at the cost of one full download per file.
+- The server should answer range requests for `jdk/image.jar`, the whole JDK
+  image, so a page reads only the classes it needs. `boot.pack` holds what a
+  typical start reads, and `jdk/javac.pack` what javac adds. A host that
+  compresses ranged responses still works, at the cost of one full download of
+  `jdk/image.jar` (about 120 MB).
 - The JIT compiles hot Java methods with `new Function`, so a page with a
   Content Security Policy needs `'unsafe-eval'` in `script-src`. Without it,
   Java still runs, only interpreted.
