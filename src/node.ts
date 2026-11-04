@@ -80,19 +80,20 @@ export class NodeBackend implements Backend {
     if (!this.writable) this.lists.set(p, names);
     return names;
   }
-  private writeErrors = new Map<string, string>();
+  // the host's reason for the last failed write, read right after it
+  private writeFailure: [string, string] | null = null;
   write(p: string, data: Uint8Array) {
     try {
       fs.writeFileSync(this.host(p), data);
-      this.writeErrors.delete(p);
+      this.writeFailure = null;
       return true;
     } catch (e) {
-      this.writeErrors.set(p, (e as NodeJS.ErrnoException).code ?? "EIO");
+      this.writeFailure = [p, (e as NodeJS.ErrnoException).code ?? "EIO"];
       return false;
     }
   }
   writeError(p: string) {
-    return this.writeErrors.get(p);
+    return this.writeFailure?.[0] === p ? this.writeFailure[1] : undefined;
   }
   denied(p: string) {
     const host = this.host(p);
@@ -103,19 +104,19 @@ export class NodeBackend implements Backend {
       return (e as NodeJS.ErrnoException).code === "EACCES" || (e as NodeJS.ErrnoException).code === "EPERM";
     }
   }
-  private chmodErrors = new Map<string, string>();
+  private chmodFailure: [string, string] | null = null;
   chmod(p: string, f: (mode: number) => number) {
     try {
       fs.chmodSync(this.host(p), f(fs.statSync(this.host(p)).mode & 0o7777));
-      this.chmodErrors.delete(p);
+      this.chmodFailure = null;
       return true;
     } catch (e) {
-      this.chmodErrors.set(p, (e as NodeJS.ErrnoException).code ?? "EIO");
+      this.chmodFailure = [p, (e as NodeJS.ErrnoException).code ?? "EIO"];
       return false;
     }
   }
   chmodError(p: string) {
-    return this.chmodErrors.get(p);
+    return this.chmodFailure?.[0] === p ? this.chmodFailure[1] : undefined;
   }
   access(p: string, mode: number) {
     try {

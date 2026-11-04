@@ -12,21 +12,23 @@ import type { Natives } from "./util.ts";
 
 export const EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, ENOMEM = 12, EACCES = 13,
   EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ENOSPC = 28, EROFS = 30,
-  ENOTEMPTY = 39, ENOSYS = 38, ELOOP = 40, ENOTSUP = 95, ESTALE = 116;
+  ENOTEMPTY = 39, ENOSYS = 38, ENAMETOOLONG = 36, ELOOP = 40, ENOTSUP = 95, ESTALE = 116, EDQUOT = 122;
 
 const MESSAGES: Record<number, string> = {
   [EPERM]: "Operation not permitted", [EINTR]: "Interrupted system call", [EIO]: "Input/output error",
   [ENOMEM]: "Cannot allocate memory", [ENOSPC]: "No space left on device",
   [ELOOP]: "Too many levels of symbolic links", [ENOTSUP]: "Operation not supported", [ESTALE]: "Stale file handle",
+  [ENAMETOOLONG]: "File name too long", [EDQUOT]: "Disk quota exceeded",
   [ENOENT]: "No such file or directory", [EBADF]: "Bad file descriptor", [EACCES]: "Permission denied",
   [EEXIST]: "File exists", [EXDEV]: "Invalid cross-device link", [ENOTDIR]: "Not a directory",
   [EISDIR]: "Is a directory", [EINVAL]: "Invalid argument", [EROFS]: "Read-only file system",
   [ENOTEMPTY]: "Directory not empty", [ENOSYS]: "Function not implemented",
 };
 
-const CHMOD_ERRNO: Record<string, number> = {
+// errno numbers of the host errors Node reports by name
+const HOST_ERRNO: Record<string, number> = {
   EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, ENOTDIR, EINVAL, ENOSPC, EROFS, ELOOP,
-  ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE,
+  ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE, ENAMETOOLONG, EDQUOT,
 };
 
 // Linux open(2) flags
@@ -66,7 +68,7 @@ function chmod(t: JThread, p: string, mode: number) {
     if (!fs.stat(p)) unixError(ENOENT);
     unixError(EROFS);
   }
-  unixError(CHMOD_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
+  unixError(HOST_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
 }
 
 function fillAttrs(t: JThread, attrs: JObject, p: string): number {
@@ -148,7 +150,11 @@ export const natives: Natives = {
       fileOf(t, fd).ino = fileInode(t, abs);
       return fd;
     } catch (e) {
-      if (e instanceof PendingThrow) unixError(t.vm.fs.writable(abs) ? ENOENT : EROFS);
+      if (e instanceof PendingThrow) {
+        // a new file the host would not create: its reason
+        const host = st ? undefined : HOST_ERRNO[t.vm.fs.writeError(abs) ?? ""];
+        unixError(host ?? (t.vm.fs.writable(abs) ? ENOENT : EROFS));
+      }
       throw e;
     }
   },
