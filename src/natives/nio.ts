@@ -88,10 +88,8 @@ function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: 
   vm.setField(attrs, A, "st_uid", 1000);
   vm.setField(attrs, A, "st_gid", 1000);
   vm.setField(attrs, A, "st_size", BigInt(size));
-  for (const k of ["atime", "mtime", "ctime"]) {
-    vm.setField(attrs, A, `st_${k}_sec`, sec);
-    vm.setField(attrs, A, `st_${k}_nsec`, nsec);
-  }
+  for (const k of ["st_atime_sec", "st_mtime_sec", "st_ctime_sec"]) vm.setField(attrs, A, k, sec);
+  for (const k of ["st_atime_nsec", "st_mtime_nsec", "st_ctime_nsec"]) vm.setField(attrs, A, k, nsec);
 }
 
 // open mount table handles: whether the one entry has been read
