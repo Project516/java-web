@@ -199,6 +199,8 @@ test("locale data", async () => {
   const limited = spawnSync(hotspot("java"), ["--limit-modules", modules, "-cp", classes, "Locales"], { encoding: "utf8" });
   assert.equal(limited.status, 0, limited.stderr);
   assert.equal(await run(false), limited.stdout);
+  // a limit the caller gives wins over localeData
+  assert.equal(await run(true, { "jdk.module.limitmods": modules }), limited.stdout);
 });
 
 // The host refuses these writes; root is allowed them, so the test needs a normal user.
