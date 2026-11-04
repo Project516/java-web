@@ -440,7 +440,8 @@ function heapSize(s: string): number {
   return unit ? Number(s.slice(0, -1)) * unit : Number(s);
 }
 
-function main(argv: string[]) {
+// the java-web command, which dist/cli.js runs
+export function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
   for (; i < argv.length; i++) {

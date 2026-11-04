@@ -15,8 +15,9 @@ const root = join(import.meta.dirname, "..", "..");
 const passingFile = "test/jtreg/passing.txt";
 
 // TypeScript the tests load: everything src/node.ts (the VM each test runs on),
-// the runner and this selection import, followed through their imports. Other .ts files under
-// src/ and scripts/ (the page API, the web build) cannot change a test's result.
+// the web build that bundles it into dist/node.js, the runner and this
+// selection import, followed through their imports. Other .ts files under
+// src/ and scripts/ (the page API) cannot change a test's result.
 function loaded(): Set<string> {
   const seen = new Set<string>();
   const visit = (file: string) => {
@@ -26,6 +27,7 @@ function loaded(): Set<string> {
     for (const m of text.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+\.ts)["']/g)) visit(join(dirname(file), m[1]));
   };
   visit("src/node.ts");
+  visit("scripts/build-web.ts");
   visit("scripts/jtreg/run.ts");
   visit("scripts/jtreg/select.ts");
   return seen;

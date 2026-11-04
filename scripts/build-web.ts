@@ -55,6 +55,14 @@ await build({
   define,
 });
 cpSync(join(root, "types", "node.d.ts"), join(dist, "node.d.ts"));
+// The java-web command. Node's compile cache covers only modules loaded after
+// it is on, so it comes before the VM: later runs skip compiling node.js.
+writeFileSync(join(dist, "cli.js"), `#!/usr/bin/env node
+import { enableCompileCache } from "node:module";
+enableCompileCache?.();
+const { main } = await import("./node.js");
+main(process.argv.slice(2));
+`, { mode: 0o755 });
 
 mkdirSync(join(dist, "jdk"), { recursive: true });
 

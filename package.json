@@ -26,12 +26,13 @@
     "./dist/*": "./dist/*"
   },
   "bin": {
-    "java-web": "dist/node.js"
+    "java-web": "dist/cli.js"
   },
   "files": [
     "dist/java-web.js",
     "dist/java-web-worker.js",
     "dist/node.js",
+    "dist/cli.js",
     "dist/node.d.ts",
     "dist/boot.pack",
     "dist/jdk/*.jar",
