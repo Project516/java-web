@@ -423,7 +423,7 @@ function shard(tests: TestCase[]): TestCase[] {
   if (existsSync(timesFile)) {
     for (const l of readFileSync(timesFile, "utf8").split("\n")) {
       const [ms, id] = l.split("\t");
-      if (id) known.set(id, Number(ms));
+      if (id && Number.isFinite(Number(ms))) known.set(id, Number(ms));
     }
   }
   const sorted = [...known.values()].sort((a, b) => a - b);
@@ -431,7 +431,7 @@ function shard(tests: TestCase[]): TestCase[] {
   const load = new Array(shardN).fill(0);
   const mine = new Set<TestCase>();
   const order = tests.map((tc) => ({ tc, ms: known.get(tc.id) ?? median }))
-    .sort((a, b) => b.ms - a.ms || (a.tc.id < b.tc.id ? -1 : 1));
+    .sort((a, b) => b.ms - a.ms || (a.tc.id < b.tc.id ? -1 : a.tc.id > b.tc.id ? 1 : 0));
   for (const { tc, ms } of order) {
     const k = load.indexOf(Math.min(...load));
     load[k] += ms;

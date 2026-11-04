@@ -43,12 +43,14 @@ directories is enough.
 `--shard k/n` splits them into n shards of about equal run time, using each
 test's time on java-web from `test/jtreg/times.tsv` (the median for a test
 not in it). Each CI shard uploads its `build/jtreg/times.tsv` as an artifact.
-To refresh the file after a run of all the tests, download those artifacts and
-combine them, slowest first:
+To refresh the file from a run, download those artifacts and merge them in:
+a test's new time replaces its old one, and tests the run left out keep theirs.
 
 ```sh
 gh run download <run-id> -p 'times-*' -D build/times
-cat build/times/*/times.tsv | sort -rn > test/jtreg/times.tsv
+cat test/jtreg/times.tsv build/times/*/times.tsv |
+  awk -F'\t' '{ t[$2] = $1 } END { for (id in t) print t[id] "\t" id }' |
+  sort -rn > build/times.tsv && mv build/times.tsv test/jtreg/times.tsv
 ```
 
 `pnpm build` also builds `dist/selftest/`, a browser check of library mode
