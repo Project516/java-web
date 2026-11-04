@@ -62,6 +62,11 @@ jobs:
             ~/.cache/java-web/jdk-*
             ~/.cache/java-web/dejavu-*
           key: jdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-jdk.sh') }}
+      # TestNG and JUnit, which scripts/jtreg/run.ts fetches from Maven Central
+      - uses: actions/cache@v6
+        with:
+          path: build/jtreg/lib
+          key: jtreg-lib-${{ hashFiles('scripts/jtreg/run.ts') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm jdk
       # each test VM starts from the bundle, which loads faster than src/
