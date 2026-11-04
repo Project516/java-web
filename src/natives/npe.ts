@@ -3,7 +3,7 @@
 // operand stack slot, then the message is built by walking back from the
 // bytecode that hit null.
 
-import { Tag, className, utf8 } from "../classfile.ts";
+import { cpEntry, Tag, className, utf8 } from "../classfile.ts";
 import type { ClassFile } from "../classfile.ts";
 import type { JMethod } from "../runtime.ts";
 import type { Natives } from "./util.ts";
@@ -248,10 +248,10 @@ class Builder {
   }
 
   private refDesc(i: number): string {
-    return utf8(this.cp, this.cp[this.cp[i]!.b]!.b);
+    return utf8(this.cp, cpEntry(this.cp, cpEntry(this.cp, i)!.b)!.b);
   }
   private refName(i: number): string {
-    return utf8(this.cp, this.cp[this.cp[i]!.b]!.a);
+    return utf8(this.cp, cpEntry(this.cp, cpEntry(this.cp, i)!.b)!.a);
   }
 
   private step(bci: number): number {
@@ -291,12 +291,12 @@ class Builder {
     } else {
       switch (op) {
         case 0x12: case 0x13: case 0x14: {
-          const e = this.cp[op === 0x12 ? c[pos] : u16(c, pos)]!;
+          const e = cpEntry(this.cp, op === 0x12 ? c[pos] : u16(c, pos))!;
           if (e.tag === Tag.Integer) st.push(bci, INT);
           else if (e.tag === Tag.Long) st.push(bci, LONG);
           else if (e.tag === Tag.Float) st.push(bci, FLOAT);
           else if (e.tag === Tag.Double) st.push(bci, DOUBLE);
-          else if (e.tag === Tag.Dynamic) st.push(bci, descType(utf8(this.cp, this.cp[e.b]!.b)[0]));
+          else if (e.tag === Tag.Dynamic) st.push(bci, descType(utf8(this.cp, cpEntry(this.cp, e.b)!.b)[0]));
           else st.push(bci, OBJECT);
           break;
         }
@@ -457,7 +457,7 @@ class Builder {
   }
 
   private methodName(i: number): string {
-    const e = this.cp[i]!;
+    const e = cpEntry(this.cp, i)!;
     const desc = this.refDesc(i);
     const params = paramDescs(desc).map(externalType).join(", ");
     return `${klassName(className(this.cp, e.a))}.${this.refName(i)}(${trimWellKnown(params)})`;
@@ -531,7 +531,7 @@ class Builder {
         return true;
       case 0xb2: {
         const i = u16(c, pos);
-        this.out += `${klassName(className(this.cp, this.cp[i]!.a))}.${this.refName(i)}`;
+        this.out += `${klassName(className(this.cp, cpEntry(this.cp, i)!.a))}.${this.refName(i)}`;
         return true;
       }
       case 0xb4:

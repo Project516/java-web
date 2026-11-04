@@ -2,7 +2,7 @@
 // pool resolution, strings, monitors and the thread scheduler.
 
 import type { Assertions } from "./assertions.ts";
-import { BadMagic, ClassFormatError, MAX_MAJOR, Tag, UnsupportedVersion, className, parseClass, utf8 } from "./classfile.ts";
+import { cpEntry, BadMagic, ClassFormatError, MAX_MAJOR, Tag, UnsupportedVersion, className, parseClass, utf8 } from "./classfile.ts";
 import type { ClassFile } from "./classfile.ts";
 import { deliver, raise, runThread } from "./interp.ts";
 import { NativeMemory } from "./memory.ts";
@@ -418,10 +418,10 @@ export class JVM {
 
   fieldRef(t: JThread, cls: JClass, idx: number): JField | undefined {
     const cp = cls.cf!.cp;
-    const e = cp[idx]!;
+    const e = cpEntry(cp, idx)!;
     const owner = cls.rcp[e.a] ?? this.classRef(t, cls, e.a);
     if (!owner) return undefined;
-    const nat = cp[e.b]!;
+    const nat = cpEntry(cp, e.b)!;
     const name = utf8(cp, nat.a);
     const f = owner.findField(name, utf8(cp, nat.b));
     if (!f) throw new PendingThrow("java/lang/NoSuchFieldError", name);
@@ -431,10 +431,10 @@ export class JVM {
 
   methodRef(t: JThread, cls: JClass, idx: number): JMethod | undefined {
     const cp = cls.cf!.cp;
-    const e = cp[idx]!;
+    const e = cpEntry(cp, idx)!;
     const owner = cls.rcp[e.a] ?? this.classRef(t, cls, e.a);
     if (!owner) return undefined;
-    const nat = cp[e.b]!;
+    const nat = cpEntry(cp, e.b)!;
     const name = utf8(cp, nat.a), desc = utf8(cp, nat.b);
     const m = this.resolveMethod(owner, name, desc);
     cls.rcp[idx] = m;
@@ -471,7 +471,7 @@ export class JVM {
   // ldc / ldc_w / ldc2_w
   constant(t: JThread, cls: JClass, idx: number): any {
     const cp = cls.cf!.cp;
-    const e = cp[idx]!;
+    const e = cpEntry(cp, idx)!;
     let v: any;
     switch (e.tag) {
       case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: v = e.value; break;
@@ -610,7 +610,7 @@ export class JVM {
       if (!f.isStatic) continue;
       const raw = f.attrs.get("ConstantValue");
       if (!raw) continue;
-      const e = cp[(raw[0] << 8) | raw[1]]!;
+      const e = cpEntry(cp, (raw[0] << 8) | raw[1])!;
       c.statics[f.slot] = e.tag === Tag.String ? this.intern(utf8(cp, e.a)) : e.value;
     }
   }
