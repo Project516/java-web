@@ -364,7 +364,11 @@ function prefsLocks(t: JThread) {
   if (!s) t.vm.state.set("prefsLocks", (s = { held: new Map(), fds: new Map() }));
   return s;
 }
-const ERRNO_NUMBER: Record<string, number> = { EPERM: 1, ENOENT: 2, EIO: 5, EAGAIN: 11, EACCES: 13, ENOTDIR: 20, EROFS: 30 };
+// Linux errno numbers of the codes Node reports by name
+const ERRNO_NUMBER: Record<string, number> = {
+  EPERM: 1, ENOENT: 2, EIO: 5, EBADF: 9, EAGAIN: 11, ENOMEM: 12, EACCES: 13, ENOTDIR: 20, EINVAL: 22, ENFILE: 23,
+  EMFILE: 24, ENOSPC: 28, EROFS: 30, ENAMETOOLONG: 36, ELOOP: 40, ENOTSUP: 95, EOPNOTSUPP: 95, EDQUOT: 122,
+};
 
 function intPair(t: JThread, a: number, b: number): JArray {
   const arr = t.vm.newArray(t.vm.primClass("I"), 2);
@@ -381,7 +385,7 @@ export const natives: Natives = {
     const abs = resolvePath(t, t.vm.jsString(name));
     if (!t.vm.fs.stat(abs)) return ERRNO_NUMBER.ENOENT;
     const ok = t.vm.fs.chmod(abs, (m) => (m & ~0o7777) | (mode & 0o7777));
-    return ok === false ? ERRNO_NUMBER[t.vm.fs.chmodError(abs) ?? "EPERM"] ?? ERRNO_NUMBER.EPERM : 0;
+    return ok === false ? ERRNO_NUMBER[t.vm.fs.chmodError(abs) ?? "EIO"] ?? ERRNO_NUMBER.EIO : 0;
   },
   // [fd, errno]; fd 0 when the file could not be opened or locked
   "java/util/prefs/FileSystemPreferences.lockFile0(Ljava/lang/String;IZ)[I": (t, [name, , shared]) => {
