@@ -78,12 +78,14 @@ const node = join(root, "dist", "node.js");
 const skip = existsSync(node) ? false : "run `pnpm build` first";
 const out = join(root, "build", "test-image");
 
-test("dist/node.js runs a program as HotSpot does", { skip }, () => {
+test("dist/node.js and the java-web command run a program as HotSpot does", { skip }, () => {
   mkdirSync(out, { recursive: true });
   spawnSync(hotspot("javac"), ["-d", out, join(root, "test", "java", "Collections.java")], { stdio: "inherit" });
   const ref = spawnSync(hotspot("java"), ["-cp", out, "Collections"], { encoding: "utf8" });
-  const got = spawnSync(process.execPath, [node, "-cp", out, "Collections"], { encoding: "utf8" });
-  assert.deepEqual({ stdout: got.stdout, stderr: got.stderr, code: got.status }, { stdout: ref.stdout, stderr: ref.stderr, code: ref.status });
+  for (const entry of [node, join(root, "dist", "cli.js")]) {
+    const got = spawnSync(process.execPath, [entry, "-cp", out, "Collections"], { encoding: "utf8" });
+    assert.deepEqual({ stdout: got.stdout, stderr: got.stderr, code: got.status }, { stdout: ref.stdout, stderr: ref.stderr, code: ref.status }, entry);
+  }
 });
 
 test("dist/node.js exports runNode, and javac runs on the packaged image", { skip }, async () => {
