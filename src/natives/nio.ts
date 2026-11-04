@@ -408,7 +408,7 @@ Object.assign(natives, {
   // writes only then.
   [`${UFD}map0(Ljava/io/FileDescriptor;IJJZ)J`]: (t: JThread, [fd, prot, pos, len]: any[]) => {
     const f = chanFile(t, fd);
-    const addr = t.vm.mem.malloc(Number(len));
+    const addr = t.vm.mem.malloc(Number(len), 4096);
     const save = f.pos;
     f.pos = Number(pos);
     const n = Math.min(f.size - Number(pos), Number(len));
