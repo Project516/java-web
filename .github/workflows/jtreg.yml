@@ -77,6 +77,14 @@ jobs:
           read -ra filters <<< "$FILTERS"
           node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600 --vm dist/node.js \
             --shard ${{ matrix.shard }}/${{ strategy.job-total }} "${filters[@]}"
+      # each test's run time, for refreshing test/jtreg/times.tsv
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: times-${{ matrix.shard }}
+          path: build/jtreg/times.tsv
+          if-no-files-found: ignore
+          retention-days: 30
 
   # one check for branch protection, whatever the number of shards
   result:

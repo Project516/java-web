@@ -39,6 +39,20 @@ node scripts/jtreg/run.ts <jdk-source> java/lang
 without the `+build` part. A sparse checkout of `test/lib` and the test
 directories is enough.
 
+`test/jtreg/passing.txt` lists the tests CI runs, with `--only-passing`.
+`--shard k/n` splits them into n shards of about equal run time, using each
+test's time on java-web from `test/jtreg/times.tsv` (the median for a test
+not in it). Each CI shard uploads its `build/jtreg/times.tsv` as an artifact.
+To refresh the file from a run, download those artifacts and merge them in:
+a test's new time replaces its old one, and tests the run left out keep theirs.
+
+```sh
+gh run download <run-id> -p 'times-*' -D build/times
+cat test/jtreg/times.tsv build/times/*/times.tsv |
+  awk -F'\t' '{ t[$2] = $1 } END { for (id in t) print t[id] "\t" id }' |
+  sort -rn > build/times.tsv && mv build/times.tsv test/jtreg/times.tsv
+```
+
 `pnpm build` also builds `dist/selftest/`, a browser check of library mode
 (objects, fields, arrays, exceptions), page natives and javac.
 `node scripts/serve.ts 8080 --like-github-pages` serves `dist/` the way GitHub
