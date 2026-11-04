@@ -356,7 +356,9 @@ export function fillElement(t: JThread, e: JObject, c: JClass, method: string, p
     const name = vm.getField(mod, "java/lang/Module", "name");
     if (name) {
       vm.setField(e, S, "moduleName", name);
-      const version = vm.shownVersion(mod);
+      // every version, as java_lang_StackTraceElement::fill_in sets it;
+      // toString leaves out the JDK's own
+      const version = mod.x?.version as string | null | undefined;
       if (version) vm.setField(e, S, "moduleVersion", vm.intern(version));
     }
   }

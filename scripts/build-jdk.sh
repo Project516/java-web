@@ -64,8 +64,25 @@ mkdir -p "$src" "$out"
 
 "$JAVA_HOME/bin/java" scripts/LinuxImage.java "$linux" "$src" "$modules" "$out"
 "$JAVA_HOME/bin/java" scripts/UndoJlink.java "$src"
+
+# java.base records a hash of each JDK module linked with it, and the JDK leaves
+# those modules' versions out of stack traces. jlink cannot hash module
+# directories, so the modules go into jmods (with fixed timestamps, so the image
+# comes out the same every time) and java.base.jmod records their hashes anew,
+# for the modules Temurin's java.base records.
+linked=$(sed -n 's/^MODULES="\(.*\)"/\1/p' "$out/release")
+hashed=$("$JAVA_HOME/bin/java" scripts/HashedModules.java "$src/java.base/module-info.class" "$linked")
 "$JAVA_HOME/bin/java" scripts/ExplodedModuleInfo.java "$src"/*/module-info.class
-"$JAVA_HOME/bin/jlink" --module-path "$src" --add-modules "$modules" --output build/jdk-linked
+jmods=build/jdk-jmods
+rm -rf "$jmods"
+mkdir -p "$jmods"
+date=2025-01-01T00:00:00Z
+for m in $linked; do
+  [ "$m" = java.base ] || "$JAVA_HOME/bin/jmod" create --date "$date" --class-path "$src/$m" "$jmods/$m.jmod"
+done
+"$JAVA_HOME/bin/jmod" create --date "$date" --class-path "$src/java.base" --module-path "$jmods" --hash-modules "$hashed" "$jmods/java.base.jmod"
+"$JAVA_HOME/bin/jlink" --module-path "$jmods" --add-modules "$modules" --output build/jdk-linked
+rm -rf "$jmods"
 mkdir -p "$out/lib"
 cp build/jdk-linked/lib/modules "$out/lib/modules"
 rm -rf build/jdk-linked
