@@ -9,7 +9,6 @@ java-web targets headless Java: console apps, libraries and javac.
 - `java.desktop`'s headless parts work: 2D geometry, image pixels, `Graphics2D`
   drawing on a `BufferedImage`, and JavaBeans. So does `java.xml`, including
   XML Schema validation and DTDs from the JDK's built-in catalog.
-- `jrt:/` URLs read the JDK's resources but not its class files.
 - `Deflater` writes valid DEFLATE streams using stored blocks. Compression
   levels and strategies currently do not reduce output size; compressed bytes
   and compression ratios differ from HotSpot's zlib output.
@@ -19,14 +18,14 @@ java-web targets headless Java: console apps, libraries and javac.
 ## Locales
 
 Locales other than English need `cheerpjInit({ localeData: true })`, or
-  `--locale-data` under Node (`localeData: true` for `runNode`). Turn it on
+  `--locale-data` under Node (`localeData: true` for `runNode`). Adding
+  `jdk.localedata` or `ALL-SYSTEM` with `--add-modules` turns it on too. Turn it on
   when a program formats numbers, dates or currencies, or prints month and day
   names, for a locale other than English: for example
   `String.format(Locale.GERMANY, ...)`, or a German default locale. Without it,
   those locales format as English. It is off by default because, once on, it
   slows the first formatting call of every program, English ones included, by
-  a few hundred milliseconds. With it on, a page also fetches the locale file
-  list (`jdk/jdk.localedata.txt`, 160 KB) at start, then only the locales it
+  up to a second on slow devices. With it on, a page reads only the locales it
   uses.
 
 ## Graphics and text

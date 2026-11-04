@@ -37,7 +37,6 @@
     "dist/boot.pack",
     "dist/jdk/*.jar",
     "dist/jdk/javac.pack",
-    "dist/jdk/jdk.localedata.txt",
     "dist/jdk/legal/"
   ],
   "publishConfig": {

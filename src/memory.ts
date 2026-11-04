@@ -34,16 +34,20 @@ export class NativeMemory {
     this.dv = new DataView(next);
   }
 
-  malloc(n: number): number {
+  malloc(n: number, alignment = ALIGN): number {
     const size = Math.max(ALIGN, Math.ceil(n / ALIGN) * ALIGN);
     const list = this.free.get(size);
-    if (list && list.length > 0) {
-      const addr = list.pop()!;
+    const reuse = list?.findIndex((addr) => addr % alignment === 0) ?? -1;
+    if (list && reuse >= 0) {
+      // the order of a free list does not matter, so the last block fills the gap
+      const addr = list[reuse];
+      list[reuse] = list[list.length - 1];
+      list.pop();
       this.sizes.set(addr, size);
       return addr;
     }
-    const addr = this.top;
-    this.top += size;
+    const addr = Math.ceil(this.top / alignment) * alignment;
+    this.top = addr + size;
     if (this.top > this.buf.byteLength) this.grow(this.top);
     this.sizes.set(addr, size);
     return addr;

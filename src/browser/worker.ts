@@ -4,7 +4,7 @@
 
 import { MemoryBackend, VFS } from "../fs.ts";
 import { JVM, SnapshotError } from "../jvm.ts";
-import { HttpBackend, addIndex, parsePack } from "./http.ts";
+import { HttpBackend, parsePack } from "./http.ts";
 import { dropSnapshot, loadSnapshot, persist, saveSnapshot } from "./idb.ts";
 import type { SnapshotImage } from "../snapshot.ts";
 import type { LibraryError, LibraryReply } from "../library.ts";
@@ -75,12 +75,6 @@ async function init(m: InitMessage) {
   userFiles.putDir("/uploads");
   vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
-  // the boot pack's index leaves jdk.localedata out; its own index adds it
-  if (m.localeData) {
-    const idx = await fetch(new URL("jdk/jdk.localedata.txt", m.runtime));
-    if (!idx.ok) throw new Error(`cannot load ${idx.url}: ${idx.status}`);
-    addIndex(pack, await idx.text());
-  }
   vfs.mount("/jdk", new HttpBackend(new URL("jdk/", m.runtime).href, pack));
   vfs.mount("/app", new HttpBackend(m.app));
   vfs.mount("/files", userFiles);
@@ -167,6 +161,7 @@ function newVm(classpath: string[], vmId: number): JVM {
     // javaProperties can set user.dir, which is then the working directory
     cwd: config!.props["user.dir"] ?? "/files",
     // System.loadLibrary would warn about native access, but its libraries are the page's JS modules
+    localeData: config!.localeData,
     props: { "java.io.tmpdir": "/tmp", "user.home": "/files", "jdk.module.enable.native.access.0": "ALL-UNNAMED", ...config!.props },
     stdout: (data) => post({ type: "out", fd: 1, data }, [data.buffer as ArrayBuffer]),
     stderr: (data) => post({ type: "out", fd: 2, data }, [data.buffer as ArrayBuffer]),

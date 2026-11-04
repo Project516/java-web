@@ -301,6 +301,8 @@ export function vmProperties(vm: JVM): string[] {
     ["java.vm.version", "25"],
     ["java.vm.info", "interpreted mode"],
     ["jdk.debug", "release"],
+    ["jdk.image.map.all", "false"],
+    ["jdk.image.use.jvm.map", "false"],
     ["sun.java.launcher", "SUN_STANDARD"],
     ["sun.nio.MaxDirectMemorySize", "-1"],
     ["sun.nio.PageAlignDirectMemory", "false"],
@@ -355,24 +357,6 @@ function* perfBuffer(t: JThread, size: number): NativeGen {
   return yield t.call(bb.methodMap.get("allocate(I)Ljava/nio/ByteBuffer;")!, size);
 }
 
-// The boot image as the JDK's jimage reader sees it. The image holds only
-// non-class resources and sits at lib/resources.jimage, not lib/modules,
-// because a lib/modules file makes the JDK and javac use image mode instead of
-// the exploded modules/ tree. The path the reader asks for stays unopened.
-function* nativeImageMap(t: JThread, path: string | null): NativeGen {
-  const vm = t.vm;
-  if (path !== `${vm.opts.javaHome}/lib/modules`) return null;
-  const data = vm.fs.read(`${vm.opts.javaHome}/lib/resources.jimage`);
-  if (!data) return null;
-  const addr = vm.mem.malloc(data.length);
-  vm.mem.u8.set(data, addr);
-  const dbb = vm.loadBoot("java/nio/DirectByteBuffer")!;
-  if (dbb.state !== INITIALIZED) yield* vm.initGen(t, dbb);
-  const buf = vm.newObject(dbb);
-  yield t.call(dbb.methodMap.get("<init>(JJ)V")!, buf, BigInt(addr), BigInt(data.length));
-  return buf;
-}
-
 // Nanoseconds since the epoch, finer than Date.now(). The performance clock
 // does not follow changes to the system clock, so it is used only while the
 // two agree.
@@ -406,7 +390,7 @@ export const natives: Natives = {
   "jdk/internal/loader/RawNativeLibraries.unload0(Ljava/lang/String;J)V": () => undefined,
   "jdk/internal/perf/Perf.createLong(Ljava/lang/String;IIJ)Ljava/nio/ByteBuffer;": (t) => perfBuffer(t, 8),
   "jdk/internal/perf/Perf.createByteArray(Ljava/lang/String;II[BI)Ljava/nio/ByteBuffer;": (t, [, , , , , max]) => perfBuffer(t, max),
-  "jdk/internal/jimage/NativeImageBuffer.getNativeMap(Ljava/lang/String;)Ljava/nio/ByteBuffer;": (t, [path]) => nativeImageMap(t, jstr(t, path)),
+  "jdk/internal/jimage/NativeImageBuffer.getNativeMap(Ljava/lang/String;)Ljava/nio/ByteBuffer;": () => null,
   "jdk/internal/perf/Perf.highResCounter()J": () => BigInt(Math.round(performance.now() * 1e6)),
   "jdk/internal/perf/Perf.highResFrequency()J": () => 1_000_000_000n,
   "jdk/internal/misc/VM.initialize()V": () => undefined,

@@ -12,6 +12,12 @@ export interface Pack {
   lazy: Map<string, string>;
   // path -> the image file holding it and its offset there
   offsets: Map<string, { image: string; at: number }>;
+  // path -> parts of a file read in ranges (the JDK image), as [offset, bytes]
+  // sorted by offset
+  ranges: Map<string, [number, Uint8Array][]>;
+  // path -> a lazily fetched pack with more parts of it, and their [start, end)
+  // offsets in pairs
+  lazyRanges: Map<string, { name: string; spans: number[] }>;
 }
 
 const utf8 = new TextDecoder();
@@ -19,8 +25,11 @@ const utf8 = new TextDecoder();
 // Pack layout: repeated [u16 path length][path][u32 size][bytes]. In the boot
 // pack, "/index.prefix" holds prefix-coded "d path" and "f path size
 // [image:offset] [pack]" lines. A file with an offset is read in ranges from
-// <image>.jar, one per module; a named pack is <name>.pack next to it and is
-// fetched whole the first time one of its files is read. Images are .jar
+// <image>.jar; a named pack is <name>.pack next to it and is
+// fetched whole the first time one of its files is read. An entry named
+// "@<offset>:<path>" holds part of a file read in ranges, and one named
+// "@lazy:<pack>:<path>" lists, as u32 start and end pairs, the parts of it
+// that pack holds. Images are .jar
 // files because static hosts such as GitHub Pages compress other types and
 // then apply Range to the compressed bytes; they leave .jar alone.
 export function parsePack(buf: ArrayBuffer): Pack {
@@ -35,45 +44,73 @@ export function parsePack(buf: ArrayBuffer): Pack {
     files.set(path, u8.subarray(p + 4, p + 4 + size));
     p += 4 + size;
   }
-  const pack: Pack = { files, index: null, lazy: new Map(), offsets: new Map() };
+  const pack: Pack = { files, index: null, lazy: new Map(), offsets: new Map(), ranges: new Map(), lazyRanges: new Map() };
+  for (const [p, data] of files) {
+    if (p[0] !== "@") continue;
+    files.delete(p);
+    const colon = p.indexOf(":");
+    if (p.startsWith("@lazy:")) {
+      const at = p.indexOf(":", 6);
+      const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const spans = Array.from({ length: data.length / 4 }, (_, i) => dv.getUint32(i * 4));
+      pack.lazyRanges.set(p.slice(at + 1), { name: p.slice(6, at), spans });
+    } else {
+      const path = p.slice(colon + 1);
+      let parts = pack.ranges.get(path);
+      if (!parts) pack.ranges.set(path, (parts = []));
+      parts.push([Number(p.slice(1, colon)), data]);
+    }
+  }
+  for (const parts of pack.ranges.values()) parts.sort((a, b) => a[0] - b[0]);
   const raw = files.get("/index.prefix") ?? files.get("/index.txt");
   if (raw) {
-    pack.index = new PackIndex(pack);
+    pack.index = new PackIndex();
     addIndex(pack, utf8.decode(raw), files.has("/index.prefix"));
     files.delete("/index.txt");
     files.delete("/index.prefix");
-    for (const [p, data] of files) {
-      if (!p.startsWith("/index/")) continue;
-      pack.index.modules.set(p.slice(7, -7), data);
-      files.delete(p);
-    }
   }
   return pack;
 }
 
-// A pack's index. A module's file lines ("/index/<module>.prefix") are parsed
-// the first time a path in that module is looked up, since a start reads few
-// of the image's modules.
+// Adds a lazily fetched pack's files and ranges to pack.
+export function addPack(pack: Pack, more: Pack) {
+  for (const [p, d] of more.files) pack.files.set(p, d);
+  for (const [p, parts] of more.ranges) {
+    const all = [...(pack.ranges.get(p) ?? []), ...parts].sort((a, b) => a[0] - b[0]);
+    pack.ranges.set(p, all);
+  }
+}
+
+// Bytes [off, off + len) of path if one packed part holds them all.
+export function packedRange(pack: Pack, path: string, off: number, len: number): Uint8Array | undefined {
+  const parts = pack.ranges.get(path);
+  if (!parts) return undefined;
+  let lo = 0, hi = parts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (parts[mid][0] <= off) lo = mid;
+    else hi = mid - 1;
+  }
+  const [start, data] = parts[lo];
+  return start <= off && off + len <= start + data.length ? data.subarray(off - start, off - start + len) : undefined;
+}
+
+// The lazy pack holding byte off of path, if it has not been added yet.
+function lazyRangePack(pack: Pack, path: string, off: number): string | undefined {
+  const lazy = pack.lazyRanges.get(path);
+  if (!lazy) return undefined;
+  for (let i = 0; i < lazy.spans.length; i += 2) if (lazy.spans[i] <= off && off < lazy.spans[i + 1]) return lazy.name;
+  return undefined;
+}
+
+// A pack's index, with each directory's names listed once they are asked for.
 export class PackIndex extends Map<string, number> {
-  readonly modules = new Map<string, Uint8Array>();
-  private readonly pack: Pack;
   // directory -> names in it, built for the entries there were at the time
   private dirs: Map<string, string[]> | null = null;
   private dirsSize = 0;
 
-  constructor(pack: Pack) {
+  constructor() {
     super([["/", -1]]);
-    this.pack = pack;
-  }
-
-  override get(path: string) {
-    this.load(path);
-    return super.get(path);
-  }
-
-  override has(path: string) {
-    this.load(path);
-    return super.has(path);
   }
 
   // The names in each directory. Entries are only ever added, so a change in
@@ -94,18 +131,6 @@ export class PackIndex extends Map<string, number> {
     return dirs;
   }
 
-  // Parses the lines of the module path is in. The module directories
-  // themselves are in the main index.
-  load(path: string) {
-    if (this.modules.size === 0 || !path.startsWith("/modules/")) return;
-    const end = path.indexOf("/", 9);
-    if (end < 0) return;
-    const module = path.slice(9, end);
-    const raw = this.modules.get(module);
-    if (!raw) return;
-    this.modules.delete(module);
-    addIndex(this.pack, utf8.decode(raw), true);
-  }
 }
 
 // Adds index lines to a pack that has an index. Runs on every start, so it
@@ -180,7 +205,7 @@ export class HttpBackend implements Backend {
   // 64 KB blocks of files read in parts, by path
   private blocks = new Map<string, Map<number, Uint8Array>>();
 
-  constructor(base: string, pack: Pack = { files: new Map(), index: null, lazy: new Map(), offsets: new Map() }) {
+  constructor(base: string, pack: Pack = { files: new Map(), index: null, lazy: new Map(), offsets: new Map(), ranges: new Map(), lazyRanges: new Map() }) {
     this.base = base.endsWith("/") ? base.slice(0, -1) : base;
     this.pack = pack;
   }
@@ -237,7 +262,7 @@ export class HttpBackend implements Backend {
     if (name !== undefined && !this.fetchedPacks.has(name)) {
       this.fetchedPacks.add(name);
       const xhr = this.request("GET", `/${name}.pack`);
-      if (xhr) for (const [p, d] of parsePack(xhr.response as ArrayBuffer).files) this.pack.files.set(p, d);
+      if (xhr) addPack(this.pack, parsePack(xhr.response as ArrayBuffer));
       return this.read(path);
     }
     if (this.cache.has(path)) return this.cache.get(path)!;
@@ -255,6 +280,15 @@ export class HttpBackend implements Backend {
     const whole = this.pack.files.get(path) ?? this.cache.get(path);
     if (whole) return whole.subarray(off, off + len);
     if (len === 0) return new Uint8Array(0);
+    const part = packedRange(this.pack, path, off, len);
+    if (part) return part;
+    const lazy = lazyRangePack(this.pack, path, off);
+    if (lazy !== undefined && !this.fetchedPacks.has(lazy)) {
+      this.fetchedPacks.add(lazy);
+      const xhr = this.request("GET", `/${lazy}.pack`);
+      if (xhr) addPack(this.pack, parsePack(xhr.response as ArrayBuffer));
+      return this.readRange(path, off, len);
+    }
     // has() parses the path's module first; image files themselves are not indexed
     const at = this.pack.index?.has(path) ? this.pack.offsets.get(path) : undefined;
     if (at !== undefined) return this.readRange(at.image, at.at + off, len);
@@ -317,7 +351,5 @@ export class HttpBackend implements Backend {
 // The names in a directory of a pack index, or null if path is not one.
 export function listIndex(idx: PackIndex, path: string): string[] | null {
   if (idx.get(path) !== -1) return null;
-  const prefix = path === "/" ? "/" : path + "/";
-  idx.load(prefix);
   return [...(idx.children().get(path) ?? [])];
 }

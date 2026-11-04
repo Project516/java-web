@@ -14,7 +14,7 @@ import { Bridge, nativeTable } from "./bridge.ts";
 import { JVM, LM_CLASS, LM_JAR, SnapshotError } from "./jvm.ts";
 import type { SnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
-import { ImageBackend } from "./image.ts";
+import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { PendingThrow } from "./thread.ts";
 import { setMaxHeap } from "./runtime.ts";
@@ -68,6 +68,27 @@ export class NodeBackend implements Backend {
     } catch {
       return null;
     }
+  }
+  // Other open files keep their buffered contents even if the host removes them.
+  canReadRange(p: string) { return !this.writable && p === "/lib/modules"; }
+  readRange(p: string, off: number, len: number): Uint8Array | null {
+    const image = p === "/lib/modules" && !this.writable;
+    try {
+      const fd = image ? imageFd(this.host(p)) : fs.openSync(this.host(p), "r");
+      try {
+        if (!image && !fs.fstatSync(fd).isFile()) return null;
+        const out = new Uint8Array(len);
+        let n = 0;
+        while (n < len) {
+          const got = fs.readSync(fd, out, n, len - n, off + n);
+          if (!got) break;
+          n += got;
+        }
+        return out.subarray(0, n);
+      } finally {
+        if (!image) fs.closeSync(fd);
+      }
+    } catch { return null; }
   }
   list(p: string) {
     if (!this.writable && this.lists.has(p)) return this.lists.get(p)!;
@@ -171,7 +192,7 @@ export interface NodeRunOptions {
   jar?: string;
   args?: string[];
   props?: Record<string, string>;
-  // an exploded JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
+  // a JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
   jdk?: string;
   debug?: boolean;
   stdout?: (b: Uint8Array) => void;
@@ -324,8 +345,7 @@ function nodeVm(o: NodeRunOptions): JVM {
   if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
     throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
   }
-  vfs.mount("/jdk", packaged ? new ImageBackend(here, o.localeData) : new NodeBackend(jdk));
-  if (!o.localeData) vfs.hide("/jdk/modules/jdk.localedata");
+  vfs.mount("/jdk", packaged ? new ImageBackend(here) : new NodeBackend(jdk));
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
   const natives = o.natives ?? {};
@@ -339,6 +359,7 @@ function nodeVm(o: NodeRunOptions): JVM {
     ...(snapDir && build ? { snapshots: snapshotCache(snapDir, build) } : {}),
     fs: vfs,
     javaHome: "/jdk",
+    localeData: o.localeData,
     classpath,
     props: { "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props },
     cwd: toVfs(process.cwd()),

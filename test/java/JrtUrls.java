@@ -60,6 +60,10 @@ public class JrtUrls {
     var fs = FileSystems.getFileSystem(URI.create("jrt:/"));
     Path catalog = fs.getPath("/modules/java.xml/jdk/xml/internal/jdkcatalog/JDKCatalog.xml");
     System.out.println("jrt fs " + Files.size(catalog) + " bytes");
+    try (var entries = Files.list(fs.getPath("/modules/java.xml"))) {
+      System.out.println("java.xml entries " + entries.map(p -> p.getFileName().toString()).sorted().toList());
+    }
+    System.out.println("module " + DocumentBuilderFactory.class.getModule().getName());
 
     // the DTD comes from the JDK's built-in catalog, not the network
     String xhtml = "<?xml version=\"1.0\"?>\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "

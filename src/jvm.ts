@@ -7,6 +7,7 @@ import type { ClassFile } from "./classfile.ts";
 import { deliver, raise, runThread } from "./interp.ts";
 import { NativeMemory } from "./memory.ts";
 import type { VFS } from "./fs.ts";
+import { JImage } from "./jimage.ts";
 import {
   ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_NATIVE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
   ACC_STATIC, ACC_SUPER, ACC_VARARGS, ERRONEOUS, INITIALIZED, INITIALIZING, JArray, JClass, JField,
@@ -42,6 +43,7 @@ export interface JvmOptions {
   // VFS path of java.home (the output of scripts/build-jdk.sh)
   javaHome: string;
   classpath?: string[];
+  localeData?: boolean;
   props?: Record<string, string>;
   stdout: (b: Uint8Array) => void;
   stderr: (b: Uint8Array) => void;
@@ -109,6 +111,7 @@ export class JVM {
   readonly fs: VFS;
   readonly mem = new NativeMemory();
   readonly boot = new Map<string, JClass>();
+  private readonly image: JImage | null;
   // package -> module, for boot classes
   readonly bootPackages = new Map<string, string>();
   // Module objects defined to the boot loader, by name
@@ -165,17 +168,31 @@ export class JVM {
     }
     this.exited = new Promise((r) => (this.exitResolve = r));
     for (const [k, fn] of Object.entries(builtinNatives)) this.natives.set(k, fn);
+    const imagePath = `${opts.javaHome}/lib/modules`;
+    this.image = this.fs.stat(imagePath) ? new JImage(this.fs, imagePath) : null;
     const index = this.fs.read(`${opts.javaHome}/lib/packages.txt`);
     if (!index) throw new Error(`no JDK at ${opts.javaHome}; run pnpm jdk`);
-    // modules the file system hides are left out
+    // Locale data is left out as --limit-modules would leave it, unless asked
+    // for, or named by --add-modules (by name or as ALL-SYSTEM). A limit given
+    // by the caller keeps it only if it names it, since no module requires it.
+    const addmods = [...this.props].filter(([k]) => k.startsWith("jdk.module.addmods.")).flatMap(([, v]) => v.split(","));
+    const limit = this.props.get("jdk.module.limitmods");
+    const noLocales = this.image !== null && (limit !== undefined ? !limit.split(",").includes("jdk.localedata")
+      : !opts.localeData && !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata"));
     const present = new Map<string, boolean>();
     for (const line of new TextDecoder().decode(index).split("\n")) {
       const sp = line.indexOf(" ");
       if (sp <= 0) continue;
       const mod = line.slice(0, sp);
       let has = present.get(mod);
-      if (has === undefined) present.set(mod, (has = this.fs.stat(`${opts.javaHome}/modules/${mod}`) !== null));
-      if (has) this.bootPackages.set(line.slice(sp + 1), mod);
+      if (has === undefined) present.set(mod, (has = this.image !== null || this.fs.stat(`${opts.javaHome}/modules/${mod}`) !== null));
+      if (has && !(noLocales && mod === "jdk.localedata")) this.bootPackages.set(line.slice(sp + 1), mod);
+    }
+    if (noLocales && limit === undefined) {
+      const release = this.fs.read(`${opts.javaHome}/release`);
+      const modules = release && /(?:^|\n)MODULES="([^"]+)"/.exec(new TextDecoder().decode(release));
+      if (!modules) throw new Error("JDK release has no module list");
+      this.props.set("jdk.module.limitmods", modules[1].split(" ").filter((m) => m !== "jdk.localedata").join(","));
     }
   }
 
@@ -212,7 +229,7 @@ export class JVM {
     const i = name.lastIndexOf("/");
     const module = this.bootPackages.get(i < 0 ? "" : name.slice(0, i));
     if (!module) return null;
-    const bytes = this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
+    const bytes = this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
     if (!bytes) return null;
     const cf = parseClass(bytes);
     const superclass = cf.superName ? this.loadBootOrFail(cf.superName) : null;
@@ -682,13 +699,10 @@ export class JVM {
   }
 
   // ModuleEntry::should_show_version: the JDK's own modules show no version.
-  // They are in the image's modules/ directory here, at jrt:/ on HotSpot.
   shownVersion(mod: JObject): string | null {
     const version = mod.x?.version as string | null | undefined;
     if (!version || !this.getField(mod, "java/lang/Module", "name")) return null;
-    const image = `file://${this.opts.javaHome}/modules/`;
-    const loc = (mod.x.location as string | null) ?? "";
-    const jrt = loc.startsWith(image) ? `jrt:/${loc.slice(image.length)}` : loc;
+    const jrt = (mod.x.location as string | null) ?? "";
     const loader = this.getField(mod, "java/lang/Module", "loader") as JObject | null;
     const platform = loader?.cls.name === "jdk/internal/loader/ClassLoaders$PlatformClassLoader";
     const builtin = !loader || platform || loader.cls.name === "jdk/internal/loader/ClassLoaders$AppClassLoader";

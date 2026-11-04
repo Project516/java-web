@@ -9,6 +9,12 @@ import java.util.Locale;
 // Formats and names from jdk.localedata, for locales other than English.
 public class Locales {
   public static void main(String[] args) {
+    try {
+      Class.forName("sun.util.resources.cldr.ext.CurrencyNames_ru_KZ");
+      System.out.println("locale class present");
+    } catch (ClassNotFoundException e) {
+      System.out.println("locale class absent");
+    }
     LocalDate day = LocalDate.of(2026, 10, 30);
     for (Locale l : new Locale[] {Locale.US, Locale.GERMANY, Locale.FRANCE, Locale.JAPAN, Locale.forLanguageTag("pt-BR")}) {
       System.out.println(l + " " + String.format(l, "%,.2f", 1234567.891) + " | "

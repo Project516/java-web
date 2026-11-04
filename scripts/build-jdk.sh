@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Builds build/jdk, the java.home the JVM runs on: the Linux x64 JDK 25 class
-# library in the exploded layout (modules/<module>/...) instead of a
-# lib/modules jimage, so classes and resources are plain files.
+# Builds a linked Linux x64 java.home for the VM on every host.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,12 +49,12 @@ mkdir -p build
 ln -sfn "$JAVA_HOME" build/hotspot
 
 # The image comes from the Linux x64 JDK on every host, since the natives are
-# the Linux ones. Temurin ships no jmods, so jlink cannot link it: the modules
-# are extracted from its lib/modules and selected by scripts/LinuxImage.java.
+# the Linux ones. Extract its modules for jlink and restore their original
+# contents before linking.
 linux=$(jdk_home x64_linux)
 src=build/jdk-src
-rm -rf "$src" "$out"
-mkdir -p "$src" "$out/modules"
+rm -rf "$src" "$out" build/jdk-linked
+mkdir -p "$src" "$out"
 "$JAVA_HOME/bin/jimage" extract --dir "$src" "$linux/lib/modules"
 
 # javaweb.tls is java-web's own TLS pass-through provider (scripts/tls), built
@@ -65,18 +63,35 @@ mkdir -p "$src" "$out/modules"
 "$JAVA_HOME/bin/javac" -d "$src/javaweb.tls" $(find scripts/tls -name '*.java')
 
 "$JAVA_HOME/bin/java" scripts/LinuxImage.java "$linux" "$src" "$modules" "$out"
+"$JAVA_HOME/bin/java" scripts/UndoJlink.java "$src"
+
+# java.base records a hash of each JDK module linked with it, and the JDK leaves
+# those modules' versions out of stack traces. jlink cannot hash module
+# directories, so the modules go into jmods (with fixed timestamps, so the image
+# comes out the same every time) and java.base.jmod records their hashes anew,
+# for the modules Temurin's java.base records.
+linked=$(sed -n 's/^MODULES="\(.*\)"/\1/p' "$out/release")
+hashed=$("$JAVA_HOME/bin/java" scripts/HashedModules.java "$src/java.base/module-info.class" "$linked")
+"$JAVA_HOME/bin/java" scripts/ExplodedModuleInfo.java "$src"/*/module-info.class
+jmods=build/jdk-jmods
+rm -rf "$jmods"
+mkdir -p "$jmods"
+date=2025-01-01T00:00:00Z
+for m in $linked; do
+  [ "$m" = java.base ] || "$JAVA_HOME/bin/jmod" create --date "$date" --class-path "$src/$m" "$jmods/$m.jmod"
+done
+"$JAVA_HOME/bin/jmod" create --date "$date" --class-path "$src/java.base" --module-path "$jmods" --hash-modules "$hashed" "$jmods/java.base.jmod"
+"$JAVA_HOME/bin/jlink" --module-path "$jmods" --add-modules "$modules" --output build/jdk-linked
+rm -rf "$jmods"
+mkdir -p "$out/lib"
+cp build/jdk-linked/lib/modules "$out/lib/modules"
+rm -rf build/jdk-linked
+
+# Index the packages in the linked modules.
+(cd "$src" && export LC_ALL=C && for m in $(sed -n 's/^MODULES="\(.*\)"/\1/p' "$OLDPWD/$out/release"); do
+  find "$m" -mindepth 2 -name '*.class' | sed 's|/[^/]*$||' | sort -u | sed "s|^$m/||;s|^|$m |"
+done) > "$out/lib/packages.txt"
 rm -rf "$src"
-
-# Without the generated SystemModules classes the JDK finds its modules by
-# reading module-info.class files from the exploded tree.
-"$JAVA_HOME/bin/java" scripts/ExplodedModuleInfo.java "$out"/modules/*/module-info.class
-
-# jrt: URLs read their resources through the jimage reader. Classes stay in
-# modules/, so the image holds only the other resources. It is not named
-# lib/modules, which would switch the JDK to image mode.
-work=$(mktemp -d "$PWD/build/work.XXXXXX")
-"$JAVA_HOME/bin/java" scripts/ResourceImage.java "$out/modules" "$work" "$out/lib/resources.jimage"
-rm -rf "$work"
 
 # The same provider list with JavaWebTLS first, for java.security.properties
 sec=$out/conf/security
@@ -109,11 +124,6 @@ fi
 mkdir -p "$out/lib/fonts"
 cp "$font_home/ttf/DejaVuSans.ttf" "$out/lib/fonts/"
 cp "$font_home/LICENSE" "$out/legal/java.desktop/dejavu-fonts.txt"
-
-# module -> packages index, so the boot loader can find a class without probing.
-(cd "$out/modules" && export LC_ALL=C && for m in *; do
-  find "$m" -mindepth 2 -name '*.class' | sed 's|/[^/]*$||' | sort -u | sed "s|^$m/||;s|^|$m |"
-done) > "$out/lib/packages.txt"
 
 # a digest of the whole image, which boot snapshots are made for
 (cd "$out" && node -e '
