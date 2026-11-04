@@ -388,7 +388,7 @@ export const natives: Natives = {
     return ok === false ? ERRNO_NUMBER[t.vm.fs.chmodError(abs) ?? "EIO"] ?? ERRNO_NUMBER.EIO : 0;
   },
   // [fd, errno]; fd 0 when the file could not be opened or locked
-  "java/util/prefs/FileSystemPreferences.lockFile0(Ljava/lang/String;IZ)[I": (t, [name, , shared]) => {
+  "java/util/prefs/FileSystemPreferences.lockFile0(Ljava/lang/String;IZ)[I": (t, [name, mode, shared]) => {
     const abs = resolvePath(t, t.vm.jsString(name));
     let fd: number;
     try {
@@ -396,6 +396,8 @@ export const natives: Natives = {
     } catch {
       return intPair(t, 0, t.vm.fs.stat(abs) ? ERRNO_NUMBER.EACCES : ERRNO_NUMBER.ENOENT);
     }
+    // the requested mode, as HotSpot's fchmod gives it; a failure is ignored there too
+    if (!shared) t.vm.fs.chmod(abs, (m) => (m & ~0o7777) | (mode & 0o7777));
     const { held, fds } = prefsLocks(t);
     const now = held.get(abs) ?? 0;
     if (shared ? now < 0 : now !== 0) {

@@ -23,6 +23,13 @@ public class Prefs {
       node.flush();
       node.sync();
       System.out.println(node.get("greeting", "?") + " " + node.getInt("count", 0) + " " + String.join(",", node.keys()));
+      // what reached the backing file, read apart from the cached node
+      try (var files = Files.walk(root)) {
+        for (Path f : files.filter(f -> f.endsWith(Path.of("java-web-test", "prefs.xml"))).toList()) {
+          System.out.println(root.relativize(f));
+          for (String line : Files.readAllLines(f)) if (line.contains("<entry")) System.out.println(line.strip());
+        }
+      }
     } finally {
       node.removeNode();
       Preferences.userRoot().flush();
