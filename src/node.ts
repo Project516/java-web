@@ -257,6 +257,7 @@ function buildId(vfs: VFS, packaged: boolean): string | null {
   if (!image) return null;
   const h = createHash("sha256").update(image);
   if (typeof JAVA_WEB_BUILD === "string") return h.update(JAVA_WEB_BUILD).digest("hex");
+  // unbundled, this file runs as src/node.ts, next to the rest of the VM's sources
   const src = path.dirname(fileURLToPath(import.meta.url));
   for (const f of fs.readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts")).sort()) {
     h.update(f).update(fs.readFileSync(path.join(src, f)));
