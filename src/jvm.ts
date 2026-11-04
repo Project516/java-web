@@ -180,7 +180,9 @@ export class JVM {
       const mod = line.slice(0, sp);
       let has = present.get(mod);
       if (has === undefined) present.set(mod, (has = this.image !== null || this.fs.stat(`${opts.javaHome}/modules/${mod}`) !== null));
-      if (has) this.bootPackages.set(line.slice(sp + 1), mod);
+      if (has && !(this.image && !opts.localeData && !this.props.has("jdk.module.limitmods") && mod === "jdk.localedata")) {
+        this.bootPackages.set(line.slice(sp + 1), mod);
+      }
     }
     if (this.image && !opts.localeData && !this.props.has("jdk.module.limitmods")) {
       const release = this.fs.read(`${opts.javaHome}/release`);
