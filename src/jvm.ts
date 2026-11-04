@@ -117,7 +117,8 @@ export class JVM {
   private natives = new Map<string, NativeFn>();
   private interned = new Map<string, JObject>();
   readonly prims = new Map<string, JClass>();
-  private slots = new Map<string, number>();
+  // owner -> field name -> slot; two lookups of literal strings beat building a key
+  private slots = new Map<string, Map<string, number>>();
   readonly threads = new Set<JThread>();
   private runQueue: JThread[] = [];
   private queued = new Set<JThread>();
@@ -716,14 +717,14 @@ export class JVM {
   // ---- fields by name ------------------------------------------------------
 
   slotOf(owner: string, name: string): number {
-    const key = owner + "." + name;
-    let s = this.slots.get(key);
+    let byName = this.slots.get(owner);
+    if (!byName) this.slots.set(owner, (byName = new Map()));
+    let s = byName.get(name);
     if (s === undefined) {
-      const c = this.loadBootOrFail(owner);
-      const f = c.findField(name);
-      if (!f) throw new Error(`no field ${key}`);
+      const f = this.loadBootOrFail(owner).findField(name);
+      if (!f) throw new Error(`no field ${owner}.${name}`);
       s = f.slot;
-      this.slots.set(key, s);
+      byName.set(name, s);
     }
     return s;
   }
