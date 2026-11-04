@@ -82,7 +82,13 @@ function fillAttrs(t: JThread, attrs: JObject, p: string): number {
 function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: number, size = st.size, nlink = 1) {
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
   const mode = st.device ? S_IFCHR | 0o666 : (st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
-  const sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
+  let sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
+  if (st.mtimeNs !== undefined) {
+    sec = st.mtimeNs / 1_000_000_000n;
+    nsec = st.mtimeNs % 1_000_000_000n;
+    // before 1970: whole seconds round down, nanoseconds stay positive
+    if (nsec < 0n) [sec, nsec] = [sec - 1n, nsec + 1_000_000_000n];
+  }
   vm.setField(attrs, A, "st_mode", mode);
   vm.setField(attrs, A, "st_ino", BigInt(ino));
   vm.setField(attrs, A, "st_dev", 1n);
@@ -215,11 +221,11 @@ export const natives: Natives = {
   [`${N}utimensat0(IJJJI)V`]: (t, [, p, , mtime]) => {
     const abs = path(t, p);
     if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    if (!setMtime(t, abs, Number(mtime) / 1e6)) unixError(EROFS);
+    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime))) unixError(EROFS);
   },
   [`${N}futimens0(IJJ)V`]: (t, [fd, , mtime]) => {
     const f = fileOf(t, fd);
-    if (!setMtime(t, f.path, Number(mtime) / 1e6)) unixError(EROFS);
+    if (!setMtime(t, f.path, Number(mtime) / 1e6, BigInt(mtime))) unixError(EROFS);
   },
   [`${N}opendir0(J)J`]: (t, [p]) => {
     const abs = path(t, p);

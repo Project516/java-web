@@ -2113,7 +2113,6 @@ java/nio/file/Files/CopyToNonDefaultFS.java
 java/nio/file/Files/CreateDirectories.java
 java/nio/file/Files/CustomOptions.java
 java/nio/file/Files/FileAttributes.java
-java/nio/file/Files/InterruptCopy.java
 java/nio/file/Files/Links.java
 java/nio/file/Files/Misc.java
 java/nio/file/Files/Mismatch.java

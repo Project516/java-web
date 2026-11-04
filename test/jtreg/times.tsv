@@ -3393,7 +3393,6 @@
 1201	java/nio/channels/DatagramChannel/NoSender.java
 1187	java/nio/channels/Pipe/NonBlocking.java
 1178	java/nio/channels/DatagramChannel/IsConnected.java
-1157	java/nio/file/Files/InterruptCopy.java
 1150	java/net/ResponseCache/B6181108.java
 1143	java/net/URL/TestRFC2732.java
 1143	java/lang/annotation/typeAnnotations/TestObjectMethods.java
