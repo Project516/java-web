@@ -47,11 +47,11 @@ const files = (dir: string, ext: string) => readdirSync(dir).filter((f) => f.end
 // saving again would rename a new one over it.
 function age(file: string) {
   utimesSync(file, new Date(0), new Date(0));
-  return statSync(file).ino;
+  return statSync(file, { bigint: true }).ino;
 }
-const loaded = (file: string, ino: number) => {
-  const s = statSync(file);
-  return s.mtimeMs > 0 && s.ino === ino;
+const loaded = (file: string, ino: bigint) => {
+  const s = statSync(file, { bigint: true });
+  return s.mtimeMs > 0n && s.ino === ino;
 };
 
 test("a snapshot is taken on the second boot and restored on the third", async () => {
