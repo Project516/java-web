@@ -8,17 +8,22 @@ import { listIndex, packedRange, parsePack } from "./browser/http.ts";
 import type { Pack } from "./browser/http.ts";
 import type { Backend, Stat } from "./fs.ts";
 
-// The JDK image is read for every boot class, by every VM in the process, so
-// each image file stays open once opened.
+// The JDK image is read for every boot class, so each image file stays open
+// once opened, shared by the VMs that read it. A VM keeps the descriptor it
+// started with: an upgrade can replace the file while VMs that read its index
+// are still running, and new VMs then open the new file.
 const imageFds = new Map<string, number>();
 export function imageFd(file: string): number {
-  let fd = imageFds.get(file);
-  if (fd === undefined) imageFds.set(file, (fd = fs.openSync(file, "r")));
+  const key = `${file}\0${fs.statSync(file).ino}`;
+  let fd = imageFds.get(key);
+  if (fd === undefined) imageFds.set(key, (fd = fs.openSync(file, "r")));
   return fd;
 }
 
 export class ImageBackend implements Backend {
   readonly writable = false;
+  // this VM's descriptor of each image file
+  private readonly fds = new Map<string, number>();
   private readonly dir: string;
   private readonly pack: Pack;
 
@@ -55,7 +60,8 @@ export class ImageBackend implements Backend {
     const out = new Uint8Array(len);
     let n = 0;
     try {
-      const fd = imageFd(path.join(this.dir, "jdk", at.image));
+      let fd = this.fds.get(at.image);
+      if (fd === undefined) this.fds.set(at.image, (fd = imageFd(path.join(this.dir, "jdk", at.image))));
       while (n < len) {
         const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
         if (got === 0) break;

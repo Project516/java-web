@@ -71,10 +71,12 @@ export class NodeBackend implements Backend {
   }
   // Other open files keep their buffered contents even if the host removes them.
   canReadRange(p: string) { return !this.writable && p === "/lib/modules"; }
+  // this VM's descriptor of the JDK image
+  private imageFd: number | undefined;
   readRange(p: string, off: number, len: number): Uint8Array | null {
     const image = p === "/lib/modules" && !this.writable;
     try {
-      const fd = image ? imageFd(this.host(p)) : fs.openSync(this.host(p), "r");
+      const fd = image ? (this.imageFd ??= imageFd(this.host(p))) : fs.openSync(this.host(p), "r");
       try {
         if (!image && !fs.fstatSync(fd).isFile()) return null;
         const out = new Uint8Array(len);
