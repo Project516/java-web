@@ -3,7 +3,7 @@
 // dist/ is built.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -60,6 +60,25 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(b.read("/lib/cut"), null);
     rmSync(join(dir, "jdk", "image.jar"));
     assert.throws(() => new ImageBackend(dir), /no packaged JDK image/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a VM keeps reading the image it started with when an upgrade replaces it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jw-image-"));
+  try {
+    mkdirSync(join(dir, "jdk"));
+    writeFileSync(join(dir, "jdk", "image.jar"), "OLD!");
+    writeFileSync(join(dir, "boot.pack"), pack([["/index.txt", "d /lib\nf /lib/x 4 image:0"]]));
+    const text = (d: Uint8Array | null) => d && new TextDecoder().decode(d);
+    const before = new ImageBackend(dir);
+    assert.equal(text(before.read("/lib/x")), "OLD!");
+    // as a package manager replaces a file: a new one renamed over it
+    writeFileSync(join(dir, "jdk", "image.new"), "NEW!");
+    renameSync(join(dir, "jdk", "image.new"), join(dir, "jdk", "image.jar"));
+    assert.equal(text(new ImageBackend(dir).read("/lib/x")), "NEW!");
+    assert.equal(text(before.readRange("/lib/x", 0, 4)), "OLD!");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
