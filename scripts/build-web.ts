@@ -181,8 +181,18 @@ function writePack(file: string, entries: [string, Uint8Array][]) {
   return `${(size / 1024).toFixed(0)} KB, ${entries.length} files`;
 }
 
+let previous = "";
+const compactIndex = lines.map((line) => {
+  let n = 0;
+  while (n < line.length && line[n] === previous[n]) n++;
+  // Keep surrogate pairs together when encoding the suffix as UTF-8.
+  if (n > 0 && line.charCodeAt(n - 1) >= 0xd800 && line.charCodeAt(n - 1) <= 0xdbff) n--;
+  const result = `${n} ${line.slice(n)}`;
+  previous = line;
+  return result;
+}).join("\n");
 const boot = writePack(join(dist, "boot.pack"), [
-  ["/index.txt", enc.encode(lines.join("\n"))],
+  ["/index.prefix", enc.encode(compactIndex)],
   ...[...recorder.seen].sort().map((p): [string, Uint8Array] => [p, recorder.read(p)!]),
 ]);
 const javacPack = writePack(join(dist, "jdk", "javac.pack"), javacFiles.map((p) => [p, javacRecorder.read(p)!]));

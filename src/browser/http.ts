@@ -15,7 +15,7 @@ export interface Pack {
 }
 
 // Pack layout: repeated [u16 path length][path][u32 size][bytes]. In the boot
-// pack, a file named "/index.txt" holds "d path" and "f path size
+// pack, "/index.prefix" holds prefix-coded "d path" and "f path size
 // [image:offset] [pack]" lines. A file with an offset is read in ranges from
 // <image>.jar, one per module; a named pack is <name>.pack next to it and is
 // fetched whole the first time one of its files is read. Images are .jar
@@ -35,18 +35,25 @@ export function parsePack(buf: ArrayBuffer): Pack {
     p += 4 + size;
   }
   const pack: Pack = { files, index: null, lazy: new Map(), offsets: new Map() };
-  const raw = files.get("/index.txt");
+  const raw = files.get("/index.prefix") ?? files.get("/index.txt");
   if (raw) {
     pack.index = new Map([["/", -1]]);
-    addIndex(pack, dec.decode(raw));
+    addIndex(pack, dec.decode(raw), files.has("/index.prefix"));
     files.delete("/index.txt");
+    files.delete("/index.prefix");
   }
   return pack;
 }
 
-// Adds index lines, as in /index.txt, to a pack that has an index.
-export function addIndex(pack: Pack, text: string) {
-  for (const line of text.split("\n")) {
+// Adds index lines to a pack that has an index.
+export function addIndex(pack: Pack, text: string, prefix = false) {
+  let previous = "";
+  for (let line of text.split("\n")) {
+    if (prefix) {
+      const space = line.indexOf(" ");
+      line = previous.slice(0, Number(line.slice(0, space))) + line.slice(space + 1);
+      previous = line;
+    }
     const [kind, path, size, ...rest] = line.split(" ");
     if (kind === "d") pack.index!.set(path, -1);
     else if (kind === "f") {
@@ -121,7 +128,10 @@ export class HttpBackend implements Backend {
     const known = this.cache.get(path);
     let st: Stat | null = null;
     if (known) st = { dir: false, size: known.length, mtime: 0 };
-    else {
+    else if (path.endsWith(".class")) {
+      const data = this.read(path);
+      if (data) st = { dir: false, size: data.length, mtime: 0 };
+    } else {
       // HTTP cannot tell us about directories. An extensionless path that is
       // missing, or answered with an HTML page (a server's directory index),
       // is taken to be one, so class folders work on the classpath.

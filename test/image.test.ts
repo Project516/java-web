@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImageBackend } from "../src/image.ts";
+import { parsePack, listIndex } from "../src/browser/http.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -62,6 +63,15 @@ test("ImageBackend reads the index, packed files and module images", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("compact index keeps paths, sizes, offsets, and directory order", () => {
+  const buf = pack([["/index.prefix", "0 d /lib\n0 f /lib/one 3 java.base:0\n7 two 4 java.base:3 javac\n0 d /modules"]]);
+  const image = parsePack(buf.buffer as ArrayBuffer);
+  assert.deepEqual([...image.index!], [["/", -1], ["/lib", -1], ["/lib/one", 3], ["/lib/two", 4], ["/modules", -1]]);
+  assert.deepEqual(listIndex(image.index!, "/lib"), ["one", "two"]);
+  assert.deepEqual(image.offsets.get("/lib/two"), { image: "/java.base.jar", at: 3 });
+  assert.equal(image.lazy.get("/lib/two"), "javac");
 });
 
 const node = join(root, "dist", "node.js");
