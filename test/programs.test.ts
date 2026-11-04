@@ -184,6 +184,7 @@ test("locale data", async () => {
   const classes = join(root, "build", "test-locales");
   execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "locales", "Locales.java")]);
   const ref = spawnSync(hotspot("java"), ["-cp", classes, "Locales"], { encoding: "utf8" });
+  assert.equal(ref.status, 0, ref.stderr);
   const run = async (localeData: boolean) => {
     const stdout: Uint8Array[] = [];
     const code = await runNode({ classpath: [classes], mainClass: "Locales", localeData, stdout: (b) => stdout.push(b) });
@@ -194,6 +195,7 @@ test("locale data", async () => {
   const modules = readFileSync(join(root, "build/jdk/release"), "utf8").match(/MODULES="([^"]+)"/)![1]
     .split(" ").filter((m) => m !== "jdk.localedata" && m !== "javaweb.tls").join(",");
   const limited = spawnSync(hotspot("java"), ["--limit-modules", modules, "-cp", classes, "Locales"], { encoding: "utf8" });
+  assert.equal(limited.status, 0, limited.stderr);
   assert.equal(await run(false), limited.stdout);
 });
 
