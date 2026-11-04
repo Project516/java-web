@@ -1,9 +1,16 @@
-// Keeps a MemoryBackend in IndexedDB, so /files/ survives page reloads.
-// The whole store loads at startup; changes are written back in batches.
+// Keeps a MemoryBackend in IndexedDB, so /files/ survives page reloads, and
+// the boot snapshots of recent starts. The whole file store loads at startup;
+// changes are written back in batches.
 
 import type { MemoryBackend, MemoryEntry } from "../fs.ts";
+import type { SnapshotImage } from "../snapshot.ts";
 
 const DB = "java-web", STORE = "files";
+// its own database, so adding it needs no version change that open pages would block
+const SNAPSHOT_DB = "java-web-snapshots";
+// snapshot keys, most recently used first
+const ORDER = "#order";
+const KEEP_SNAPSHOTS = 4;
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -50,4 +57,54 @@ export async function persist(backend: MemoryBackend): Promise<void> {
       setTimeout(flush, 50);
     }
   };
+}
+
+// null without IndexedDB
+let snapshotDb: Promise<IDBDatabase | null> | null = null;
+function openSnapshots(): Promise<IDBDatabase | null> {
+  return (snapshotDb ??= (async () => {
+    if (typeof indexedDB === "undefined") return null;
+    try {
+      const open = indexedDB.open(SNAPSHOT_DB, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+      return await request(open);
+    } catch {
+      return null;
+    }
+  })());
+}
+
+// Moves key to the front of the use order, dropping snapshots past the limit.
+// image, when given, is stored under key; null deletes it.
+async function useSnapshot(key: string, image?: SnapshotImage | null) {
+  const db = await openSnapshots();
+  if (!db) return;
+  const store = db.transaction(STORE, "readwrite").objectStore(STORE);
+  if (image) store.put(image, key);
+  const order = ((await request(store.get(ORDER))) as string[] | undefined ?? []).filter((k) => k !== key);
+  if (image !== null) order.unshift(key);
+  for (const k of [...order.slice(KEEP_SNAPSHOTS), ...(image === null ? [key] : [])]) store.delete(k);
+  store.put(order.slice(0, KEEP_SNAPSHOTS), ORDER);
+}
+
+export async function loadSnapshot(key: string): Promise<SnapshotImage | null> {
+  try {
+    const db = await openSnapshots();
+    if (!db) return null;
+    const image = (await request(db.transaction(STORE, "readonly").objectStore(STORE).get(key))) as SnapshotImage | undefined;
+    if (!image) return null;
+    useSnapshot(key).catch(() => {});
+    return image;
+  } catch {
+    return null;
+  }
+}
+
+// image must not change afterwards: it is stored once the database is open
+export function saveSnapshot(image: SnapshotImage) {
+  useSnapshot(image.key, image).catch(() => {});
+}
+
+export function dropSnapshot(key: string) {
+  useSnapshot(key, null).catch(() => {});
 }

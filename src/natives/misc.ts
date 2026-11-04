@@ -6,6 +6,7 @@ import {
 } from "../runtime.ts";
 import { JThread, JavaThrow, PendingThrow, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
+import type { JVM } from "../jvm.ts";
 import { annotationTypes } from "./invoke.ts";
 import { interruptibleWait } from "./lang.ts";
 import { nestHostOf } from "./reflect.ts";
@@ -262,9 +263,9 @@ Object.assign(unsafe, {
 
 const SIGNALS: Record<string, number> = { HUP: 1, INT: 2, QUIT: 3, KILL: 9, USR1: 10, USR2: 12, PIPE: 13, ALRM: 14, TERM: 15 };
 
-function platformProperties(t: JThread): (string | null)[] {
-  const p = t.vm.props;
-  const cwd = t.vm.opts.cwd ?? "/";
+export function platformProperties(vm: JVM): (string | null)[] {
+  const p = vm.props;
+  const cwd = vm.opts.cwd ?? "/";
   return [
     null, "en", null, null, // display country, language, script, variant
     "/", // file.separator
@@ -286,8 +287,7 @@ function platformProperties(t: JThread): (string | null)[] {
   ];
 }
 
-function vmProperties(t: JThread): string[] {
-  const vm = t.vm;
+export function vmProperties(vm: JVM): string[] {
   const props = new Map<string, string>([
     ["java.home", vm.opts.javaHome],
     ["java.class.path", (vm.opts.classpath ?? []).join(":")],
@@ -441,9 +441,9 @@ export const natives: Natives = {
   "jdk/internal/misc/Signal.raise0(I)V": () => undefined,
 
   "jdk/internal/util/SystemProps$Raw.platformProperties()[Ljava/lang/String;": (t) =>
-    t.vm.newObjectArray("java/lang/String", platformProperties(t).map((s) => (s === null ? null : t.vm.str(s)))),
+    t.vm.newObjectArray("java/lang/String", platformProperties(t.vm).map((s) => (s === null ? null : t.vm.str(s)))),
   "jdk/internal/util/SystemProps$Raw.vmProperties()[Ljava/lang/String;": (t) =>
-    t.vm.newObjectArray("java/lang/String", vmProperties(t).map((s) => t.vm.str(s))),
+    t.vm.newObjectArray("java/lang/String", vmProperties(t.vm).map((s) => t.vm.str(s))),
 
   "jdk/internal/reflect/Reflection.getCallerClass()Ljava/lang/Class;": (t) => callerClass(t),
   "jdk/internal/reflect/Reflection.getClassAccessFlags(Ljava/lang/Class;)I": (t, [c]) => t.vm.classOf(c).access & 0x7fff,

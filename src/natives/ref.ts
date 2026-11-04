@@ -55,6 +55,19 @@ function clear(t: JThread, r: JObject) {
   t.vm.setField(r, R, "referent", null);
 }
 
+// A weak or phantom reference restored from a snapshot: watch its referent
+// again, and put back the pending list.
+export function restoreReference(vm: JVM, self: JObject, obj: JObject) {
+  const s = refs(vm);
+  self.x = new WeakRef(obj);
+  const none = vm.getStatic(vm.loadBoot("java/lang/ref/ReferenceQueue")!, "NULL_QUEUE");
+  if (vm.getField(self, R, "queue") !== none) s.registry.register(obj, new WeakRef(self), self);
+}
+
+export function restorePending(vm: JVM, pending: JObject[]) {
+  refs(vm).pending.push(...pending);
+}
+
 // Replace methods that read or write the referent field.
 export const intrinsics: Natives = {
   [`${R}.<init>(Ljava/lang/Object;Ljava/lang/ref/ReferenceQueue;)V`]: function* (t, [self, obj, queue]): NativeGen {

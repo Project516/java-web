@@ -30,6 +30,9 @@ export interface NodeRunOptions {
   localeData?: boolean;
   // loopback sockets whose http: requests go to this fetch, instead of host sockets
   fetch?: typeof fetch;
+  // where boot snapshots are kept, or null for none; by default
+  // JAVA_WEB_SNAPSHOT_DIR (empty for none), else java-web/snapshots in the user's cache
+  snapshotDir?: string | null;
 }
 
 // A running VM, as startLibrary returns it.

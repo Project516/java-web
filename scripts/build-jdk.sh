@@ -115,4 +115,16 @@ cp "$font_home/LICENSE" "$out/legal/java.desktop/dejavu-fonts.txt"
   find "$m" -mindepth 2 -name '*.class' | sed 's|/[^/]*$||' | sort -u | sed "s|^$m/||;s|^|$m |"
 done) > "$out/lib/packages.txt"
 
+# a digest of the whole image, which boot snapshots are made for
+(cd "$out" && node -e '
+const { createHash } = require("node:crypto");
+const { readFileSync, readdirSync } = require("node:fs");
+const { join } = require("node:path");
+const h = createHash("sha256");
+const files = readdirSync(".", { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name));
+for (const f of files.filter((f) => !f.startsWith("lib/image.sha256")).sort()) h.update(f).update(readFileSync(f));
+process.stdout.write(h.digest("hex") + "\n");
+') > "$out/lib/image.sha256.tmp"
+mv "$out/lib/image.sha256.tmp" "$out/lib/image.sha256"
+
 echo "built $out ($(du -sh "$out" | cut -f1)) with $modules from JDK $release"

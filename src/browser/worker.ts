@@ -3,9 +3,10 @@
 // A library VM stays up and serves calls until the page goes away.
 
 import { MemoryBackend, VFS } from "../fs.ts";
-import { JVM } from "../jvm.ts";
+import { JVM, SnapshotError } from "../jvm.ts";
 import { HttpBackend, addIndex, parsePack } from "./http.ts";
-import { persist } from "./idb.ts";
+import { dropSnapshot, loadSnapshot, persist, saveSnapshot } from "./idb.ts";
+import type { SnapshotImage } from "../snapshot.ts";
 import type { LibraryError, LibraryReply } from "../library.ts";
 import type { NativeReply } from "../bridge.ts";
 import type { FromWorker, InitMessage, ToWorker } from "./protocol.ts";
@@ -111,8 +112,55 @@ function fileClosed(path: string) {
   if (data) post({ type: "download", name: path.slice(path.lastIndexOf("/") + 1), data: data.slice() });
 }
 
+// set by the build: the VM code and JDK image a snapshot is valid for
+declare const JAVA_WEB_BUILD: string;
+
+// Boot snapshots of this page's VMs, the most recently used last, also kept
+// in IndexedDB for later loads. A VM changes the image it restores, so each
+// gets a copy.
+const snapshots = new Map<string, SnapshotImage>();
+const keep = (image: SnapshotImage) => {
+  snapshots.delete(image.key);
+  snapshots.set(image.key, image);
+  for (const k of [...snapshots.keys()].slice(0, -4)) snapshots.delete(k);
+};
+// the IndexedDB delete is async, so a retry could still read a dropped one
+const dropped = new Set<string>();
+const snapshotCache = {
+  build: JAVA_WEB_BUILD,
+  load: async (key: string) => {
+    if (dropped.has(key)) return null;
+    const image = snapshots.get(key) ?? await loadSnapshot(key);
+    if (!image) return null;
+    keep(image);
+    return structuredClone(image);
+  },
+  wants: () => true,
+  save: (image: SnapshotImage) => {
+    dropped.delete(image.key);
+    const copy = structuredClone(image);
+    keep(copy);
+    saveSnapshot(copy);
+  },
+  drop: (key: string) => {
+    snapshots.delete(key);
+    dropped.add(key);
+    dropSnapshot(key);
+  },
+};
+
+// A snapshot that cannot be restored is dropped, and a second VM boots.
+function retried<T>(start: () => Promise<T>): Promise<T> {
+  return start().catch((e) => {
+    if (!(e instanceof SnapshotError)) throw e;
+    console.warn(`java-web: ${e.message}`);
+    return start();
+  });
+}
+
 function newVm(classpath: string[], vmId: number): JVM {
   return new JVM({
+    snapshots: snapshotCache,
     fs: vfs!,
     javaHome: "/jdk",
     classpath,
@@ -138,9 +186,11 @@ function newVm(classpath: string[], vmId: number): JVM {
 }
 
 function run(id: number, mode: number, what: string, classpath: string[], args: string[]) {
-  const vm = newVm(classpath, id);
-  vms.set(id, vm);
-  return vm.run(mode, what, args).then((code) => {
+  return retried(() => {
+    const vm = newVm(classpath, id);
+    vms.set(id, vm);
+    return vm.run(mode, what, args);
+  }).then((code) => {
     vms.delete(id);
     post({ type: "exit", id, code });
   });
@@ -180,9 +230,11 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     }
     case "library": {
-      const vm = newVm(m.classpath, m.lib);
-      vms.set(m.lib, vm);
-      reply(m.id, vm.startLibrary().then(() => ({ value: undefined })));
+      reply(m.id, retried(() => {
+        const vm = newVm(m.classpath, m.lib);
+        vms.set(m.lib, vm);
+        return vm.startLibrary();
+      }).then(() => ({ value: undefined })));
       break;
     }
     case "call": {
