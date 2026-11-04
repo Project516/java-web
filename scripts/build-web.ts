@@ -85,6 +85,8 @@ class Recorder implements Backend {
   constructor(inner: Backend) { this.inner = inner; }
   stat(p: string) { return this.inner.stat(p); }
   list(p: string) { return this.inner.list(p); }
+  canReadRange(p: string) { return this.inner.canReadRange?.(p) ?? !!this.inner.readRange; }
+  readRange(p: string, off: number, len: number) { return this.inner.readRange?.(p, off, len) ?? null; }
   read(p: string) {
     const d = this.inner.read(p);
     if (d) this.seen.add(p);

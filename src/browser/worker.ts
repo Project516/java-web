@@ -167,6 +167,7 @@ function newVm(classpath: string[], vmId: number): JVM {
     // javaProperties can set user.dir, which is then the working directory
     cwd: config!.props["user.dir"] ?? "/files",
     // System.loadLibrary would warn about native access, but its libraries are the page's JS modules
+    localeData: config!.localeData,
     props: { "java.io.tmpdir": "/tmp", "user.home": "/files", "jdk.module.enable.native.access.0": "ALL-UNNAMED", ...config!.props },
     stdout: (data) => post({ type: "out", fd: 1, data }, [data.buffer as ArrayBuffer]),
     stderr: (data) => post({ type: "out", fd: 2, data }, [data.buffer as ArrayBuffer]),

@@ -191,7 +191,10 @@ test("locale data", async () => {
     return Buffer.concat(stdout).toString("utf8");
   };
   assert.equal(await run(true), ref.stdout);
-  assert.match(await run(false), /^de_DE 1,234,567\.89 /m);
+  const modules = readFileSync(join(root, "build/jdk/release"), "utf8").match(/MODULES="([^"]+)"/)![1]
+    .split(" ").filter((m) => m !== "jdk.localedata" && m !== "javaweb.tls").join(",");
+  const limited = spawnSync(hotspot("java"), ["--limit-modules", modules, "-cp", classes, "Locales"], { encoding: "utf8" });
+  assert.equal(await run(false), limited.stdout);
 });
 
 // The host refuses these writes; root is allowed them, so the test needs a normal user.

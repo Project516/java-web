@@ -42,7 +42,7 @@ Node, which is how the tests run.
 - `src/classfile.ts` class file parser
 - `src/runtime.ts` classes, methods, fields, objects, arrays
 - `src/interp.ts` bytecode interpreter and per-thread run loop
-- `src/jvm.ts` loading, linking, initialization, resolution, scheduler, boot
+- `src/jvm.ts` loading, linking, initialization, resolution, scheduler, boot; `src/jimage.ts` reads the linked JDK image
 - `src/indy.ts` invokedynamic, method handles
 - `src/snapshot.ts` boot snapshots: saving and restoring the VM as it is after boot
 - `src/library.ts` library mode in the VM: object handles, calls, field access,
@@ -76,12 +76,9 @@ Node, which is how the tests run.
 
 ## Glossary
 
-- **java.home image**: `build/jdk`, the Linux x64 JDK's class library in the
-  exploded layout (`modules/<module>/...` instead of a `lib/modules` jimage),
-  built the same on every host. Mounted at
-  `/jdk` in the VFS. It has no `lib/modules`, which would switch the JDK to
-  image mode; `lib/resources.jimage` holds only the non-class resources, for
-  `jrt:` URLs.
+- **java.home image**: `build/jdk`, a linked image with the Linux x64 JDK's
+  class library in `lib/modules`, built the same on every host and mounted at
+  `/jdk` in the VFS.
 - **VFS**: the virtual file system the Java side sees (`src/fs.ts`).
 - **native**: a JS function implementing a Java `native` method, keyed by
   `class.name(desc)`. A plain native returns its result; a generator native

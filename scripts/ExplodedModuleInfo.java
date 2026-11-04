@@ -5,9 +5,7 @@ import java.lang.classfile.attribute.ModuleHashesAttribute;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-// Drops ModuleHashes from module-info.class files, as a JDK exploded build
-// has none: exploded modules cannot be hashed, and boot fails when java.base
-// records hashes of other modules.
+// Drop hashes of the original JDK modules before linking a different set.
 void main(String[] args) throws Exception {
   ClassFile cf = ClassFile.of();
   for (String a : args) {

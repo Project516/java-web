@@ -22,6 +22,7 @@ export interface Backend {
   read(path: string): Uint8Array | null;
   // bytes [off, off + len) of a file, for backends that can read part of one
   readRange?(path: string, off: number, len: number): Uint8Array | null;
+  canReadRange?(path: string): boolean;
   list(path: string): string[] | null;
   write?(path: string, data: Uint8Array): boolean;
   // the errno code (such as "ENOSPC") of the last failed write to path
@@ -133,7 +134,7 @@ export class VFS {
   // Whether part of a file can be read without reading all of it.
   canReadRange(path: string): boolean {
     const r = this.resolve(path);
-    return !!r && !!r[0].readRange;
+    return !!r && !!r[0].readRange && (r[0].canReadRange?.(r[1]) ?? true);
   }
 
   readRange(path: string, off: number, len: number): Uint8Array | null {

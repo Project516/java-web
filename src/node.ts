@@ -69,6 +69,23 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
+  canReadRange(p: string) { return !this.writable && p === "/lib/modules"; }
+  readRange(p: string, off: number, len: number): Uint8Array | null {
+    try {
+      const fd = fs.openSync(this.host(p), "r");
+      try {
+        if (!fs.fstatSync(fd).isFile()) return null;
+        const out = new Uint8Array(len);
+        let n = 0;
+        while (n < len) {
+          const got = fs.readSync(fd, out, n, len - n, off + n);
+          if (!got) break;
+          n += got;
+        }
+        return out.subarray(0, n);
+      } finally { fs.closeSync(fd); }
+    } catch { return null; }
+  }
   list(p: string) {
     if (!this.writable && this.lists.has(p)) return this.lists.get(p)!;
     let names: string[] | null;
@@ -171,7 +188,7 @@ export interface NodeRunOptions {
   jar?: string;
   args?: string[];
   props?: Record<string, string>;
-  // an exploded JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
+  // a JDK image instead of build/jdk (or, for dist/node.js, the packaged one)
   jdk?: string;
   debug?: boolean;
   stdout?: (b: Uint8Array) => void;
@@ -339,6 +356,7 @@ function nodeVm(o: NodeRunOptions): JVM {
     ...(snapDir && build ? { snapshots: snapshotCache(snapDir, build) } : {}),
     fs: vfs,
     javaHome: "/jdk",
+    localeData: o.localeData,
     classpath,
     props: { "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props },
     cwd: toVfs(process.cwd()),

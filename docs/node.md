@@ -21,7 +21,7 @@ npx @project516/java-web [options] -jar app.jar [args]
 | `--locale-data` | locales other than English (see [support.md](support.md#locales)) |
 | `-Xmx` | the largest array, and what `Runtime.maxMemory()` reports (default and at most 1g, rounded up to 2 MB steps, below 2m an error); the total heap is not counted |
 | `--max-rss MB` | exit when resident memory passes this (default 2048) |
-| `--jdk DIR` | an exploded JDK image instead of the packaged one |
+| `--jdk DIR` | a java-web JDK image instead of the packaged one |
 | `--debug` | log VM events |
 
 Other `-X` and HotSpot-only options are ignored.

@@ -6,7 +6,8 @@ same download on Linux x64) into `~/.cache/java-web`, and checks each SHA-256.
 The runtime image comes from the Linux x64 JDK, so every machine, a Mac
 included, builds the same image, with the Linux class library whose natives
 java-web implements. The host JDK is the HotSpot reference the tests run, linked
-at `build/hotspot`.
+at `build/hotspot`. The build links the selected modules into `build/jdk/lib/modules`;
+`lib/packages.txt` indexes packages for the boot class loader.
 
 ```sh
 pnpm install
