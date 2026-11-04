@@ -14,6 +14,8 @@ export interface Pack {
   offsets: Map<string, { image: string; at: number }>;
 }
 
+const utf8 = new TextDecoder();
+
 // Pack layout: repeated [u16 path length][path][u32 size][bytes]. In the boot
 // pack, "/index.prefix" holds prefix-coded "d path" and "f path size
 // [image:offset] [pack]" lines. A file with an offset is read in ranges from
@@ -24,11 +26,10 @@ export interface Pack {
 export function parsePack(buf: ArrayBuffer): Pack {
   const dv = new DataView(buf);
   const u8 = new Uint8Array(buf);
-  const dec = new TextDecoder();
   const files = new Map<string, Uint8Array>();
   for (let p = 0; p < buf.byteLength;) {
     const n = dv.getUint16(p);
-    const path = dec.decode(u8.subarray(p + 2, p + 2 + n));
+    const path = utf8.decode(u8.subarray(p + 2, p + 2 + n));
     p += 2 + n;
     const size = dv.getUint32(p);
     files.set(path, u8.subarray(p + 4, p + 4 + size));
@@ -38,7 +39,7 @@ export function parsePack(buf: ArrayBuffer): Pack {
   const raw = files.get("/index.prefix") ?? files.get("/index.txt");
   if (raw) {
     pack.index = new PackIndex(pack);
-    addIndex(pack, dec.decode(raw), files.has("/index.prefix"));
+    addIndex(pack, utf8.decode(raw), files.has("/index.prefix"));
     files.delete("/index.txt");
     files.delete("/index.prefix");
     for (const [p, data] of files) {
@@ -103,7 +104,7 @@ export class PackIndex extends Map<string, number> {
     const raw = this.modules.get(module);
     if (!raw) return;
     this.modules.delete(module);
-    addIndex(this.pack, new TextDecoder().decode(raw), true);
+    addIndex(this.pack, utf8.decode(raw), true);
   }
 }
 
