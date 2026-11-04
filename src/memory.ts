@@ -39,7 +39,10 @@ export class NativeMemory {
     const list = this.free.get(size);
     const reuse = list?.findIndex((addr) => addr % alignment === 0) ?? -1;
     if (list && reuse >= 0) {
-      const [addr] = list.splice(reuse, 1);
+      // the order of a free list does not matter, so the last block fills the gap
+      const addr = list[reuse];
+      list[reuse] = list[list.length - 1];
+      list.pop();
       this.sizes.set(addr, size);
       return addr;
     }

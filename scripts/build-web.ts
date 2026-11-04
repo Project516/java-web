@@ -5,7 +5,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { build } from "esbuild";
 import { MemoryBackend, VFS } from "../src/fs.ts";
@@ -178,7 +178,8 @@ const inJavacPack = new Set(javacFiles);
 // around it. The index says where each file is, so the worker can stat and
 // list offline.
 const lines: string[] = [];
-const parts: Uint8Array[] = [];
+const imageFile = join(dist, "jdk", "image.jar");
+writeFileSync(imageFile, "");
 let imageSize = 0;
 const walk = (dir: string) => {
   for (const name of readdirSync(dir).sort()) {
@@ -191,13 +192,12 @@ const walk = (dir: string) => {
       walk(p);
     } else {
       lines.push(`f ${rel} ${st.size} image:${imageSize}${inJavacPack.has(rel) ? " javac" : ""}`);
-      parts.push(readFileSync(p));
+      appendFileSync(imageFile, readFileSync(p));
       imageSize += st.size;
     }
   }
 };
 walk(jdk);
-writeFileSync(join(dist, "jdk", "image.jar"), Buffer.concat(parts));
 // OpenJDK's licenses and notices ship next to the image as plain files
 cpSync(join(jdk, "legal"), join(dist, "jdk", "legal"), { recursive: true, dereference: true });
 

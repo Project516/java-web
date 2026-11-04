@@ -8,6 +8,15 @@ import { listIndex, packedRange, parsePack } from "./browser/http.ts";
 import type { Pack } from "./browser/http.ts";
 import type { Backend, Stat } from "./fs.ts";
 
+// The JDK image is read for every boot class, by every VM in the process, so
+// each image file stays open once opened.
+const imageFds = new Map<string, number>();
+export function imageFd(file: string): number {
+  let fd = imageFds.get(file);
+  if (fd === undefined) imageFds.set(file, (fd = fs.openSync(file, "r")));
+  return fd;
+}
+
 export class ImageBackend implements Backend {
   readonly writable = false;
   private readonly dir: string;
@@ -48,15 +57,11 @@ export class ImageBackend implements Backend {
     const out = new Uint8Array(len);
     let n = 0;
     try {
-      const fd = fs.openSync(path.join(this.dir, "jdk", at.image), "r");
-      try {
-        while (n < len) {
-          const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
-          if (got === 0) break;
-          n += got;
-        }
-      } finally {
-        fs.closeSync(fd);
+      const fd = imageFd(path.join(this.dir, "jdk", at.image));
+      while (n < len) {
+        const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
+        if (got === 0) break;
+        n += got;
       }
     } catch {
       return null;

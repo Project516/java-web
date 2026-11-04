@@ -14,7 +14,7 @@ import { Bridge, nativeTable } from "./bridge.ts";
 import { JVM, LM_CLASS, LM_JAR, SnapshotError } from "./jvm.ts";
 import type { SnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
-import { ImageBackend } from "./image.ts";
+import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { PendingThrow } from "./thread.ts";
 import { setMaxHeap } from "./runtime.ts";
@@ -22,15 +22,6 @@ import type { NetBackend } from "./sockets.ts";
 
 // A host directory exposed read-only (or writable) inside the VFS.
 const MAX_FILE = 512 << 20;
-
-// The JDK image is read for every boot class, by every VM in the process, so
-// each image file stays open once opened.
-const imageFds = new Map<string, number>();
-function imageFd(file: string): number {
-  let fd = imageFds.get(file);
-  if (fd === undefined) imageFds.set(file, (fd = fs.openSync(file, "r")));
-  return fd;
-}
 
 export class NodeBackend implements Backend {
   readonly root: string;
