@@ -64,6 +64,8 @@ export class JImage {
     const actual = `/${str(attrs[1])}/${attrs[2] ? str(attrs[2]) + "/" : ""}${str(attrs[3])}${attrs[4] ? "." + str(attrs[4]) : ""}`;
     if (actual !== full) return null;
     if (attrs[6]) throw new Error("compressed jimage resource");
-    return this.fs.readRange(this.path, this.index.length + attrs[5], attrs[7]);
+    const data = this.fs.readRange(this.path, this.index.length + attrs[5], attrs[7]);
+    if (!data || data.length !== attrs[7]) throw new Error(`cannot read image resource: ${full}`);
+    return data;
   }
 }

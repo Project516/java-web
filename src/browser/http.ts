@@ -251,6 +251,8 @@ export class HttpBackend implements Backend {
 
   // Fetches missing 64 KB blocks with Range requests, each run of them in
   // one request. A server that ignores Range sends the whole file instead.
+  canReadRange(path: string) { return !this.pack.index?.has("/lib/modules") || path === "/lib/modules"; }
+
   readRange(path: string, off: number, len: number): Uint8Array | null {
     const whole = this.pack.files.get(path) ?? this.cache.get(path);
     if (whole) return whole.subarray(off, off + len);

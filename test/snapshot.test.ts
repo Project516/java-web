@@ -80,6 +80,16 @@ test("other properties boot without the snapshot", async () => {
   assert.ok(!loaded(snap, ino));
 });
 
+test("locale data uses a separate snapshot", async () => {
+  const dir = cacheDir();
+  await run(dir);
+  await run(dir);
+  const [snap] = files(dir, ".snap");
+  const ino = age(snap);
+  await runNode({ classpath: [out], mainClass: "Boot", localeData: true, snapshotDir: dir, stdout: () => {} });
+  assert.ok(!loaded(snap, ino));
+});
+
 test("library mode restores its own snapshot", async () => {
   const dir = cacheDir();
   for (let i = 0; i < 2; i++) await run(dir);
