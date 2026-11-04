@@ -124,9 +124,12 @@ const keep = (image: SnapshotImage) => {
   snapshots.set(image.key, image);
   for (const k of [...snapshots.keys()].slice(0, -4)) snapshots.delete(k);
 };
+// the IndexedDB delete is async, so a retry could still read a dropped one
+const dropped = new Set<string>();
 const snapshotCache = {
   build: JAVA_WEB_BUILD,
   load: async (key: string) => {
+    if (dropped.has(key)) return null;
     const image = snapshots.get(key) ?? await loadSnapshot(key);
     if (!image) return null;
     keep(image);
@@ -134,12 +137,14 @@ const snapshotCache = {
   },
   wants: () => true,
   save: (image: SnapshotImage) => {
+    dropped.delete(image.key);
     const copy = structuredClone(image);
     keep(copy);
     saveSnapshot(copy);
   },
   drop: (key: string) => {
     snapshots.delete(key);
+    dropped.add(key);
     dropSnapshot(key);
   },
 };
