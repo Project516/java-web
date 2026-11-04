@@ -195,9 +195,9 @@ export function syncPath(t: JThread, abs: string) {
 }
 
 // Pending writes go out first, so closing the file later does not change the time again.
-export function setMtime(t: JThread, abs: string, ms: number): boolean {
+export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint): boolean {
   syncPath(t, abs);
-  return t.vm.fs.setMtime(abs, ms);
+  return t.vm.fs.setMtime(abs, ms, ns);
 }
 
 export function fileOf(t: JThread, fd: number): OpenFile {
@@ -452,7 +452,13 @@ export const natives: Natives = {
     const abs = resolvePath(t, pathOf(t, f));
     return !!t.vm.fs.stat(abs) && t.vm.fs.access(abs, access);
   },
-  [`${UFS}.getLastModifiedTime0(Ljava/io/File;)J`]: (t, [, f]) => BigInt(Math.floor(t.vm.fs.stat(resolvePath(t, pathOf(t, f)))?.mtime ?? 0)),
+  [`${UFS}.getLastModifiedTime0(Ljava/io/File;)J`]: (t, [, f]) => {
+    const st = t.vm.fs.stat(resolvePath(t, pathOf(t, f)));
+    if (st?.mtimeNs === undefined) return BigInt(Math.floor(st?.mtime ?? 0));
+    // down, as HotSpot divides a negative time
+    const ms = st.mtimeNs / 1_000_000n;
+    return st.mtimeNs < 0n && ms * 1_000_000n !== st.mtimeNs ? ms - 1n : ms;
+  },
   [`${UFS}.getLength0(Ljava/io/File;)J`]: (t, [, f]) => {
     const abs = resolvePath(t, pathOf(t, f));
     syncPath(t, abs);
@@ -477,7 +483,7 @@ export const natives: Natives = {
   [`${UFS}.createDirectory0(Ljava/io/File;)Z`]: (t, [, f]) => t.vm.fs.mkdir(resolvePath(t, pathOf(t, f))),
   [`${UFS}.rename0(Ljava/io/File;Ljava/io/File;)Z`]: (t, [, a, b]) =>
     renamePath(t, resolvePath(t, pathOf(t, a)), resolvePath(t, pathOf(t, b))),
-  [`${UFS}.setLastModifiedTime0(Ljava/io/File;J)Z`]: (t, [, f, ms]) => setMtime(t, resolvePath(t, pathOf(t, f)), Number(ms)),
+  [`${UFS}.setLastModifiedTime0(Ljava/io/File;J)Z`]: (t, [, f, ms]) => setMtime(t, resolvePath(t, pathOf(t, f)), Number(ms), BigInt(ms) * 1_000_000n),
   [`${UFS}.setReadOnly0(Ljava/io/File;)Z`]: (t, [, f]) => chmod(t, f, (m) => m & ~0o222),
   [`${UFS}.getSpace0(Ljava/io/File;I)J`]: () => 0n,
   [`${UFS}.getNameMax0(Ljava/lang/String;)J`]: () => 255n,
