@@ -227,7 +227,12 @@ async function fetchFrameworks(): Promise<string[]> {
   for (const [path, sha1] of frameworkJars) {
     const jar = join(lib, path.slice(path.lastIndexOf("/") + 1));
     if (!existsSync(jar)) {
-      const res = await fetch(maven + path);
+      // Maven Central answers 429 when many CI jobs start at once
+      let res = await fetch(maven + path);
+      for (let wait = 5; (res.status === 429 || res.status >= 500) && wait <= 80; wait *= 2) {
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        res = await fetch(maven + path);
+      }
       if (!res.ok) throw new Error(`${res.status} fetching ${path}`);
       const bytes = Buffer.from(await res.arrayBuffer());
       const sum = createHash("sha1").update(bytes).digest("hex");
