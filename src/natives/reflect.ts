@@ -1,7 +1,7 @@
 // Core reflection: Class metadata, Field/Method/Constructor objects,
 // invoke0/newInstance0 and ConstantPool.
 
-import { Reader, Tag, className, utf8 } from "../classfile.ts";
+import { cpEntry, Reader, Tag, className, utf8 } from "../classfile.ts";
 import {
   ACC_STATIC, ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, newArrayData,
 } from "../runtime.ts";
@@ -303,7 +303,7 @@ export const natives: Natives = {
     const cp = c.cf!.cp;
     const outer = yield* t.vm.loadClassGen(t, c.loader, className(cp, u16(raw, 0)));
     const nat = u16(raw, 2);
-    const e = nat ? cp[nat]! : null;
+    const e = nat ? cpEntry(cp, nat)! : null;
     return t.vm.newObjectArray("java/lang/Object", [
       t.vm.mirror(outer),
       e ? t.vm.intern(utf8(cp, e.a)) : null,
@@ -386,7 +386,7 @@ export const natives: Natives = {
     for (let i = 0; i < raw[0]; i++) {
       const nameIndex = u16(raw, 1 + i * 4), flags = u16(raw, 3 + i * 4);
       if (nameIndex >= cp.length) throw new PendingThrow("java/lang/IllegalArgumentException", "Constant pool index out of bounds");
-      if (nameIndex !== 0 && cp[nameIndex]?.tag !== Tag.Utf8) throw new PendingThrow("java/lang/IllegalArgumentException", "Wrong type at constant pool index");
+      if (nameIndex !== 0 && cpEntry(cp, nameIndex)?.tag !== Tag.Utf8) throw new PendingThrow("java/lang/IllegalArgumentException", "Wrong type at constant pool index");
       const p = vm.newObject(pc);
       const name = nameIndex ? vm.str(utf8(cp, nameIndex)) : null;
       yield t.call(pc.methodMap.get(`<init>(Ljava/lang/String;ILjava/lang/reflect/Executable;I)V`)!, p, name, flags, e, i);
@@ -484,13 +484,13 @@ for (const [name, d] of Object.entries({ Boolean: "Z", Byte: "B", Char: "C", Sho
 
 Object.assign(natives, {
   [`${CP}getSize0(Ljava/lang/Object;)I`]: (t: JThread, [, o]: any[]) => cpOf(t, o).length,
-  [`${CP}getIntAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]!.value,
-  [`${CP}getLongAt0(Ljava/lang/Object;I)J`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]!.value,
-  [`${CP}getFloatAt0(Ljava/lang/Object;I)F`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]!.value,
-  [`${CP}getDoubleAt0(Ljava/lang/Object;I)D`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]!.value,
+  [`${CP}getIntAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
+  [`${CP}getLongAt0(Ljava/lang/Object;I)J`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
+  [`${CP}getFloatAt0(Ljava/lang/Object;I)F`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
+  [`${CP}getDoubleAt0(Ljava/lang/Object;I)D`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
   [`${CP}getUTF8At0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpOf(t, o), i)),
-  [`${CP}getStringAt0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpOf(t, o), cpOf(t, o)[i]!.a)),
-  [`${CP}getTagAt0(Ljava/lang/Object;I)B`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]?.tag ?? 0,
+  [`${CP}getStringAt0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpOf(t, o), cpEntry(cpOf(t, o), i)!.a)),
+  [`${CP}getTagAt0(Ljava/lang/Object;I)B`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)?.tag ?? 0,
   [`${CP}getClassAt0(Ljava/lang/Object;I)Ljava/lang/Class;`]: function* (t: JThread, [, o, i]: any[]): NativeGen {
     const c = t.vm.classOf(o);
     return t.vm.mirror(yield* t.vm.loadClassGen(t, c.loader, className(c.cf!.cp, i)));
@@ -502,16 +502,16 @@ Object.assign(natives, {
   },
   [`${CP}getMemberRefInfoAt0(Ljava/lang/Object;I)[Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => {
     const cp = cpOf(t, o);
-    const e = cp[i]!, nat = cp[e.b]!;
+    const e = cpEntry(cp, i)!, nat = cpEntry(cp, e.b)!;
     return t.vm.newObjectArray("java/lang/String", [className(cp, e.a), utf8(cp, nat.a), utf8(cp, nat.b)].map((s) => t.vm.intern(s)));
   },
   [`${CP}getNameAndTypeRefInfoAt0(Ljava/lang/Object;I)[Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => {
     const cp = cpOf(t, o);
-    const e = cp[i]!;
+    const e = cpEntry(cp, i)!;
     return t.vm.newObjectArray("java/lang/String", [utf8(cp, e.a), utf8(cp, e.b)].map((s) => t.vm.intern(s)));
   },
-  [`${CP}getClassRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpOf(t, o)[i]!.a,
+  [`${CP}getClassRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.a,
   [`${CP}getNameAndTypeRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => {
-    return cpOf(t, o)[i]!.b;
+    return cpEntry(cpOf(t, o), i)!.b;
   },
 });
