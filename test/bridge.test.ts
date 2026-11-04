@@ -11,7 +11,8 @@ import { libraryOf, startLibrary } from "../src/node.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
-const out = join(root, "build", "test-library");
+// its own directory: library.test.ts compiles the same class at the same time
+const out = join(root, "build", "test-bridge");
 
 let vm: JVM;
 let lib: any;
