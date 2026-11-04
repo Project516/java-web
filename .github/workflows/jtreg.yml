@@ -57,10 +57,15 @@ jobs:
           cache: pnpm
       - uses: actions/cache@v6
         with:
-          path: ~/.cache/java-web
+          # the downloads build-jdk.sh keeps; boot snapshots there stay out
+          path: |
+            ~/.cache/java-web/jdk-*
+            ~/.cache/java-web/dejavu-*
           key: jdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-jdk.sh') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm jdk
+      # each test VM starts from the bundle, which loads faster than src/
+      - run: pnpm build
       - name: OpenJDK regression tests
         env:
           FILTERS: ${{ needs.plan.outputs.filters }}
@@ -70,7 +75,7 @@ jobs:
           dirs=$(grep -v '^#' test/jtreg/passing.txt | cut -d/ -f1-2 | sort -u | sed 's|^|test/jdk/|')
           git -C build/ref/jdk25u sparse-checkout set test/lib test/jdk/lib test/jdk/tools/lib $dirs
           read -ra filters <<< "$FILTERS"
-          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600 \
+          node scripts/jtreg/run.ts build/ref/jdk25u --only-passing --jobs 4 --timeout 600 --vm dist/node.js \
             --shard ${{ matrix.shard }}/${{ strategy.job-total }} "${filters[@]}"
 
   # one check for branch protection, whatever the number of shards

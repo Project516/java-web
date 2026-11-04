@@ -27,7 +27,10 @@ jobs:
           cache: pnpm
       - uses: actions/cache@v6
         with:
-          path: ~/.cache/java-web
+          # the downloads build-jdk.sh keeps; boot snapshots there stay out
+          path: |
+            ~/.cache/java-web/jdk-*
+            ~/.cache/java-web/dejavu-*
           key: jdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-jdk.sh') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm jdk
