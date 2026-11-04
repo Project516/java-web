@@ -34,7 +34,7 @@ function loaded(): Set<string> {
 }
 const notLoaded = /\.md$|^docs\/|^LICENSE|^renovate\.json$|^\.coderabbit|^types\/|^test\/(?!jtreg\/)/;
 
-const shardsFor = (n: number) => Array.from({ length: Math.min(4, Math.ceil(n / 400)) }, (_, i) => i + 1);
+const shardsFor = (n: number) => Array.from({ length: Math.min(8, Math.ceil(n / 400)) }, (_, i) => i + 1);
 const listed = readFileSync(join(root, passingFile), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 const under = (id: string, f: string) => id === f || id.startsWith(f + "/") || id.startsWith(f + "#");
 

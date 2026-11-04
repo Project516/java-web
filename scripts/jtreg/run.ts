@@ -7,8 +7,8 @@
 // tests that pass there count), then on java-web in a child process.
 // Results go to build/jtreg/results.jsonl; --only-passing reruns the tests
 // listed in test/jtreg/passing.txt (those under the filters, if any) on
-// java-web alone, and fails if any of them regress. --shard k/n runs every
-// nth of the selected tests, for parallel CI jobs.
+// java-web alone, and fails if any of them regress. --shard k/n runs the kth
+// of n shards with about equal run time, for parallel CI jobs.
 
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -21,6 +21,8 @@ const root = join(import.meta.dirname, "..", "..");
 const out = join(root, "build", "jtreg");
 const resultsFile = join(out, "results.jsonl");
 const passingFile = join(root, "test", "jtreg", "passing.txt");
+// how long each listed test takes on java-web, for splitting them into shards
+const timesFile = join(root, "test", "jtreg", "times.tsv");
 
 const argv = process.argv.slice(2);
 const flag = (name: string, def: string) => {
@@ -412,6 +414,32 @@ function findTests(paths: string[]): string[] {
   return files;
 }
 
+// This shard's tests: the slowest first, each to the shard with the least
+// time so far, by the times in test/jtreg/times.tsv (the median when unknown).
+// Every shard computes the same split.
+function shard(tests: TestCase[]): TestCase[] {
+  if (shardN === 1) return tests;
+  const known = new Map<string, number>();
+  if (existsSync(timesFile)) {
+    for (const l of readFileSync(timesFile, "utf8").split("\n")) {
+      const [ms, id] = l.split("\t");
+      if (id) known.set(id, Number(ms));
+    }
+  }
+  const sorted = [...known.values()].sort((a, b) => a - b);
+  const median = sorted.length ? sorted[sorted.length >> 1] : 1;
+  const load = new Array(shardN).fill(0);
+  const mine = new Set<TestCase>();
+  const order = tests.map((tc) => ({ tc, ms: known.get(tc.id) ?? median }))
+    .sort((a, b) => b.ms - a.ms || (a.tc.id < b.tc.id ? -1 : 1));
+  for (const { tc, ms } of order) {
+    const k = load.indexOf(Math.min(...load));
+    load[k] += ms;
+    if (k === shardK - 1) mine.add(tc);
+  }
+  return tests.filter((tc) => mine.has(tc));
+}
+
 // test ids in passing.txt
 function listed(): string[] {
   if (!existsSync(passingFile)) return [];
@@ -436,7 +464,7 @@ if (onlyPassing) {
     return ids.has(tc.id) || whole.has(file) || !narrowed.has(file);
   });
 }
-selected = selected.filter((_, i) => i % shardN === shardK - 1);
+selected = shard(selected);
 const done = new Set<string>();
 if (!rerun && !onlyPassing && existsSync(resultsFile)) {
   for (const l of readFileSync(resultsFile, "utf8").split("\n")) if (l) done.add(JSON.parse(l).id);
