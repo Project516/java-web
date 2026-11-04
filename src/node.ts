@@ -69,6 +69,7 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
+  // Other open files keep their buffered contents even if the host removes them.
   canReadRange(p: string) { return !this.writable && p === "/lib/modules"; }
   readRange(p: string, off: number, len: number): Uint8Array | null {
     try {
