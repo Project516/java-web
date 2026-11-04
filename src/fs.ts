@@ -4,6 +4,9 @@ export interface Stat {
   dir: boolean;
   size: number;
   mtime: number;
+  // the modification time in nanoseconds, when it was set with more precision
+  // than mtime keeps
+  mtimeNs?: bigint;
   // permission and special bits, when the backend can report them
   mode?: number;
   // a character device; it streams and is never read whole
@@ -54,6 +57,8 @@ export function normalize(path: string): string {
 }
 
 export class VFS {
+  // path -> the time a VM set, and the mtime the backend reported right after
+  private setTimes = new Map<string, { ms: number; ns: bigint }>();
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
 
@@ -113,7 +118,12 @@ export class VFS {
     if (this.hidden.length && this.isHidden(n)) return null;
     const r = this.resolve(path);
     const s = r ? r[0].stat(r[1]) : null;
-    if (s) return s;
+    if (s) {
+      const set = this.setTimes.get(n);
+      if (set?.ms === s.mtime) return { ...s, mtimeNs: set.ns };
+      if (set) this.setTimes.delete(n);
+      return s;
+    }
     if (normalize(path) === "/" || this.mountsUnder(path).length > 0 || this.isMountPoint(path)) {
       return { dir: true, size: 0, mtime: 0 };
     }
@@ -184,9 +194,18 @@ export class VFS {
     return !!r && r[0].writable;
   }
 
-  setMtime(path: string, ms: number): boolean {
+  // ns, when given, is the exact time asked for. Hosts keep times as floating
+  // point seconds or milliseconds, which lose nanoseconds, so stat reports ns
+  // for as long as the file keeps the time this set.
+  setMtime(path: string, ms: number, ns?: bigint): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].setMtime?.(r[1], ms);
+    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms)) return false;
+    const n = normalize(path);
+    const st = ns === undefined ? null : r[0].stat(r[1]);
+    // only a time the host kept, give or take its rounding; a host can clamp it
+    if (st && Math.abs(st.mtime - ms) < 1) this.setTimes.set(n, { ms: st.mtime, ns: ns! });
+    else this.setTimes.delete(n);
+    return true;
   }
 
   denied(path: string): boolean {
