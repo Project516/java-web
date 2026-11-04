@@ -137,6 +137,8 @@ const inJavacPack = new Set(javacFiles);
 // says where each file is, so the worker can stat and list offline. Files of a
 // package sit together, so one block read serves several classes.
 const lines: string[] = [];
+// a module's file lines, which a start parses only once it reads that module
+const moduleLines = new Map<string, string[]>();
 // jdk.localedata's lines go in jdk/jdk.localedata.txt, which a page fetches only with localeData on
 const localeLines: string[] = [];
 const images = new Map<string, { parts: Uint8Array[]; size: number }>();
@@ -155,7 +157,13 @@ const walk = (dir: string) => {
       const name = imageOf(rel);
       let image = images.get(name);
       if (!image) images.set(name, (image = { parts: [], size: 0 }));
-      out.push(`f ${rel} ${st.size} ${name}:${image.size}${inJavacPack.has(rel) ? " javac" : ""}`);
+      const module = out === lines ? /^\/modules\/([^/]+)\//.exec(rel)?.[1] : undefined;
+      let fileLines = out;
+      if (module) {
+        fileLines = moduleLines.get(module) ?? [];
+        moduleLines.set(module, fileLines);
+      }
+      fileLines.push(`f ${rel} ${st.size} ${name}:${image.size}${inJavacPack.has(rel) ? " javac" : ""}`);
       image.parts.push(readFileSync(p));
       image.size += st.size;
     }
@@ -189,18 +197,21 @@ function writePack(file: string, entries: [string, Uint8Array][]) {
   return `${(size / 1024).toFixed(0)} KB, ${entries.length} files`;
 }
 
-let previous = "";
-const compactIndex = lines.map((line) => {
-  let n = 0;
-  while (n < line.length && line[n] === previous[n]) n++;
-  // Keep surrogate pairs together when encoding the suffix as UTF-8.
-  if (n > 0 && line.charCodeAt(n - 1) >= 0xd800 && line.charCodeAt(n - 1) <= 0xdbff) n--;
-  const result = `${n} ${line.slice(n)}`;
-  previous = line;
-  return result;
-}).join("\n");
+// Each line as the length it shares with the line before, then the rest.
+function prefixCode(lines: string[]) {
+  let previous = "";
+  return enc.encode(lines.map((line) => {
+    let n = 0;
+    while (n < line.length && line[n] === previous[n]) n++;
+    // Keep surrogate pairs together when encoding the suffix as UTF-8.
+    if (n > 0 && line.charCodeAt(n - 1) >= 0xd800 && line.charCodeAt(n - 1) <= 0xdbff) n--;
+    previous = line;
+    return `${n} ${line.slice(n)}`;
+  }).join("\n"));
+}
 const boot = writePack(join(dist, "boot.pack"), [
-  ["/index.prefix", enc.encode(compactIndex)],
+  ["/index.prefix", prefixCode(lines)],
+  ...[...moduleLines].map(([m, l]): [string, Uint8Array] => [`/index/${m}.prefix`, prefixCode(l)]),
   ...[...recorder.seen].sort().map((p): [string, Uint8Array] => [p, recorder.read(p)!]),
 ]);
 const javacPack = writePack(join(dist, "jdk", "javac.pack"), javacFiles.map((p) => [p, javacRecorder.read(p)!]));

@@ -74,6 +74,24 @@ test("compact index keeps paths, sizes, offsets, and directory order", () => {
   assert.equal(image.lazy.get("/lib/two"), "javac");
 });
 
+test("a module's index lines are parsed when a path in it is first looked up", () => {
+  const buf = pack([
+    ["/index.prefix", "0 d /modules\n0 d /modules/a\n0 d /modules/a/p\n0 d /modules/b"],
+    ["/index/a.prefix", "0 f /modules/a/p/X.class 5 a:0\n15 Y.class 6 a:5 javac"],
+    ["/index/b.prefix", "0 f /modules/b/Z.class 7 b:0"],
+  ]);
+  const image = parsePack(buf.buffer as ArrayBuffer);
+  assert.equal(image.files.size, 0);
+  assert.equal(image.offsets.size, 0);
+  assert.deepEqual(listIndex(image.index!, "/modules/a/p"), ["X.class", "Y.class"]);
+  assert.equal(image.index!.get("/modules/a/p/Y.class"), 6);
+  assert.deepEqual(image.offsets.get("/modules/a/p/Y.class"), { image: "/a.jar", at: 5 });
+  assert.equal(image.lazy.get("/modules/a/p/Y.class"), "javac");
+  assert.equal(image.offsets.has("/modules/b/Z.class"), false);
+  assert.equal(image.index!.has("/modules/b/Z.class"), true);
+  assert.deepEqual(listIndex(image.index!, "/modules"), ["a", "b"]);
+});
+
 const node = join(root, "dist", "node.js");
 const skip = existsSync(node) ? false : "run `pnpm build` first";
 const out = join(root, "build", "test-image");
