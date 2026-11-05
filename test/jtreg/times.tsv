@@ -2761,6 +2761,7 @@
 2392	java/util/PriorityQueue/RemoveContains.java
 2389	java/nio/MappedByteBuffer/ForceViews.java
 2389	java/io/Externalizable/compatibility/ExternalizableBlockData.java
+2389	java/math/BigInteger/BitLengthOverflow.java
 2386	java/security/cert/PKIXBuilderParameters/InvalidParameters.java
 2386	java/net/URL/RelativeURLTest.java
 2385	java/util/HashMap/OverrideIsEmpty.java
@@ -3393,7 +3394,6 @@
 1201	java/nio/channels/DatagramChannel/NoSender.java
 1187	java/nio/channels/Pipe/NonBlocking.java
 1178	java/nio/channels/DatagramChannel/IsConnected.java
-1157	java/nio/file/Files/InterruptCopy.java
 1150	java/net/ResponseCache/B6181108.java
 1143	java/net/URL/TestRFC2732.java
 1143	java/lang/annotation/typeAnnotations/TestObjectMethods.java

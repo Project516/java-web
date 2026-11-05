@@ -247,7 +247,15 @@ export const natives: Natives = {
   [`${N}getpwnam0(J)I`]: () => 1000,
   [`${N}getgrnam0(J)I`]: () => 1000,
   [`${N}fchmodatNoFollowSupported0()Z`]: () => 0,
-  [`${N}statvfs0(JLsun/nio/fs/UnixFileStoreAttributes;)V`]: () => undefined,
+  [`${N}statvfs0(JLsun/nio/fs/UnixFileStoreAttributes;)V`]: (t, [p, attrs]) => {
+    const abs = path(t, p);
+    if (!t.vm.fs.stat(abs)) unixError(ENOENT);
+    const s = t.vm.fs.space(abs), A = "sun/nio/fs/UnixFileStoreAttributes";
+    t.vm.setField(attrs, A, "f_frsize", s.bsize);
+    t.vm.setField(attrs, A, "f_blocks", s.blocks);
+    t.vm.setField(attrs, A, "f_bfree", s.bfree);
+    t.vm.setField(attrs, A, "f_bavail", s.bavail);
+  },
   [`${N}flistxattr(IJI)I`]: () => 0,
   [`${N}getlinelen(J)I`]: () => -1,
   [`${N}rewind(J)V`]: () => undefined,
@@ -441,7 +449,13 @@ Object.assign(natives, {
   "java/nio/MappedMemoryUtils.isLoaded0(JJJ)Z": () => 1,
   "java/nio/MappedMemoryUtils.load0(JJ)V": () => undefined,
   "java/nio/MappedMemoryUtils.unload0(JJ)V": () => undefined,
-  [`${UFD}setDirect0(Ljava/io/FileDescriptor;)I`]: () => -1,
+  // Bytes go through the same buffers either way; this only reports the block
+  // size direct I/O aligns to, as fstatvfs gives it.
+  [`${UFD}setDirect0(Ljava/io/FileDescriptor;)I`]: (t, [fd]) => {
+    const f = chanFile(t, fd);
+    // an unlinked file has no path; the one it had names its file system
+    return Number(t.vm.fs.space(f.path || f.detached?.path || "/").bsize);
+  },
   "sun/nio/ch/FileDispatcherImpl.init0()V": () => undefined,
   "sun/nio/ch/FileDispatcherImpl.transferTo0(Ljava/io/FileDescriptor;JJLjava/io/FileDescriptor;Z)J": () => BigInt(UNSUPPORTED_CASE),
   "sun/nio/ch/FileDispatcherImpl.transferFrom0(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;JJZ)J": () => BigInt(UNSUPPORTED_CASE),

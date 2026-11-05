@@ -549,6 +549,12 @@ export const natives: Natives = {
     renamePath(t, resolvePath(t, pathOf(t, a)), resolvePath(t, pathOf(t, b))),
   [`${UFS}.setLastModifiedTime0(Ljava/io/File;J)Z`]: (t, [, f, ms]) => setMtime(t, resolvePath(t, pathOf(t, f)), Number(ms), BigInt(ms) * 1_000_000n),
   [`${UFS}.setReadOnly0(Ljava/io/File;)Z`]: (t, [, f]) => chmod(t, f, (m) => m & ~0o222),
-  [`${UFS}.getSpace0(Ljava/io/File;I)J`]: () => 0n,
+  // SPACE_TOTAL, SPACE_FREE or SPACE_USABLE of the file system holding f; 0 if f is missing
+  [`${UFS}.getSpace0(Ljava/io/File;I)J`]: (t, [, f, kind]) => {
+    const abs = resolvePath(t, pathOf(t, f));
+    if (!t.vm.fs.stat(abs)) return 0n;
+    const s = t.vm.fs.space(abs);
+    return s.bsize * (kind === 0 ? s.blocks : kind === 1 ? s.bfree : s.bavail);
+  },
   [`${UFS}.getNameMax0(Ljava/lang/String;)J`]: () => 255n,
 };
