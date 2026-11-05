@@ -29,6 +29,8 @@ export interface InitOptions {
   env?: string[];
   // load the formats and names of locales other than English
   localeData?: boolean;
+  // save and restore library VMs after their first idle call
+  warmSnapshot?: boolean;
   // where java-web.js, the worker and jdk/ live; defaults to the script's directory
   runtime?: string;
   // receives output instead of the page console element
@@ -178,7 +180,7 @@ export function cheerpjInit(options: InitOptions = {}): Promise<void> {
     };
   });
   natives = options.natives ?? {};
-  send({ type: "init", runtime, app: appBase, props, hostName: options.hostName, env, localeData: !!options.localeData, natives: Object.keys(natives), progress: !!options.preloadProgress });
+  send({ type: "init", runtime, app: appBase, props, hostName: options.hostName, env, localeData: !!options.localeData, warmSnapshot: !!options.warmSnapshot, natives: Object.keys(natives), progress: !!options.preloadProgress });
   initStarted(ready);
   return ready;
 }

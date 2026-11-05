@@ -33,6 +33,8 @@ export interface NodeRunOptions {
   // where boot snapshots are kept, or null for none; by default
   // JAVA_WEB_SNAPSHOT_DIR (empty for none), else java-web/snapshots in the user's cache
   snapshotDir?: string | null;
+  /** Save and restore the library VM after its first idle call. */
+  warmSnapshot?: boolean;
 }
 
 // A running VM, as startLibrary returns it.

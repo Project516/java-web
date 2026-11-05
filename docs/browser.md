@@ -35,6 +35,7 @@ and `cjFileBlob(path)` also work.
   has no environment otherwise. Under Node, Java sees the host's environment.
 - `preloadProgress(done, total)` reports the bytes of the runtime downloaded at start.
   `total` is 0 while the server has not sent a length; the last call has `done === total`.
+- `cheerpjInit({ warmSnapshot: true })` saves library VMs after their first call returns with no live handles.
 - A file Java closes under `/files/downloads/` is downloaded by the browser.
   `/files/uploads/` exists for files the page adds there.
 - The browser console gets whole lines, so two `print` calls and a `println` log one
@@ -126,3 +127,8 @@ After a VM boots, the worker keeps a snapshot of it, in memory and in
 IndexedDB (the 4 most recently used). Later runs with the same class path and
 `cheerpjInit` options start from it instead of booting, in this page and in
 later visits.
+
+With `warmSnapshot: true`, `cheerpjRunLibrary` also saves its VM after the
+first library call returns. Later library starts restore that image after
+checking files and directory listings the first call used. IndexedDB keeps the
+4 most recent warm images separately from boot snapshots.

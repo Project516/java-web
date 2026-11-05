@@ -5,8 +5,8 @@
 import { MemoryBackend, VFS } from "../fs.ts";
 import { JVM, SnapshotError } from "../jvm.ts";
 import { HttpBackend, parsePack } from "./http.ts";
-import { dropSnapshot, loadSnapshot, persist, saveSnapshot } from "./idb.ts";
-import type { SnapshotImage } from "../snapshot.ts";
+import { dropSnapshot, dropWarmSnapshot, loadSnapshot, loadWarmSnapshot, persist, saveSnapshot, saveWarmSnapshot } from "./idb.ts";
+import type { SnapshotImage, WarmSnapshotImage } from "../snapshot.ts";
 import type { LibraryError, LibraryReply } from "../library.ts";
 import type { NativeReply } from "../bridge.ts";
 import type { FromWorker, InitMessage, ToWorker } from "./protocol.ts";
@@ -113,6 +113,8 @@ declare const JAVA_WEB_BUILD: string;
 // in IndexedDB for later loads. A VM changes the image it restores, so each
 // gets a copy.
 const snapshots = new Map<string, SnapshotImage>();
+const warmSnapshots = new Map<string, WarmSnapshotImage>();
+const droppedWarmSnapshots = new Set<string>();
 const keep = (image: SnapshotImage) => {
   snapshots.delete(image.key);
   snapshots.set(image.key, image);
@@ -143,6 +145,29 @@ const snapshotCache = {
   },
 };
 
+const warmSnapshotCache = {
+  load: async (key: string) => {
+    if (droppedWarmSnapshots.has(key)) return null;
+    const image = warmSnapshots.get(key) ?? await loadWarmSnapshot(key);
+    if (!image) return null;
+    warmSnapshots.delete(key);
+    warmSnapshots.set(key, image);
+    return structuredClone(image);
+  },
+  save: (image: WarmSnapshotImage) => {
+    droppedWarmSnapshots.delete(image.warmKey);
+    warmSnapshots.delete(image.warmKey);
+    warmSnapshots.set(image.warmKey, structuredClone(image));
+    for (const k of [...warmSnapshots.keys()].slice(0, -4)) warmSnapshots.delete(k);
+    saveWarmSnapshot(image);
+  },
+  drop: (key: string) => {
+    warmSnapshots.delete(key);
+    droppedWarmSnapshots.add(key);
+    dropWarmSnapshot(key);
+  },
+};
+
 // A snapshot that cannot be restored is dropped, and a second VM boots.
 function retried<T>(start: () => Promise<T>): Promise<T> {
   return start().catch((e) => {
@@ -152,9 +177,10 @@ function retried<T>(start: () => Promise<T>): Promise<T> {
   });
 }
 
-function newVm(classpath: string[], vmId: number): JVM {
+function newVm(classpath: string[], vmId: number, library = false): JVM {
   return new JVM({
     snapshots: snapshotCache,
+    ...(library && config!.warmSnapshot ? { warmSnapshot: true, warmSnapshots: warmSnapshotCache } : {}),
     fs: vfs!,
     javaHome: "/jdk",
     classpath,
@@ -226,7 +252,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     }
     case "library": {
       reply(m.id, retried(() => {
-        const vm = newVm(m.classpath, m.lib);
+        const vm = newVm(m.classpath, m.lib, true);
         vms.set(m.lib, vm);
         return vm.startLibrary();
       }).then(() => ({ value: undefined })));

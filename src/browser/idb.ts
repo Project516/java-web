@@ -3,14 +3,15 @@
 // changes are written back in batches.
 
 import type { MemoryBackend, MemoryEntry } from "../fs.ts";
-import type { SnapshotImage } from "../snapshot.ts";
+import type { SnapshotImage, WarmSnapshotImage } from "../snapshot.ts";
 
 const DB = "java-web", STORE = "files";
 // its own database, so adding it needs no version change that open pages would block
 const SNAPSHOT_DB = "java-web-snapshots";
 // snapshot keys, most recently used first
 const ORDER = "#order";
-const KEEP_SNAPSHOTS = 4;
+const WARM_ORDER = "#warm-order";
+const KEEP_SNAPSHOTS = 4, KEEP_WARM_SNAPSHOTS = 4;
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -107,4 +108,36 @@ export function saveSnapshot(image: SnapshotImage) {
 
 export function dropSnapshot(key: string) {
   useSnapshot(key, null).catch(() => {});
+}
+
+async function useWarmSnapshot(key: string, image?: WarmSnapshotImage | null) {
+  const db = await openSnapshots();
+  if (!db) return;
+  const store = db.transaction(STORE, "readwrite").objectStore(STORE);
+  const id = `warm:${key}`;
+  if (image) store.put(image, id);
+  const order = ((await request(store.get(WARM_ORDER))) as string[] | undefined ?? []).filter((k) => k !== id);
+  if (image !== null) order.unshift(id);
+  for (const k of [...order.slice(KEEP_WARM_SNAPSHOTS), ...(image === null ? [id] : [])]) store.delete(k);
+  store.put(order.slice(0, KEEP_WARM_SNAPSHOTS), WARM_ORDER);
+}
+
+export async function loadWarmSnapshot(key: string): Promise<WarmSnapshotImage | null> {
+  try {
+    const db = await openSnapshots();
+    if (!db) return null;
+    const id = `warm:${key}`;
+    const image = (await request(db.transaction(STORE, "readonly").objectStore(STORE).get(id))) as WarmSnapshotImage | undefined;
+    if (!image) return null;
+    useWarmSnapshot(key).catch(() => {});
+    return image;
+  } catch { return null; }
+}
+
+export function saveWarmSnapshot(image: WarmSnapshotImage) {
+  useWarmSnapshot(image.warmKey, image).catch(() => {});
+}
+
+export function dropWarmSnapshot(key: string) {
+  useWarmSnapshot(key, null).catch(() => {});
 }

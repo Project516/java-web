@@ -12,7 +12,7 @@ import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
 import { JVM, LM_CLASS, LM_JAR, SnapshotError } from "./jvm.ts";
-import type { SnapshotImage } from "./snapshot.ts";
+import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
@@ -229,6 +229,8 @@ export interface NodeRunOptions {
   // where boot snapshots are kept, or null for none; by default
   // JAVA_WEB_SNAPSHOT_DIR (empty for none), else java-web/snapshots in the user's cache
   snapshotDir?: string | null;
+  // save and restore the library VM after its first idle call
+  warmSnapshot?: boolean;
 }
 
 function fixedInput(data: Uint8Array) {
@@ -275,7 +277,7 @@ function defaultSnapshotDir(): string | null {
   return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "java-web", "snapshots");
 }
 
-const KEEP_SNAPSHOTS = 16, KEEP_MARKERS = 256;
+const KEEP_SNAPSHOTS = 16, KEEP_WARM_SNAPSHOTS = 4, KEEP_MARKERS = 256;
 
 // set by the build of dist/node.js: names its code and image
 declare const JAVA_WEB_BUILD: string;
@@ -302,6 +304,7 @@ function buildId(vfs: VFS, packaged: boolean): string | null {
 function snapshotCache(dir: string, build: string) {
   const name = (key: string) => path.join(dir, createHash("sha256").update(key).digest("hex").slice(0, 32));
   const file = (key: string) => name(key) + ".snap";
+  const warmFile = (key: string) => name(key) + ".warm";
   // keeps the most recently used of each kind
   const prune = (ext: string, keep: number) => {
     const old = fs.readdirSync(dir).filter((f) => f.endsWith(ext)).map((f) => path.join(dir, f))
@@ -332,6 +335,24 @@ function snapshotCache(dir: string, build: string) {
       }
     },
     drop: (key: string) => fs.rmSync(file(key), { force: true }),
+    loadWarm: (key: string) => {
+      try {
+        const image = deserialize(fs.readFileSync(warmFile(key)));
+        const now = new Date();
+        fs.utimesSync(warmFile(key), now, now);
+        return image as WarmSnapshotImage;
+      } catch { return null; }
+    },
+    dropWarm: (key: string) => fs.rmSync(warmFile(key), { force: true }),
+    saveWarm: (image: WarmSnapshotImage) => {
+      const target = warmFile(image.warmKey), tmp = `${target}.${process.pid}.tmp`;
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(tmp, serialize(image));
+        fs.renameSync(tmp, target);
+      } finally { fs.rmSync(tmp, { force: true }); }
+      prune(".warm", KEEP_WARM_SNAPSHOTS);
+    },
     save: (image: SnapshotImage) => {
       const tmp = `${file(image.key)}.${process.pid}.tmp`;
       try {
@@ -365,8 +386,12 @@ function nodeVm(o: NodeRunOptions): JVM {
   });
   const snapDir = o.snapshotDir === undefined ? defaultSnapshotDir() : o.snapshotDir;
   const build = snapDir ? buildId(vfs, packaged) : null;
+  const cache = snapDir && build ? snapshotCache(snapDir, build) : null;
   const vm: JVM = new JVM({
-    ...(snapDir && build ? { snapshots: snapshotCache(snapDir, build) } : {}),
+    ...(cache ? { snapshots: cache } : {}),
+    ...(o.warmSnapshot && cache ? { warmSnapshot: true, warmSnapshots: {
+      load: cache.loadWarm, save: cache.saveWarm, drop: cache.dropWarm,
+    } } : {}),
     fs: vfs,
     javaHome: "/jdk",
     localeData: o.localeData,
