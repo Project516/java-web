@@ -54,6 +54,11 @@ public class Processes {
         tree.waitFor();
       }
     }
+    for (int i = 0; i < 20; i++) {
+      new ProcessBuilder("sh", "-c", "echo inherited " + i + "; echo inherited-err " + i + " >&2").inheritIO().start().waitFor();
+      System.out.println("after " + i);
+      System.err.println("after-err " + i);
+    }
     Process exit = new ProcessBuilder("sh", "-c", "exit 17").start();
     System.out.println("exit=" + exit.waitFor());
     Path dir = Files.createTempDirectory("process-test");

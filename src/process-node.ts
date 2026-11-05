@@ -251,6 +251,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         const record: Child = { process: child, start: processInfo(pid)?.start ?? BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), java, exited: null! };
         record.exited = exited.then((code) => {
           record.code = code;
+          // lets inherited output that came in with the exit reach the VM first;
+          // waiting for the streams to close would hang while a grandchild holds them
           return new Promise<number>((resolve) => setImmediate(() => resolve(code)));
         });
         children.set(pid, record);
