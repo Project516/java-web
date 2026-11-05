@@ -45,7 +45,8 @@ See [docs/node.md](docs/node.md).
   `BufferedImage`, with HotSpot's pixels except for text.
 - Sockets: real ones under Node; in the browser, loopback inside the VM and
   `http:`/`https:` through `fetch`.
-- Not yet: AWT and Swing windows, child processes, IPv6.
+- Child processes under Node, through the host's own programs.
+- Not yet: AWT and Swing windows, child processes in the browser, IPv6.
 
 Details: [docs/support.md](docs/support.md).
 
