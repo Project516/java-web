@@ -86,6 +86,18 @@ function sha256(s: Int32Array, b: Int8Array, ofs: number) {
   s[4] = (s[4] + e) | 0; s[5] = (s[5] + f) | 0; s[6] = (s[6] + g) | 0; s[7] = (s[7] + h) | 0;
 }
 
+export function sha256Bytes(input: Uint8Array): string {
+  const size = Math.ceil((input.length + 9) / 64) * 64;
+  const data = new Int8Array(size);
+  data.set(input);
+  data[input.length] = -128;
+  let bits = BigInt(input.length) * 8n;
+  for (let i = 0; i < 8; i++, bits >>= 8n) data[size - 1 - i] = Number(bits & 255n);
+  const state = Int32Array.from([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  for (let offset = 0; offset < size; offset += 64) sha256(state, data, offset);
+  return Array.from(state, (x) => (x >>> 0).toString(16).padStart(8, "0")).join("");
+}
+
 // SHA-512 on 32-bit halves: hi and lo words in separate arrays
 const K512 = (() => {
   const k = [

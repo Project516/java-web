@@ -52,6 +52,7 @@ resolves to the exit code. Its options:
 - `fetch`: sockets stay inside the VM, and `http:` requests go to this `fetch`, as in the browser
 
 - `snapshotDir`: where boot snapshots are kept, or `null` for none (see below)
+- `warmSnapshot: true`: save a library VM once its calls have warmed it up (see below)
 
 `startLibrary(options)` starts a VM in library mode, and `libraryOf(vm)` is its
 `lib`, used as `cheerpjRunLibrary`'s result is in the browser. `vm.halt(0)`
@@ -67,3 +68,13 @@ reads all of them. The snapshots, about 1 MB each, are kept in
 `$XDG_CACHE_HOME/java-web/snapshots` (`~/.cache/java-web/snapshots`), the 16
 most recently used. Set `JAVA_WEB_SNAPSHOT_DIR` to keep them elsewhere, or to
 an empty value to turn them off.
+
+Set `warmSnapshot: true` in `startLibrary` options to save the VM after a call
+returns once its calls have loaded at least 200 classes since boot (one javac
+compile loads over a thousand) and no library handles are live. A later library
+start with the same class path and working directory restores it, after
+checking that the files, missing paths and directory listings those calls used
+are unchanged; a javac compile from it takes about 1 s instead of 6 s on a
+Raspberry Pi 5. An image is about 18 MB; warm snapshots share the snapshot
+directory and keep the 2 most recent. They build on boot snapshots, so with
+`snapshotDir: null` there are none.

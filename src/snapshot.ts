@@ -8,8 +8,9 @@ import { parseClass } from "./classfile.ts";
 import type { JVM } from "./jvm.ts";
 import { platformProperties, vmProperties } from "./natives/misc.ts";
 import { restorePending, restoreReference } from "./natives/ref.ts";
-import { streams } from "./natives/io.ts";
 import { MAX_HEAP } from "./runtime.ts";
+import type { WarmTrace } from "./fs.ts";
+import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
 import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
@@ -19,6 +20,11 @@ export interface SnapshotImage {
   classes: ClassRec[];
   vm: VmRec;
   threads: ThreadRec[];
+}
+
+export interface WarmSnapshotImage extends SnapshotImage {
+  warmKey: string;
+  trace: WarmTrace;
 }
 
 interface ClassRec {
@@ -41,6 +47,7 @@ interface ClassRec {
   vmMembers: unknown;
   nestHost: unknown;
   links: [string, unknown][];
+  caches: [string, unknown][];
 }
 
 interface VmRec {
@@ -85,7 +92,7 @@ export function snapshotKey(vm: JVM, build: string): string {
 const WAIT0 = "java/lang/Object.wait0(J)V";
 const REF_WAIT = "java/lang/ref/Reference.waitForReferencePendingList()V";
 // vm.state entries rebuilt on demand rather than saved
-const TRANSIENT = new Set(["stdin", "refs", "socks"]);
+const TRANSIENT = new Set(["stdin", "refs", "socks", "continuations"]);
 
 class Encoder {
   private twins = new Map<unknown, unknown>();
@@ -244,7 +251,7 @@ class Decoder {
 
 // The image of a VM whose boot just finished on main, which keeps running
 // and is not saved itself.
-export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
+export function dumpVM(vm: JVM, main: JThread, key: string, library = false): SnapshotImage {
   const classes = vm.created!;
   const others = [...vm.threads].filter((t) => t !== main);
   const e = new Encoder(classes, [main, ...others]);
@@ -262,6 +269,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
       vmMembers: e.enc(c.vmMembers, `${p}.vmMembers`),
       nestHost: e.enc(c.nestHost, `${p}.nestHost`),
       links: c.methods.filter((m) => m.link).map((m) => [m.key, e.enc(m.link, `${p}.${m.key}.link`)]),
+      caches: c.methods.filter((m) => m.cache).map((m) => [m.key, e.enc(m.cache, `${p}.${m.key}.cache`)]),
     };
     if (c.initThread || c.initWaiters.length) throw new Error(`snapshot: ${c.name} is being initialized`);
     if (rec.kind === "prim") rec.desc = c.prim!;
@@ -290,13 +298,14 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
     classCount: vm.classCount,
     state: [...s].filter(([k, x]) => {
       if (k === "socks" && x.socks.size) throw new Error("snapshot: a socket is open");
+      if (k === "continuations" && x.busy) throw new Error("snapshot: a continuation is active");
       if (k === "fds" && [...x.files.values()].some(streams)) throw new Error("snapshot: a host file that streams is open");
       return !TRANSIENT.has(k) && !k.startsWith("parked:");
-    }).map(([k, v]) => [k, e.enc(v, `state.${k}`)]),
+    }).map(([k, v]) => [k, k === "fds" ? snapshotFds(v) : e.enc(v, `state.${k}`)]),
     pending: e.enc(refs?.pending ?? [], "refs.pending"),
     mem: { buf: mem.u8.slice(0, mem.top), top: mem.top, sizes: e.enc(mem.sizes, "mem"), free: e.enc(mem.free, "mem") },
   };
-  const threads = others.map((t): ThreadRec => {
+  const threadRec = (t: JThread, isMain = false): ThreadRec => {
     const p = `thread ${t.name}`;
     const frames = t.frames.map((f, i) => {
       if (f instanceof Frame) {
@@ -304,6 +313,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
         return { $: "Fr", m: e.enc(f.m, p), pc: f.pc, sp: f.sp, l: e.enc(f.locals, p), s: e.enc(f.stack, p), k: e.enc(f.lock, p), nl: f.needLock };
       }
       if (f.input !== undefined || f.thrown) throw new Error(`snapshot: native frame with a pending value in ${p}`);
+      if (library && isMain && i === 0 && f.m === null) return { $: "library" };
       if (i === 0 && f.m === null) return { $: "body" };
       const key = f.m ? `${f.m.cls.name}.${f.m.key}` : "vm";
       if (key === REF_WAIT) return { $: "native", m: e.enc(f.m, p) };
@@ -326,8 +336,21 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
       scopedValueCache: e.enc(t.scopedValueCache, p),
       frames,
     };
-  });
-  return { key, classes: classRecs, vm: vmRec, threads: [{ obj: e.enc(main.obj, "main") } as ThreadRec, ...threads] };
+  };
+  const threads = others.map((t) => threadRec(t));
+  return { key, classes: classRecs, vm: vmRec, threads: [library ? threadRec(main, true) : { obj: e.enc(main.obj, "main") } as ThreadRec, ...threads] };
+}
+
+function snapshotFds(value: unknown): unknown {
+  const table = value as { next: number; files: Map<number, OpenFile> };
+  const files: [number, { path: string; pos: number; size: number }][] = [];
+  for (const [id, file] of table.files) {
+    if (!(file instanceof OpenFile) || file.writable || file.dirty || file.path === "" || (file as any).host !== undefined || (file.contents as any).host !== undefined) {
+      throw new Error("snapshot: a file is busy");
+    }
+    files.push([id, { path: file.path, pos: file.pos, size: file.size }]);
+  }
+  return { next: table.next, files };
 }
 
 // A waiter woken as if spuriously: takes its monitor back with the count it gave up.
@@ -356,6 +379,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
       if (cf.name !== r.cfName) cf = { ...cf, name: r.cfName!, renamedFrom: cf.name };
       const sup = r.superclass === null ? null : classes[r.superclass!];
       c = vm.defineLinked(cf, d.dec(r.loader), sup, r.interfaces!.map((i) => classes[i]), r.hidden);
+      c.bytes = r.bytes;
     }
     if (!c || c.name !== r.name) throw new Error(`snapshot: ${r.name} came back as ${c?.name}`);
     classes.push(c);
@@ -372,6 +396,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
     c.vmMembers = d.dec(r.vmMembers);
     c.nestHost = d.dec(r.nestHost);
     for (const [k, l] of r.links) c.methodMap.get(k)!.link = d.dec(l);
+    for (const [k, cache] of r.caches ?? []) c.methodMap.get(k)!.cache = d.dec(cache);
   });
   d.flush();
   const v = image.vm;
@@ -385,7 +410,13 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   for (const [k, s] of d.dec(v.interned) as Map<string, JObject>) interned.set(k, s);
   (vm as any).hashSeed = v.hashSeed;
   vm.classCount = v.classCount;
-  for (const [k, x] of v.state) vm.state.set(k, d.dec(x));
+  for (const [k, x] of v.state) {
+    if (k === "fds") {
+      const fds = x as { next: number; files: [number, { path: string; pos: number; size: number }][] };
+      const files = new Map(fds.files.map(([id, f]) => [id, reopenSnapshotFile(f.path, f.size, f.pos, vm.fs)]));
+      vm.state.set(k, { next: fds.next, files });
+    } else vm.state.set(k, d.dec(x));
+  }
   const mem = vm.mem as any;
   mem.buf = new ArrayBuffer(Math.max(mem.buf.byteLength, v.mem.buf.length));
   mem.u8 = new Uint8Array(mem.buf);
@@ -396,8 +427,17 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   mem.free = d.dec(v.mem.free);
   d.flush();
 
-  main.obj = d.dec(image.threads[0].obj);
+  const mainRec = image.threads[0];
+  main.obj = d.dec(mainRec.obj);
   main.obj!.x = main;
+  if (mainRec.frames) {
+    for (const f of mainRec.frames as any[]) {
+      if (f.$ === "library") {
+        const gen = vm.library.loop(main);
+        main.frames.push(new NativeFrame(gen, null, "V", false));
+      } else throw new Error(`snapshot: unsupported main frame ${f.$}`);
+    }
+  }
   image.threads.slice(1).forEach((r, i) => {
     const t = others[i];
     t.obj = d.dec(r.obj);

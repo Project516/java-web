@@ -24,7 +24,7 @@ import { invokePolymorphic, linkCallSite, resolveConstant } from "./indy.ts";
 import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
 import { dumpVM, restoreVM, snapshotKey } from "./snapshot.ts";
-import type { SnapshotImage } from "./snapshot.ts";
+import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import type { LibraryRequest } from "./library.ts";
 import type { HostNative } from "./hostnatives.ts";
 import { PROXY_HOST, PROXY_PORT } from "./http-proxy.ts";
@@ -80,6 +80,12 @@ export interface JvmOptions {
     // forgets a snapshot that could not be restored
     drop: (key: string) => void;
   };
+  warmSnapshots?: {
+    load: (key: string) => WarmSnapshotImage | null | Promise<WarmSnapshotImage | null>;
+    save: (image: WarmSnapshotImage) => void;
+    drop: (key: string) => void;
+  };
+  warmSnapshot?: boolean;
 }
 
 // what a resumed thread body yields first, before the run under it returns
@@ -105,6 +111,10 @@ const YIELD = (() => {
     ch.port2.postMessage(0);
   };
 })();
+
+// Classes loaded since boot before a library VM saves a warm snapshot; one
+// javac compile loads over a thousand.
+const WARM_MIN_CLASSES = 200;
 
 export class JVM {
   readonly opts: JvmOptions;
@@ -1076,8 +1086,14 @@ export class JVM {
   // library, one call at a time on the main thread, as in CheerpJ's library mode.
   startLibrary(): Promise<void> {
     const t = new JThread(this);
+    this.libraryStarting = true;
     return new Promise<void>((resolve, reject) => {
       this.restore(t, (restored) => {
+        if (restored && this.warmRestored) {
+          this.startThread(t);
+          resolve();
+          return;
+        }
         t.pushNative(this.libraryGen(t, restored, resolve, reject), null, "V", false);
         this.startThread(t);
       }, reject);
@@ -1085,6 +1101,12 @@ export class JVM {
   }
 
   private lib: Library | null = null;
+  private libraryStarting = false;
+  private warmRestored = false;
+  private warmSaved = false;
+  private warmKey = "";
+  private warmTraceActive = false;
+  private warmTraceClasses = 0;
 
   // Java objects and calls for library mode, and for natives that call back.
   get library(): Library {
@@ -1106,8 +1128,44 @@ export class JVM {
       failed(e instanceof Error ? e : new Error(String(e)));
       return;
     }
+    if (this.opts.warmSnapshot && this.libraryStarting && this.snapshots) {
+      this.warmTraceActive = this.fs.beginWarmTrace();
+      this.warmTraceClasses = this.classCount;
+    }
     started();
     yield* this.library.loop(t);
+  }
+
+  libraryIdle(t: JThread) {
+    const cache = this.opts.warmSnapshots;
+    if (!this.opts.warmSnapshot || !this.warmTraceActive || this.warmSaved || !cache) return;
+    // until calls have loaded enough classes there is little warm-up worth saving
+    if (this.classCount - this.warmTraceClasses < WARM_MIN_CLASSES) return;
+    try {
+      if (this.library.handleCount) throw new Error("library handles are live");
+      const fds = this.state.get("fds") as { files?: Map<number, { path: string; writable: boolean }> } | undefined;
+      for (const file of fds?.files?.values() ?? []) if (!file.writable && file.path) this.fs.recordWarmFile(file.path);
+      const trace = this.fs.peekWarmTrace();
+      if (!trace) {
+        this.fs.endWarmTrace();
+        this.warmTraceActive = false;
+        this.debug("warm snapshot busy: access record too large");
+        return;
+      }
+      const key = this.opts.snapshots ? snapshotKey(this, this.opts.snapshots.build) : "";
+      const image = dumpVM(this, t, key, true) as WarmSnapshotImage;
+      image.warmKey = this.warmKey;
+      image.trace = trace;
+      cache.save(image);
+      this.fs.endWarmTrace();
+      this.warmTraceActive = false;
+      this.warmSaved = true;
+      for (const c of this.created ?? []) c.bytes = undefined;
+      this.created = null;
+      this.debug("warm snapshot saved");
+    } catch (e) {
+      this.debug("warm snapshot busy:", e instanceof Error ? e.message : e);
+    }
   }
 
   // System.initPhase1 to 3, as HotSpot's Threads::create_vm runs them.
@@ -1178,6 +1236,48 @@ export class JVM {
   // with t as its main thread, then starts it; synchronously when load is.
   private restore(t: JThread, start: (restored: boolean) => void, failed: (e: SnapshotError) => void) {
     const snaps = this.snapshots;
+    if (snaps && this.libraryStarting && this.opts.warmSnapshot && this.opts.warmSnapshots) {
+      const build = snaps.build;
+      this.warmKey = JSON.stringify([snapshotKey(this, build), this.opts.classpath ?? [], this.opts.cwd ?? "/", this.props.get("sun.java.command") ?? null]);
+      const useWarm = (image: WarmSnapshotImage | null) => {
+        if (!image) return false;
+        let mismatch: string | null;
+        try {
+          mismatch = image.warmKey === this.warmKey && image.key === snapshotKey(this, build) ? this.fs.warmTraceMismatch(image.trace) : "key changed";
+        } catch (e) {
+          this.opts.warmSnapshots!.drop(this.warmKey);
+          this.debug("warm snapshot missed validation:", e instanceof Error ? e.message : e);
+          return false;
+        }
+        if (mismatch !== null) {
+          this.opts.warmSnapshots!.drop(this.warmKey);
+          this.debug("warm snapshot missed validation:", mismatch);
+          return false;
+        }
+        try {
+          restoreVM(this, image, t);
+          this.warmRestored = true;
+          this.warmSaved = true;
+          this.debug("warm snapshot restored");
+          start(true);
+          return true;
+        } catch (e) {
+          this.opts.warmSnapshots!.drop(this.warmKey);
+          this.halt(1);
+          failed(new SnapshotError(`warm snapshot not restored: ${e instanceof Error ? e.message : e}`, { cause: e }));
+          return true;
+        }
+      };
+      const image = this.opts.warmSnapshots.load(this.warmKey);
+      if (image instanceof Promise) {
+        image.then((candidate) => { if (!useWarm(candidate)) this.restoreBoot(t, start, failed, snaps); }, () => this.restoreBoot(t, start, failed, snaps));
+      } else if (!useWarm(image)) this.restoreBoot(t, start, failed, snaps);
+      return;
+    }
+    this.restoreBoot(t, start, failed, snaps);
+  }
+
+  private restoreBoot(t: JThread, start: (restored: boolean) => void, failed: (e: SnapshotError) => void, snaps = this.snapshots) {
     if (!snaps) return start(false);
     const key = snapshotKey(this, snaps.build);
     const done = (image: SnapshotImage | null) => {
@@ -1216,8 +1316,10 @@ export class JVM {
         }
       }
     }
-    for (const c of this.created ?? []) c.bytes = undefined;
-    this.created = null;
+    if (!this.opts.warmSnapshot || !this.libraryStarting) {
+      for (const c of this.created ?? []) c.bytes = undefined;
+      this.created = null;
+    }
     if (cmd !== undefined) {
       this.props.set("sun.java.command", cmd);
       const system = this.loadBootOrFail("java/lang/System");

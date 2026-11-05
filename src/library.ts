@@ -366,6 +366,7 @@ export class Library {
       const call = me.call;
       me.call = null;
       yield* this.serve(t, call);
+      this.vm.libraryIdle(t);
     }
   }
 

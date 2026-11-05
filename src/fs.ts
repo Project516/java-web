@@ -1,5 +1,7 @@
 // Virtual file system the Java side sees. Paths are absolute and use "/".
 
+import { sha256Bytes } from "./natives/crypto.ts";
+
 export interface Space {
   bsize: bigint;
   blocks: bigint;
@@ -63,6 +65,18 @@ export interface Backend {
   access?(path: string, mode: number): boolean;
 }
 
+export interface WarmTrace {
+  reads: [string, string][];
+  missing: string[];
+  lists: [string, string[] | null][];
+}
+
+const TRACE_LIMIT = 128 << 10;
+
+function digest(data: Uint8Array): string {
+  return sha256Bytes(data);
+}
+
 export function normalize(path: string): string {
   if (path.length > 1 && path[0] === "/" && !path.endsWith("/") && !path.endsWith("/.") && !path.endsWith("/..") &&
     !path.includes("//") && !path.includes("/./") && !path.includes("/../")) return path;
@@ -80,6 +94,114 @@ export class VFS {
   private setTimes = new Map<string, { ms: number; ns: bigint }>();
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
+  private warmTrace: WarmTrace | null = null;
+  private warmTraceSize = 0;
+  private warmTraceTooLarge = false;
+  // paths the VM itself changed while tracing: saved as they are at save time
+  private warmChanged: Set<string> | null = null;
+
+  beginWarmTrace(): boolean {
+    if (this.warmTrace) return false;
+    this.warmTrace = { reads: [], missing: [], lists: [] };
+    this.warmChanged = new Set();
+    this.warmTraceSize = 0;
+    this.warmTraceTooLarge = false;
+    return true;
+  }
+
+  endWarmTrace(): WarmTrace | null {
+    const trace = this.warmTraceTooLarge ? null : this.warmTrace;
+    this.warmTrace = null;
+    this.warmChanged = null;
+    this.warmTraceTooLarge = false;
+    return trace;
+  }
+
+  // What the traced paths hold now. A later start checks against this, so a
+  // file the warm-up wrote itself (javac's output) does not count as changed.
+  peekWarmTrace(): WarmTrace | null {
+    if (!this.warmTrace || this.warmTraceTooLarge) return null;
+    const changed = this.warmChanged!;
+    const touched = (p: string) => changed.has(p) || [...changed].some((c) => c.startsWith(p === "/" ? "/" : p + "/"));
+    const trace: WarmTrace = { reads: [], missing: [], lists: [] };
+    const tracing = this.warmTrace;
+    this.warmTrace = null;
+    try {
+      for (const [p, hash] of tracing.reads) {
+        if (!changed.has(p)) trace.reads.push([p, hash]);
+        else {
+          const now = this.read(p);
+          if (now) trace.reads.push([p, digest(now)]);
+          else trace.missing.push(p);
+        }
+      }
+      for (const p of tracing.missing) {
+        const now = changed.has(p) ? this.read(p) : null;
+        if (now) trace.reads.push([p, digest(now)]);
+        // a directory the warm-up made itself needs no check
+        else if (!changed.has(p) || !this.stat(p)) trace.missing.push(p);
+      }
+      for (const [p, names] of tracing.lists) trace.lists.push([p, touched(p) ? this.list(p) : names]);
+    } finally {
+      this.warmTrace = tracing;
+    }
+    return trace;
+  }
+
+  recordWarmFile(path: string) {
+    if (!this.warmTrace || path === "/jdk" || path.startsWith("/jdk/")) return;
+    if (!this.read(path)) this.warmTraceTooLarge = true;
+  }
+
+  private traceMissing(path: string) {
+    if (!this.warmTrace || this.warmTraceTooLarge) return;
+    path = normalize(path);
+    if (path === "/jdk" || path.startsWith("/jdk/")) return;
+    if (this.warmTrace.missing.includes(path)) return;
+    this.warmTraceSize += path.length;
+    if (this.warmTraceSize > TRACE_LIMIT) this.warmTraceTooLarge = true;
+    this.warmTrace.missing.push(path);
+  }
+
+  private traceRead(path: string, data: Uint8Array | null) {
+    if (!this.warmTrace || this.warmTraceTooLarge) return;
+    path = normalize(path);
+    if (!data) return this.traceMissing(path);
+    if (path === "/jdk" || path.startsWith("/jdk/")) return;
+    const reads = this.warmTrace.reads;
+    const old = reads.find(([p]) => p === path);
+    const hash = digest(data);
+    // a file that changed while the warm-up ran cannot be checked later
+    if (old) {
+      if (old[1] !== hash) this.warmTraceTooLarge = true;
+      return;
+    }
+    this.warmTraceSize += path.length + hash.length;
+    if (this.warmTraceSize > TRACE_LIMIT) { this.warmTraceTooLarge = true; return; }
+    reads.push([path, hash]);
+  }
+
+  validateWarmTrace(trace: WarmTrace): boolean {
+    return this.warmTraceMismatch(trace) === null;
+  }
+
+  warmTraceMismatch(trace: WarmTrace): string | null {
+    for (const [path, hash] of trace.reads) {
+      if (this.warmTraceDigest(path) !== hash) return `file changed: ${path}`;
+    }
+    for (const path of trace.missing) if (this.stat(path) !== null) return `path appeared: ${path}`;
+    for (const [path, names] of trace.lists) {
+      const now = this.list(path);
+      if (now === null ? names !== null : names === null || now.length !== names.length || now.some((n, i) => n !== names[i])) return `directory changed: ${path}`;
+    }
+    return null;
+  }
+
+  private warmTraceDigest(path: string): string | null {
+    const data = this.read(path);
+    return data ? digest(data) : null;
+  }
+
   private watchers = new Set<(path: string, event: "create" | "modify" | "delete") => void>();
 
   watchChanges(watcher: (path: string, event: "create" | "modify" | "delete") => void): () => void {
@@ -90,6 +212,7 @@ export class VFS {
   private changed(path: string, event: "create" | "modify" | "delete") {
     path = normalize(path);
     for (const watcher of this.watchers) watcher(path, event);
+    this.warmChanged?.add(path);
   }
 
   resolvePath(path: string): string {
@@ -157,6 +280,7 @@ export class VFS {
     if (normalize(path) === "/" || this.mountsUnder(path).length > 0 || this.isMountPoint(path)) {
       return { dir: true, size: 0, mtime: 0 };
     }
+    this.traceMissing(n);
     return null;
   }
 
@@ -168,7 +292,9 @@ export class VFS {
   read(path: string): Uint8Array | null {
     if (DEVICES.has(normalize(path))) return null;
     const r = this.resolve(path);
-    return r ? r[0].read(r[1]) : null;
+    const data = r ? r[0].read(r[1]) : null;
+    this.traceRead(path, data);
+    return data;
   }
 
   canOpenFile(path: string): boolean {
@@ -198,18 +324,39 @@ export class VFS {
 
   readRange(path: string, off: number, len: number): Uint8Array | null {
     const r = this.resolve(path);
-    return r?.[0].readRange?.(r[1], off, len) ?? null;
+    const data = r?.[0].readRange?.(r[1], off, len) ?? null;
+    if (this.warmTrace && !path.startsWith("/jdk/") && !this.warmTrace.reads.some(([p]) => p === normalize(path))) this.traceRead(path, r?.[0].read(r[1]) ?? null);
+    return data;
   }
 
   list(path: string): string[] | null {
     const r = this.resolve(path);
     const own = r ? r[0].list(r[1]) : null;
     const extra = this.mountsUnder(path);
-    if (!own && extra.length === 0) return this.stat(path)?.dir ? [] : null;
+    if (!own && extra.length === 0) {
+      const absent = this.stat(path)?.dir ? [] : null;
+      this.traceList(path, absent);
+      return absent;
+    }
     const names = [...new Set([...(own ?? []), ...extra])];
-    if (!this.hidden.length) return names;
+    if (!this.hidden.length) {
+      this.traceList(path, names);
+      return names;
+    }
     const dir = normalize(path);
-    return names.filter((name) => !this.isHidden(dir === "/" ? `/${name}` : `${dir}/${name}`));
+    const visible = names.filter((name) => !this.isHidden(dir === "/" ? `/${name}` : `${dir}/${name}`));
+    this.traceList(path, visible);
+    return visible;
+  }
+
+  private traceList(path: string, names: string[] | null) {
+    if (!this.warmTrace || this.warmTraceTooLarge) return;
+    path = normalize(path);
+    if (path === "/jdk" || path.startsWith("/jdk/")) return;
+    if (this.warmTrace.lists.some(([p]) => p === path)) return;
+    this.warmTraceSize += path.length + (names?.reduce((n, x) => n + x.length, 0) ?? 0);
+    if (this.warmTraceSize > TRACE_LIMIT) { this.warmTraceTooLarge = true; return; }
+    this.warmTrace.lists.push([path, names?.slice() ?? null]);
   }
 
   write(path: string, data: Uint8Array): boolean {

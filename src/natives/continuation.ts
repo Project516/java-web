@@ -29,11 +29,14 @@ interface State {
   frozen: WeakMap<JObject, AnyFrame[]>;
   // enterSpecial's native frames: where each mounted continuation starts
   entries: WeakMap<NativeFrame, Entry>;
+  active: number;
+  frozenCount: number;
+  busy: boolean;
 }
 
 function state(vm: JVM): State {
   let s = vm.state.get("continuations") as State | undefined;
-  if (!s) vm.state.set("continuations", (s = { frozen: new WeakMap(), entries: new WeakMap() }));
+  if (!s) vm.state.set("continuations", (s = { frozen: new WeakMap(), entries: new WeakMap(), active: 0, frozenCount: 0, busy: false }));
   return s;
 }
 
@@ -84,21 +87,29 @@ export const natives: Natives = {
   [`${C}.enterSpecial(Ljdk/internal/vm/Continuation;ZZ)V`]: function* (t, [c, isContinue, isVirtual]): NativeGen {
     const s = state(t.vm);
     s.entries.set(t.top as NativeFrame, { cont: c, virtual: isVirtual === 1, held: t.held });
-    if (!isContinue) {
-      const enter = t.vm.loadBoot(C)!.methodMap.get("enter(Ljdk/internal/vm/Continuation;Z)V")!;
-      yield t.call(enter, c, 0);
-      return;
+    s.active++;
+    s.busy = true;
+    try {
+      if (!isContinue) {
+        const enter = t.vm.loadBoot(C)!.methodMap.get("enter(Ljdk/internal/vm/Continuation;Z)V")!;
+        yield t.call(enter, c, 0);
+        return;
+      }
+      const frozen = s.frozen.get(c);
+      if (!frozen) throw new PendingThrow("java/lang/IllegalStateException", "Continuation has no frames");
+      s.frozen.delete(c);
+      s.frozenCount--;
+      setChunk(t, c, false);
+      t.frames.push(...frozen);
+      const top = t.top as Frame;
+      top.stack[top.sp++] = 0;
+      top.pc += 3;
+      yield { kind: "resume" };
+    } finally {
+      s.entries.delete(t.top as NativeFrame);
+      s.active--;
+      s.busy = s.active > 0 || s.frozenCount > 0;
     }
-    const frozen = s.frozen.get(c);
-    if (!frozen) throw new PendingThrow("java/lang/IllegalStateException", "Continuation has no frames");
-    s.frozen.delete(c);
-    setChunk(t, c, false);
-    t.frames.push(...frozen);
-    // yield0 is at its invokestatic of doYield, which returns 0 when it continues
-    const top = t.top as Frame;
-    top.stack[top.sp++] = 0;
-    top.pc += 3;
-    yield { kind: "resume" };
   },
   // Its own frame stays on top, so its result goes to enterSpecial, which then
   // returns to Continuation.run as if the continuation had finished.
@@ -108,7 +119,10 @@ export const natives: Natives = {
     const why = pinned(t, e);
     if (why) return why;
     const cont = state(t.vm).entries.get(t.frames[e] as NativeFrame)!.cont;
-    state(t.vm).frozen.set(cont, t.frames.splice(e + 1, t.frames.length - e - 2));
+    const s = state(t.vm);
+    s.frozen.set(cont, t.frames.splice(e + 1, t.frames.length - e - 2));
+    s.frozenCount++;
+    s.busy = true;
     setChunk(t, cont, true);
     return 0;
   },

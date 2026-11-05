@@ -236,6 +236,12 @@ class LazyFile extends OpenFile {
   }
 }
 
+export function reopenSnapshotFile(path: string, size: number, pos: number, vfs: VFS): OpenFile {
+  const file = vfs.canReadRange(path) ? new LazyFile(path, size, vfs) : new OpenFile(path, vfs.read(path) ?? new Uint8Array(), false);
+  file.pos = pos;
+  return file;
+}
+
 // Read-only files at least this big are read in parts where the backend can.
 const LAZY_MIN = 256 << 10;
 
