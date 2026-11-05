@@ -197,7 +197,7 @@ function* pollSock(t: JThread, s: Sock, events: number, timeout: number): Native
 
 function* pollPair(t: JThread, a: Sock, b: Sock): NativeGen {
   for (;;) {
-    const ready = (a.poll() ? 1 : 0) + (b.poll() ? 1 : 0);
+    const ready = ((a.poll() & POLLIN) ? 1 : 0) + ((b.poll() & POLLIN) ? 1 : 0);
     if (ready) return ready;
     yield t.block(new Promise<void>((resolve) => {
       let done = false;
@@ -212,7 +212,7 @@ function* pollPair(t: JThread, a: Sock, b: Sock): NativeGen {
       a.waiters.add(wake);
       b.waiters.add(wake);
       blocked.set(t, wake);
-      if (a.poll() || b.poll()) wake();
+      if ((a.poll() & POLLIN) || (b.poll() & POLLIN)) wake();
     }));
   }
 }
