@@ -287,7 +287,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     if (host) {
       closeHostsOnExit(t.vm);
       const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host });
-      if (append) f.pos = f.size;
+      if (append) { f.pos = f.size; f.append = true; }
       const tab = table(t);
       tab.files.set(tab.next, f);
       return tab.next++;
