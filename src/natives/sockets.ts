@@ -22,7 +22,7 @@ type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }
 const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
 const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
 const IN_IGNORED = 0x8000;
-const IN_MASK_ADD = IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE;
+const WATCH_EVENTS = IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE;
 const MAX_INOTIFY_BYTES = 1 << 20;
 
 function inotify(t: JThread, fd: number): Inotify | undefined {
@@ -548,7 +548,7 @@ export const natives: Natives = {
       wd = state.nextWd++;
       state.paths.set(path, wd);
     }
-    state.watches.set(wd, { path, mask: mask & IN_MASK_ADD });
+    state.watches.set(wd, { path, mask: mask & WATCH_EVENTS });
     return wd;
   },
   "sun/nio/fs/LinuxWatchService.inotifyRmWatch(II)V": (t, [fd, wd]) => {
