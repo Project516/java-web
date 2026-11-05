@@ -6,6 +6,15 @@ import java.nio.file.Path;
 
 public class StreamingFile {
   public static void main(String[] args) throws Exception {
+    try (var directory = Files.newByteChannel(Path.of(""), java.nio.file.StandardOpenOption.READ,
+                                              java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+      try {
+        directory.read(ByteBuffer.allocate(1));
+        System.out.println("directory readable");
+      } catch (java.io.IOException e) {
+        System.out.println(e.getClass().getName());
+      }
+    }
     Path path = Files.createTempFile("streaming-file", ".bin");
     try (RandomAccessFile first = new RandomAccessFile(path.toFile(), "rw");
          RandomAccessFile second = new RandomAccessFile(path.toFile(), "rw")) {
@@ -27,6 +36,29 @@ public class StreamingFile {
       System.out.println(first.read() + " " + first.read() + " " + second.length());
     } finally {
       Files.deleteIfExists(path);
+    }
+    Path sparse = Files.createTempFile("streaming-sparse", ".bin");
+    try (RandomAccessFile file = new RandomAccessFile(sparse.toFile(), "rw");
+         RandomAccessFile reader = new RandomAccessFile(sparse.toFile(), "r")) {
+      file.write(17);
+      file.seek(16L << 20);
+      file.write(42);
+      reader.seek(0);
+      System.out.print(reader.read() + " ");
+      reader.seek((16L << 20) - 1);
+      System.out.println(reader.read() + " " + reader.read() + " " + reader.length());
+    } finally {
+      Files.deleteIfExists(sparse);
+    }
+    Path append = Files.createTempFile("streaming-append", ".bin");
+    try (FileChannel channel = FileChannel.open(append, java.nio.file.StandardOpenOption.WRITE,
+                                                 java.nio.file.StandardOpenOption.APPEND)) {
+      channel.write(ByteBuffer.wrap(new byte[] {1, 2}));
+      channel.position(0);
+      channel.write(ByteBuffer.wrap(new byte[] {3}));
+      System.out.println(java.util.Arrays.toString(Files.readAllBytes(append)));
+    } finally {
+      Files.deleteIfExists(append);
     }
     Path big = Files.createTempFile("streaming-file", ".bin");
     try {

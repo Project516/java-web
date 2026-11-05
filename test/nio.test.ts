@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryBackend, VFS } from "../src/fs.ts";
@@ -67,6 +67,57 @@ test("NodeBackend retains the errno from a failed chmod", () => {
     const backend = new NodeBackend(dir, true);
     assert.equal(backend.chmod("/file/child", (mode) => mode), false);
     assert.equal(backend.chmodError("/file/child"), "ENOTDIR");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a sparse host file streams before allocating its gap", async () => {
+  const { openFile, fileOf, closeFd } = await import("../src/natives/io.ts");
+  const dir = mkdtempSync(join(tmpdir(), "java-web-sparse-"));
+  const fs = new VFS();
+  let largestWrite = 0;
+  const backend = new NodeBackend(dir, true);
+  const open = backend.openFile.bind(backend);
+  backend.openFile = (...args) => {
+    const handle = open(...args);
+    const write = handle.write;
+    handle.write = (src, pos) => { largestWrite = Math.max(largestWrite, src.length); write(src, pos); };
+    return handle;
+  };
+  fs.mount("/", backend);
+  const t = { vm: { fs, opts: {}, state: new Map(), exited: new Promise(() => {}) } } as unknown as JThread;
+  try {
+    const fd = openFile(t, "/file", true, false, false);
+    const f = fileOf(t, fd);
+    f.pos = 16 << 20;
+    f.write(new Uint8Array([42]));
+    assert.equal(f.data.length, 0);
+    assert.ok(largestWrite < 1024, `host write was ${largestWrite} bytes`);
+    assert.equal(f.size, (16 << 20) + 1);
+    closeFd(t, fd);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("a large file on a read-only host mount uses a handle", async () => {
+  const { openFile, fileOf, closeFd } = await import("../src/natives/io.ts");
+  const dir = mkdtempSync(join(tmpdir(), "java-web-readonly-"));
+  const fs = new VFS();
+  writeFileSync(join(dir, "file"), new Uint8Array([42]));
+  truncateSync(join(dir, "file"), 6 << 20);
+  fs.mount("/", new NodeBackend(dir));
+  const t = { vm: { fs, opts: {}, state: new Map(), exited: new Promise(() => {}) } } as unknown as JThread;
+  try {
+    const fd = openFile(t, "/file", false, false, false);
+    const f = fileOf(t, fd);
+    assert.equal(f.data.length, 0);
+    const byte = new Uint8Array(1);
+    assert.equal(f.read(byte, 0, 1), 1);
+    assert.equal(byte[0], 42);
+    closeFd(t, fd);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
