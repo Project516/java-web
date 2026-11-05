@@ -451,7 +451,11 @@ Object.assign(natives, {
   "java/nio/MappedMemoryUtils.unload0(JJ)V": () => undefined,
   // Bytes go through the same buffers either way; this only reports the block
   // size direct I/O aligns to, as fstatvfs gives it.
-  [`${UFD}setDirect0(Ljava/io/FileDescriptor;)I`]: (t, [fd]) => Number(t.vm.fs.space(chanFile(t, fd).path).bsize),
+  [`${UFD}setDirect0(Ljava/io/FileDescriptor;)I`]: (t, [fd]) => {
+    const f = chanFile(t, fd);
+    // an unlinked file has no path; the one it had names its file system
+    return Number(t.vm.fs.space(f.path || f.detached?.path || "/").bsize);
+  },
   "sun/nio/ch/FileDispatcherImpl.init0()V": () => undefined,
   "sun/nio/ch/FileDispatcherImpl.transferTo0(Ljava/io/FileDescriptor;JJLjava/io/FileDescriptor;Z)J": () => BigInt(UNSUPPORTED_CASE),
   "sun/nio/ch/FileDispatcherImpl.transferFrom0(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;JJZ)J": () => BigInt(UNSUPPORTED_CASE),
