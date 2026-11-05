@@ -11,7 +11,7 @@ const SNAPSHOT_DB = "java-web-snapshots";
 // snapshot keys, most recently used first
 const ORDER = "#order";
 const WARM_ORDER = "#warm-order";
-const KEEP_SNAPSHOTS = 4, KEEP_WARM_SNAPSHOTS = 4;
+const KEEP_SNAPSHOTS = 4, KEEP_WARM_SNAPSHOTS = 2;
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {

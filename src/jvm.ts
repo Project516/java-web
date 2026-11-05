@@ -112,6 +112,10 @@ const YIELD = (() => {
   };
 })();
 
+// Classes loaded since boot before a library VM saves a warm snapshot; one
+// javac compile loads over a thousand.
+const WARM_MIN_CLASSES = 200;
+
 export class JVM {
   readonly opts: JvmOptions;
   readonly fs: VFS;
@@ -1102,6 +1106,7 @@ export class JVM {
   private warmSaved = false;
   private warmKey = "";
   private warmTraceActive = false;
+  private warmTraceClasses = 0;
 
   // Java objects and calls for library mode, and for natives that call back.
   get library(): Library {
@@ -1123,7 +1128,10 @@ export class JVM {
       failed(e instanceof Error ? e : new Error(String(e)));
       return;
     }
-    if (this.opts.warmSnapshot && this.libraryStarting && this.snapshots) this.warmTraceActive = this.fs.beginWarmTrace();
+    if (this.opts.warmSnapshot && this.libraryStarting && this.snapshots) {
+      this.warmTraceActive = this.fs.beginWarmTrace();
+      this.warmTraceClasses = this.classCount;
+    }
     started();
     yield* this.library.loop(t);
   }
@@ -1131,6 +1139,8 @@ export class JVM {
   libraryIdle(t: JThread) {
     const cache = this.opts.warmSnapshots;
     if (!this.opts.warmSnapshot || !this.warmTraceActive || this.warmSaved || !cache) return;
+    // until calls have loaded enough classes there is little warm-up worth saving
+    if (this.classCount - this.warmTraceClasses < WARM_MIN_CLASSES) return;
     try {
       if (this.library.handleCount) throw new Error("library handles are live");
       const fds = this.state.get("fds") as { files?: Map<number, { path: string; writable: boolean }> } | undefined;

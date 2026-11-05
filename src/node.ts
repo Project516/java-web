@@ -277,7 +277,7 @@ function defaultSnapshotDir(): string | null {
   return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "java-web", "snapshots");
 }
 
-const KEEP_SNAPSHOTS = 16, KEEP_WARM_SNAPSHOTS = 4, KEEP_MARKERS = 256;
+const KEEP_SNAPSHOTS = 16, KEEP_WARM_SNAPSHOTS = 2, KEEP_MARKERS = 256;
 
 // set by the build of dist/node.js: names its code and image
 declare const JAVA_WEB_BUILD: string;

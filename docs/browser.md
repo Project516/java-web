@@ -35,7 +35,7 @@ and `cjFileBlob(path)` also work.
   has no environment otherwise. Under Node, Java sees the host's environment.
 - `preloadProgress(done, total)` reports the bytes of the runtime downloaded at start.
   `total` is 0 while the server has not sent a length; the last call has `done === total`.
-- `cheerpjInit({ warmSnapshot: true })` saves library VMs after their first call returns with no live handles.
+- `cheerpjInit({ warmSnapshot: true })` saves a library VM once its calls have warmed it up (see below).
 - A file Java closes under `/files/downloads/` is downloaded by the browser.
   `/files/uploads/` exists for files the page adds there.
 - The browser console gets whole lines, so two `print` calls and a `println` log one
@@ -128,7 +128,11 @@ IndexedDB (the 4 most recently used). Later runs with the same class path and
 `cheerpjInit` options start from it instead of booting, in this page and in
 later visits.
 
-With `warmSnapshot: true`, `cheerpjRunLibrary` also saves its VM after the
-first library call returns. Later library starts restore that image after
-checking files and directory listings the first call used. IndexedDB keeps the
-4 most recent warm images separately from boot snapshots.
+With `warmSnapshot: true`, `cheerpjRunLibrary` also saves its VM after a call
+returns once its calls have loaded at least 200 classes since boot (one javac
+compile loads over a thousand) and no library handles are live. Later library
+starts with the same class path restore that image, after checking that the
+files, missing paths and directory listings those calls used are unchanged; a
+javac compile from it takes about 1 s instead of 6 s on a Raspberry Pi 5. An
+image is about 18 MB. IndexedDB keeps the 2 most recent warm images separately
+from boot snapshots.

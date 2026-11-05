@@ -158,7 +158,7 @@ const warmSnapshotCache = {
     droppedWarmSnapshots.delete(image.warmKey);
     warmSnapshots.delete(image.warmKey);
     warmSnapshots.set(image.warmKey, structuredClone(image));
-    for (const k of [...warmSnapshots.keys()].slice(0, -4)) warmSnapshots.delete(k);
+    for (const k of [...warmSnapshots.keys()].slice(0, -2)) warmSnapshots.delete(k);
     saveWarmSnapshot(image);
   },
   drop: (key: string) => {

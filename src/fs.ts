@@ -128,10 +128,10 @@ export class VFS {
     path = normalize(path);
     if (!data) return this.traceMissing(path);
     if (path === "/jdk" || path.startsWith("/jdk/")) return;
-    if (data.length > TRACE_LIMIT) { this.warmTraceTooLarge = true; return; }
     const reads = this.warmTrace.reads;
     const old = reads.find(([p]) => p === path);
     const hash = digest(data);
+    // a file that changed while the warm-up ran cannot be checked later
     if (old) {
       if (old[1] !== hash) this.warmTraceTooLarge = true;
       return;
@@ -253,7 +253,7 @@ export class VFS {
   readRange(path: string, off: number, len: number): Uint8Array | null {
     const r = this.resolve(path);
     const data = r?.[0].readRange?.(r[1], off, len) ?? null;
-    if (this.warmTrace && !path.startsWith("/jdk/")) this.traceRead(path, r?.[0].read(r[1]) ?? null);
+    if (this.warmTrace && !path.startsWith("/jdk/") && !this.warmTrace.reads.some(([p]) => p === normalize(path))) this.traceRead(path, r?.[0].read(r[1]) ?? null);
     return data;
   }
 
