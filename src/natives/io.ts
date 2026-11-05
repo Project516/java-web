@@ -110,7 +110,7 @@ export class OpenFile {
     if (this.pos >= this.size) return -1;
     const n = Math.min(len, this.size - this.pos);
     const host = this.contents.host;
-    if (host) {
+    if (host && n) {
       const got = hostCall(() => host.read(dst, off, n, this.pos));
       this.pos += got;
       return got || -1;
