@@ -183,7 +183,7 @@ export class JArray extends JObject {
   constructor(cls: JClass, a: ArrayData) {
     super(cls, EMPTY);
     this.a = a;
-    if (allocationCheck?.enabled) allocated(ArrayBuffer.isView(a) ? a.byteLength : a.length * 4);
+    if (allocationCheck?.enabled) allocated(ArrayBuffer.isView(a) ? a.byteLength : a.length * 8);
   }
 }
 
@@ -385,7 +385,7 @@ export function setMaxHeap(bytes: number) {
 export function hasMaxHeap() { return explicitMaxHeap; }
 let allocationCheck: { cap: number; step: number; allocated: number; baseline: number; enabled: boolean; usage: () => number; gc?: () => void } | null = null;
 export function setAllocationCheck(cap: number, usage: () => number, gc?: () => void) {
-  allocationCheck = { cap, step: Math.max(4 << 20, cap / 16), allocated: 0, baseline: 0, enabled: false, usage, gc };
+  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, usage, gc };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
 export function resetAllocationCheck() {
