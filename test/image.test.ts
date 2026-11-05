@@ -131,6 +131,14 @@ test("dist/node.js and the java-web command run a program as HotSpot does", { sk
   }
 });
 
+test("dist/node.js starts child processes", { skip }, () => {
+  mkdirSync(out, { recursive: true });
+  spawnSync(hotspot("javac"), ["-d", out, join(root, "test", "java", "Processes.java")], { stdio: "inherit" });
+  const ref = spawnSync(hotspot("java"), ["-cp", out, "Processes"], { encoding: "utf8" });
+  const got = spawnSync(process.execPath, [node, "-cp", out, "Processes"], { encoding: "utf8" });
+  assert.deepEqual({ stdout: got.stdout, stderr: got.stderr, code: got.status }, { stdout: ref.stdout, stderr: ref.stderr, code: ref.status });
+});
+
 test("dist/node.js exports runNode, and javac runs on the packaged image", { skip }, async () => {
   mkdirSync(out, { recursive: true });
   spawnSync(hotspot("javac"), ["-d", out, join(root, "test", "java", "Javac.java")], { stdio: "inherit" });

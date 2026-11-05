@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
+import { createConnection, createServer, type Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { JArray } from "./runtime.ts";
 import { PendingThrow } from "./thread.ts";
@@ -97,7 +99,45 @@ class Pipe implements ProcessPipe {
   }
 }
 
-type Child = { process: ChildProcess; start: bigint; exited: Promise<number>; code: number | null; command: string; args: string[] };
+// Both child descriptors must share one stream to preserve write order.
+function mergedPipe(): Promise<{ reader: Socket; writer: Socket }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "java-web-process-"));
+  const name = path.join(dir, "pipe");
+  const server = createServer();
+  let writer: Socket | undefined;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      try { server.close(); } catch { /* not listening */ }
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* already removed */ }
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      writer?.destroy();
+      cleanup();
+      reject(error);
+    };
+    server.once("error", fail);
+    server.once("connection", (reader) => {
+      if (settled) { reader.destroy(); return; }
+      settled = true;
+      cleanup();
+      writer!.off("error", fail);
+      writer!.on("error", () => {});
+      reader.on("error", () => {});
+      resolve({ reader, writer: writer! });
+    });
+    try {
+      server.listen(name, () => {
+        writer = createConnection(name);
+        writer.once("error", fail);
+      });
+    } catch (error) { fail(error as Error); }
+  });
+}
+
+type Child = { process: ChildProcess; start: bigint; exited: Promise<number>; code: number | null; command: string; args: string[]; java: boolean };
 const decode = (a: JArray | null) => a ? new TextDecoder().decode(u8(a)).replace(/\0$/, "") : "";
 const block = (a: JArray | null) => a && a.a.length ? decode(a).split("\0") : [];
 
@@ -120,7 +160,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       let command = decode(prog);
       let args = block(argBlock);
       const testJdk = t.vm.props.get("test.jdk");
-      if (command === "java" || command === "/jdk/bin/java" || command === `${jdk}/bin/java` || (testJdk && command === `${testJdk}/bin/java`)) {
+      const java = command === "java" || command === "/jdk/bin/java" || command === `${jdk}/bin/java` || !!(testJdk && command === `${testJdk}/bin/java`);
+      if (java) {
         command = process.execPath;
         args = [entry, "--java-child", ...(packaged ? [] : ["--jdk", jdk]), ...args];
       }
@@ -130,7 +171,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       }));
       const descriptors = (fds as JArray).a as Int32Array;
       const opened: number[] = [];
-      const stdio: (number | "pipe")[] = [];
+      const stdio: (number | "pipe" | Socket)[] = [];
+      let merged: { reader: Socket; writer: Socket } | undefined;
       let pipelineInput: Pipe | undefined;
       try {
         for (let i = 0; i < 3; i++) {
@@ -148,27 +190,30 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
             stdio.push(hostFd);
           }
         }
-        if (redirectError) stdio[2] = stdio[1];
+        if (redirectError && stdio[1] === "pipe") {
+          const result: { reader: Socket; writer: Socket } | Error = yield t.block(mergedPipe().catch((error: Error) => error));
+          if (result instanceof Error) throw result;
+          merged = result;
+          stdio[1] = stdio[2] = merged.writer;
+        } else if (redirectError) stdio[2] = stdio[1];
         const child = spawn(command, args, { cwd: dir ? decode(dir) : t.vm.opts.cwd, env, stdio: stdio as [any, any, any] });
+        merged?.writer.destroy();
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
         const exited = new Promise<number>((resolve) => child.once("exit", (code, signal) => resolve(status(code, signal))));
         const created: number[] = [];
-        let stdoutPipe: Pipe | undefined;
         for (let i = 0; i < 3; i++) {
           if (i === 2 && redirectError) {
-            if (stdoutPipe) stdoutPipe.attach(child.stdio[2] as Readable);
-            else if (stdio[2] === "pipe") (child.stdio[2] as Readable).on("data", (data: Buffer) => t.vm.opts.stdout(new Uint8Array(data)));
             descriptors[i] = -1;
           } else if (descriptors[i] < 0) {
-            const pipe = new Pipe(i === 0 ? null : child.stdio[i] as Readable, i === 0 ? child.stdio[i] as Writable : null);
-            if (i === 1) stdoutPipe = pipe;
+            const pipe = new Pipe(i === 0 ? null : i === 1 && merged ? merged.reader : child.stdio[i] as Readable, i === 0 ? child.stdio[i] as Writable : null);
             descriptors[i] = addProcessPipe(t, pipe);
             created.push(descriptors[i]);
           } else {
             if (descriptors[i] <= 2 && i !== 0) {
               const output = descriptors[i] === 1 ? t.vm.opts.stdout : t.vm.opts.stderr;
-              (child.stdio[i] as Readable)?.on("data", (data: Buffer) => output(new Uint8Array(data)));
+              const stream = i === 1 && merged ? merged.reader : child.stdio[i] as Readable;
+              stream?.on("data", (data: Buffer) => output(new Uint8Array(data)));
             }
             if (i === 0 && descriptors[i] === 0 && stdio[i] === "pipe") {
               const input = child.stdio[i] as Writable;
@@ -196,7 +241,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
           throw new PendingThrow("java/io/IOException", `error=${errno}, ${reason}`);
         }
         const pid = child.pid!;
-        const record: Child = { process: child, start: processInfo(pid)?.start ?? BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), exited: null! };
+        const record: Child = { process: child, start: processInfo(pid)?.start ?? BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), java, exited: null! };
         record.exited = exited.then((code) => {
           record.code = code;
           return new Promise<number>((resolve) => setImmediate(() => resolve(code)));
@@ -205,6 +250,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         if (pipelineInput) pipelineInput.forward(child.stdin!);
         return pid;
       } catch (e) {
+        merged?.writer.destroy();
+        merged?.reader.destroy();
         if (e instanceof PendingThrow) throw e;
         const error = e as NodeJS.ErrnoException;
         throw new PendingThrow("java/io/IOException", `error=${Math.abs(error.errno ?? 5)}, ${error.message}`);
@@ -268,7 +315,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       const info = processInfo(pid);
       if (!info || (child && child.code !== null)) return;
       try {
-        const command = fs.readlinkSync(`/proc/${pid}/exe`);
+        const command = child?.java ? (child.command === "java" ? "/jdk/bin/java" : child.command) : fs.readlinkSync(`/proc/${pid}/exe`);
         const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0$/, "").split("\0").slice(1);
         t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "startTime", info.start);
         t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "totalTime", info.cpu);

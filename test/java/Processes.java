@@ -9,6 +9,7 @@ public class Processes {
   }
   public static void main(String[] args) throws Exception {
     if (args.length > 0) {
+      if (args[0].equals("wait")) { Thread.sleep(5000); return; }
       System.out.println("nested=" + System.getProperty("process.test"));
       return;
     }
@@ -23,6 +24,10 @@ public class Processes {
     System.out.println("pipeline=" + output(pipeline.get(1)) + ":" + pipeline.get(0).waitFor() + ":" + pipeline.get(1).waitFor());
     Process nested = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-Dprocess.test=ok", "-cp", System.getProperty("java.class.path"), "Processes", "child").start();
     System.out.println(output(nested) + ":" + nested.waitFor());
+    Process nestedInfo = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-cp", System.getProperty("java.class.path"), "Processes", "wait").start();
+    System.out.println("java-info=" + nestedInfo.info().command().map(s -> s.endsWith("/bin/java")).orElse(false));
+    nestedInfo.destroyForcibly();
+    nestedInfo.waitFor();
     try {
       new ProcessBuilder("/no-such-java-web-program").start();
       System.out.println("missing=false");
