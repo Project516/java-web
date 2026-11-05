@@ -383,9 +383,9 @@ export function setMaxHeap(bytes: number) {
   explicitMaxHeap = true;
 }
 export function hasMaxHeap() { return explicitMaxHeap; }
-let allocationCheck: { cap: number; step: number; allocated: number; baseline: number; enabled: boolean; usage: () => number; gc?: () => void } | null = null;
+let allocationCheck: { cap: number; step: number; allocated: number; baseline: number; enabled: boolean; over: boolean; usage: () => number; gc?: () => void } | null = null;
 export function setAllocationCheck(cap: number, usage: () => number, gc?: () => void) {
-  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, usage, gc };
+  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
 export function resetAllocationCheck() {
@@ -400,10 +400,15 @@ function allocated(bytes: number) {
   check.allocated += bytes;
   if (check.gc ? check.allocated < check.step : check.allocated <= check.cap) return;
   check.allocated = 0;
-  if (check.usage() - check.baseline > check.cap) {
-    check.gc?.();
-    if (check.usage() - check.baseline > check.cap) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  if (check.usage() - check.baseline > check.cap) check.gc?.();
+  // node frees array buffers after a collection, not during it, so one reading
+  // over the cap can still count garbage: throw on the second in a row
+  const over = check.usage() - check.baseline > check.cap;
+  if (over && check.over) {
+    check.over = false;
+    throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
   }
+  check.over = over;
 }
 const ELEM_SIZE: Record<string, number> = { Z: 1, B: 1, C: 2, S: 2, I: 4, F: 4, J: 8, D: 8, L: 4 };
 
