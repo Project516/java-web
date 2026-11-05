@@ -12,6 +12,10 @@ import type { OpenFile, ProcessPipe } from "./natives/io.ts";
 import type { Natives } from "./natives/util.ts";
 import { u8 } from "./natives/util.ts";
 
+const drained = (output: Writable) => output.writableNeedDrain
+  ? new Promise<void>((resolve) => { output.once("drain", resolve); output.once("close", resolve); })
+  : undefined;
+
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];
   private length = 0;
@@ -82,6 +86,7 @@ class Pipe implements ProcessPipe {
           if (n < 0) break;
           const error = await new Promise<Error | null | undefined>((resolve) => output.write(buffer.slice(0, n), resolve));
           if (error) break;
+          await drained(output);
         }
         output.end();
       } finally {
@@ -268,6 +273,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
                 if (n < 0) break;
                 const error = await new Promise<Error | null | undefined>((resolve) => output.write(buffer.slice(0, n), resolve));
                 if (error) break;
+                await drained(output);
               }
             } finally { output.end(); }
           })().catch(() => {});
