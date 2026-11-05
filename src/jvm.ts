@@ -1360,6 +1360,8 @@ export class JVM {
         // nothing left to report to
       }
     }
+    // Main must be joinable before DestroyJavaVM waits for other threads.
+    yield* this.exitThread(t);
     // DestroyJavaVM: wait for the other non-daemon threads, then shut down.
     while (this.nonDaemonAlive(t)) {
       yield t.block(new Promise<void>((r) => {
@@ -1367,7 +1369,6 @@ export class JVM {
         check();
       }));
     }
-    yield* this.exitThread(t);
     yield t.call(boot("java/lang/Shutdown").methodMap.get("shutdown()V")!);
     this.halt(code);
   }
