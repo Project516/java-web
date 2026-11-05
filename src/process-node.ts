@@ -204,9 +204,23 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
     "java/lang/ProcessHandleImpl.isAlive0(J)J": (_t, [pid]) => {
       if (Number(pid) === process.pid) return 0n;
       const child = children.get(Number(pid));
-      return child && child.code === null ? child.start : -1n;
+      if (child) return child.code === null ? child.start : -1n;
+      if (pid <= 0n) return -1n;
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+        return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z ") ? -1n : 0n;
+      } catch { return -1n; }
     },
-    "java/lang/ProcessHandleImpl.parent0(JJ)J": (_t, [pid]) => children.has(Number(pid)) ? BigInt(process.pid) : -1n,
+    "java/lang/ProcessHandleImpl.parent0(JJ)J": (_t, [pid, start]) => {
+      const child = children.get(Number(pid));
+      if (child) return child.code === null && (start === 0n || start === child.start) ? BigInt(process.pid) : -1n;
+      if (pid <= 0n) return -1n;
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        return fields[0] === "Z" ? -1n : BigInt(fields[1]);
+      } catch { return -1n; }
+    },
     "java/lang/ProcessHandleImpl.waitForProcessExit0(JZ)I": function* (t, [pid, reap]): NativeGen {
       const child = children.get(Number(pid));
       if (!child) return -2;
