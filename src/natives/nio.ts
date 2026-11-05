@@ -152,7 +152,7 @@ export const natives: Natives = {
     if (st?.dir && write) unixError(EISDIR);
     if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
     try {
-      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0);
+      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1);
       fileOf(t, fd).ino = fileInode(t, abs);
       return fd;
     } catch (e) {
@@ -355,6 +355,7 @@ function writeAt(t: JThread, fdObj: JObject, addr: bigint, len: number, pos: num
     return len;
   }
   const f = chanFile(t, fdObj);
+  if (!f.writable) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
   const save = f.pos;
   if (pos !== null) f.pos = pos;
   f.write(data);
@@ -407,7 +408,10 @@ Object.assign(natives, {
     return BigInt(f.pos);
   },
   [`${UFD}truncate0(Ljava/io/FileDescriptor;J)I`]: (t: JThread, [fd, size]: any[]) => {
-    chanFile(t, fd).setLength(Number(size));
+    const f = chanFile(t, fd);
+    // ftruncate(2) on a descriptor not open for writing
+    if (!f.writable) throw new PendingThrow("java/io/IOException", "Invalid argument");
+    f.setLength(Number(size));
     return 0;
   },
   [`${UFD}size0(Ljava/io/FileDescriptor;)J`]: (t: JThread, [fd]: any[]) => BigInt(chanFile(t, fd).size),
@@ -431,12 +435,18 @@ Object.assign(natives, {
     const n = Math.min(f.size - Number(pos), Number(len));
     if (n > 0) f.read(t.vm.mem.u8, addr, n);
     f.pos = save;
-    if (prot === MAP_RW) mappings(t).set(addr, { f, pos: Number(pos), len: Number(len) });
+    if (prot === MAP_RW) {
+      f.retain();
+      mappings(t).set(addr, { f, pos: Number(pos), len: Number(len) });
+    }
     return BigInt(addr);
   },
   [`${UFD}unmap0(JJ)I`]: (t: JThread, [addr]: any[]) => {
     const m = mappings(t).get(Number(addr));
-    if (m) writeBack(t, m, Number(addr), Number(addr), m.len);
+    if (m) {
+      try { writeBack(t, m, Number(addr), Number(addr), m.len); }
+      finally { m.f.release(); }
+    }
     mappings(t).delete(Number(addr));
     t.vm.mem.freeBlock(Number(addr));
     return 0;
