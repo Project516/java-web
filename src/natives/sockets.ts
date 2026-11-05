@@ -13,10 +13,62 @@ import type { Datagram, Endpoint } from "../sockets.ts";
 import { closeFd, newFd, openFile, resolvePath } from "./io.ts";
 import { inet4, inetBytes, socketAddress } from "./net.ts";
 import type { Natives } from "./util.ts";
+import { normalize } from "../fs.ts";
 
 const FD = "java/io/FileDescriptor";
 const IOS_EOF = -1, IOS_UNAVAILABLE = -2, IOS_INTERRUPTED = -3;
 const EEXIST = 17, EBADF = 9, EPROTO = 71;
+
+type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; remove: () => void };
+const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
+const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
+const IN_MASK_ADD = IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE;
+const MAX_INOTIFY_BYTES = 1 << 20;
+
+function inotify(t: JThread): Inotify | undefined {
+  return t.vm.state.get("inotify") as Inotify | undefined;
+}
+
+function initInotify(t: JThread): number {
+  const old = inotify(t);
+  if (old) return old.sock.fd;
+  const sock = new Sock("stream");
+  sock.connected = true;
+  sock.blocking = false;
+  const state: Inotify = { sock, watches: new Map(), paths: new Map(), nextWd: 1, remove: () => {} };
+  state.remove = t.vm.fs.watchChanges((path, event) => {
+    const slash = path.lastIndexOf("/");
+    const parent = slash === 0 ? "/" : path.slice(0, slash);
+    const name = new TextEncoder().encode(path.slice(slash + 1));
+    for (const [wd, watch] of state.watches) {
+      if (watch.path !== parent) continue;
+      const mask = event === "create" ? IN_CREATE : event === "delete" ? IN_DELETE : IN_MODIFY;
+      if (!(watch.mask & mask)) continue;
+      const len = (name.length + 1 + 3) & ~3;
+      const bytes = new Uint8Array(16 + len);
+      const view = new DataView(bytes.buffer);
+      view.setInt32(0, wd, true);
+      view.setUint32(4, mask, true);
+      view.setUint32(8, 0, true);
+      view.setUint32(12, len, true);
+      bytes.set(name, 16);
+      if (sock.rxBytes + bytes.length > MAX_INOTIFY_BYTES) {
+        sock.rx = [];
+        sock.rxBytes = 0;
+        const overflow = new Uint8Array(16);
+        new DataView(overflow.buffer).setUint32(4, IN_Q_OVERFLOW, true);
+        sock.push(overflow);
+        break;
+      }
+      sock.push(bytes);
+    }
+  });
+  const fd = register(t, sock);
+  sock.impl = state;
+  t.vm.state.set("inotify", state);
+  t.vm.exited.then(() => state.remove());
+  return fd;
+}
 
 // the JDK thread token for signalling a thread out of a blocking call
 const blocked = new WeakMap<JThread, () => void>();
@@ -141,6 +193,36 @@ function* pollSock(t: JThread, s: Sock, events: number, timeout: number): Native
     if (left <= 0) return 0;
     if ((yield t.block(waitOn(t, s, left === Infinity ? -1 : left))) === "signal") return 0;
   }
+}
+
+function* pollPair(t: JThread, a: Sock, b: Sock): NativeGen {
+  for (;;) {
+    const ready = (a.poll() ? 1 : 0) + (b.poll() ? 1 : 0);
+    if (ready) return ready;
+    yield t.block(new Promise<void>((resolve) => {
+      let done = false;
+      const wake = () => {
+        if (done) return;
+        done = true;
+        a.waiters.delete(wake);
+        b.waiters.delete(wake);
+        blocked.delete(t);
+        resolve();
+      };
+      a.waiters.add(wake);
+      b.waiters.add(wake);
+      blocked.set(t, wake);
+      if (a.poll() || b.poll()) wake();
+    }));
+  }
+}
+
+function nativePath(t: JThread, address: bigint): string {
+  const bytes = t.vm.mem.u8;
+  let end = Number(address);
+  const start = end;
+  while (bytes[end] !== 0) end++;
+  return normalize(new TextDecoder().decode(bytes.subarray(start, end)));
 }
 
 // Takes stream bytes: into(cap) moves up to cap bytes and returns the count.
@@ -434,6 +516,67 @@ const DC = "sun/nio/ch/DatagramChannelImpl.";
 const NSA = "sun/nio/ch/NativeSocketAddress.";
 
 export const natives: Natives = {
+  "sun/nio/fs/LinuxWatchService.eventSize()I": () => 16,
+  "sun/nio/fs/LinuxWatchService.eventOffsets()[I": (t) => {
+    const a = t.vm.newArray(t.vm.primClass("I"), 5);
+    (a.a as Int32Array).set([0, 4, 8, 12, 16]);
+    return a;
+  },
+  "sun/nio/fs/LinuxWatchService.inotifyInit()I": (t) => initInotify(t),
+  "sun/nio/fs/LinuxWatchService.inotifyAddWatch(IJI)I": (t, [fd, address, mask]) => {
+    const state = inotify(t);
+    if (!state || state.sock.fd !== fd || !socksOf(t.vm.state).has(fd)) throw ioError(EBADF);
+    const path = nativePath(t, address);
+    if (!t.vm.fs.stat(path)?.dir) throw ioError(ENOENT);
+    let wd = state.paths.get(path);
+    if (wd === undefined) {
+      wd = state.nextWd++;
+      state.paths.set(path, wd);
+    }
+    state.watches.set(wd, { path, mask: mask & IN_MASK_ADD });
+    return wd;
+  },
+  "sun/nio/fs/LinuxWatchService.inotifyRmWatch(II)V": (t, [fd, wd]) => {
+    const state = inotify(t);
+    if (!state || state.sock.fd !== fd) throw ioError(EBADF);
+    const watch = state.watches.get(wd);
+    if (watch) {
+      state.watches.delete(wd);
+      state.paths.delete(watch.path);
+    }
+  },
+  "sun/nio/fs/LinuxWatchService.configureBlocking(IZ)V": (t, [fd, blocking]) => {
+    const s = socksOf(t.vm.state).get(fd);
+    if (!s) throw ioError(EBADF);
+    s.blocking = blocking === 1;
+  },
+  "sun/nio/fs/LinuxWatchService.socketpair([I)V": (t, [sv]) => {
+    const [r, w] = newPipe();
+    r.blocking = w.blocking = false;
+    sv.a[0] = register(t, r);
+    sv.a[1] = register(t, w);
+  },
+  "sun/nio/fs/LinuxWatchService.poll(II)I": function* (t, [fd1, fd2]): NativeGen {
+    const a = socksOf(t.vm.state).get(fd1), b = socksOf(t.vm.state).get(fd2);
+    if (!a || !b) throw ioError(EBADF);
+    return yield* pollPair(t, a, b);
+  },
+  "sun/nio/fs/UnixNativeDispatcher.read0(IJI)I": function* (t, [fd, address, len]): NativeGen {
+    const s = socksOf(t.vm.state).get(fd);
+    if (!s) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [EBADF] });
+    const n = yield* recv(t, s, len, (count) => s.take(t.vm.mem.u8, Number(address), count));
+    if (n === IOS_UNAVAILABLE) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [11] });
+    return n;
+  },
+  "sun/nio/fs/UnixNativeDispatcher.write0(IJI)I": function* (t, [fd, address, len]): NativeGen {
+    const s = socksOf(t.vm.state).get(fd);
+    if (!s) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [EBADF] });
+    return yield* xmit(t, s, t.vm.mem.u8.slice(Number(address), Number(address) + len));
+  },
+  "sun/nio/fs/UnixNativeDispatcher.close0(I)V": (t, [fd]) => {
+    if (inotify(t)?.sock.fd === fd) inotify(t)!.remove();
+    closeFd(t, fd);
+  },
   [`${N}isIPv6Available0()Z`]: () => 0,
   [`${N}isReusePortAvailable0()Z`]: () => 1,
   [`${N}isExclusiveBindAvailable()I`]: () => -1,
