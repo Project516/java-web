@@ -428,12 +428,18 @@ Object.assign(natives, {
     const n = Math.min(f.size - Number(pos), Number(len));
     if (n > 0) f.read(t.vm.mem.u8, addr, n);
     f.pos = save;
-    if (prot === MAP_RW) mappings(t).set(addr, { f, pos: Number(pos), len: Number(len) });
+    if (prot === MAP_RW) {
+      f.retain();
+      mappings(t).set(addr, { f, pos: Number(pos), len: Number(len) });
+    }
     return BigInt(addr);
   },
   [`${UFD}unmap0(JJ)I`]: (t: JThread, [addr]: any[]) => {
     const m = mappings(t).get(Number(addr));
-    if (m) writeBack(t, m, Number(addr), Number(addr), m.len);
+    if (m) {
+      try { writeBack(t, m, Number(addr), Number(addr), m.len); }
+      finally { m.f.release(); }
+    }
     mappings(t).delete(Number(addr));
     t.vm.mem.freeBlock(Number(addr));
     return 0;

@@ -4,7 +4,7 @@
 import { JArray, JObject } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
-import type { Stat, VFS } from "../fs.ts";
+import type { FileHandle, Stat, VFS } from "../fs.ts";
 import { closeSockFd } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
@@ -70,6 +70,47 @@ export class OpenFile {
     if (this.pos > n) this.pos = n;
     this.dirty = true;
   }
+
+  retain() {}
+  release() {}
+  close() {}
+}
+
+class HostFile extends OpenFile {
+  private refs = 1;
+  private handle: FileHandle;
+  constructor(path: string, writable: boolean, handle: FileHandle, contents?: Contents) {
+    super(path, new Uint8Array(0), writable, contents);
+    this.handle = handle;
+  }
+  override get size() { return this.handle.size(); }
+  override set size(_n: number) { throw new Error("Use setLength"); }
+  private fail(e: unknown): never {
+    const code = (e as { code?: string }).code ?? "EIO";
+    throw new PendingThrow("java/io/IOException", ERRNO[code] ?? "Input/output error");
+  }
+  override read(dst: Uint8Array, off: number, len: number): number {
+    try {
+      const n = this.handle.read(dst, off, len, this.pos);
+      this.pos += n;
+      return n || -1;
+    } catch (e) { return this.fail(e); }
+  }
+  override write(src: Uint8Array) {
+    try {
+      this.handle.write(src, this.pos);
+      this.pos += src.length;
+    } catch (e) { this.fail(e); }
+  }
+  override setLength(n: number) {
+    try {
+      this.handle.truncate(n);
+      if (this.pos > n) this.pos = n;
+    } catch (e) { this.fail(e); }
+  }
+  override retain() { this.refs++; }
+  override release() { if (--this.refs === 0) this.handle.close(); }
+  override close() { this.release(); }
 }
 
 // Reads and writes a character device as a stream.
@@ -159,6 +200,23 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   syncPath(t, abs);
   const st = fs.stat(abs);
   if (st?.dir) notFound(path, "Is a directory");
+  if (!st?.device) {
+    try {
+      const handle = fs.openFile(abs, write, truncate);
+      if (handle) {
+        const shared = [...table(t).files.values()].find((o) => o.path === abs && o instanceof HostFile)?.contents;
+        const f = new HostFile(abs, write, handle, shared);
+        if (append) f.pos = f.size;
+        const tab = table(t);
+        const fd = tab.next++;
+        tab.files.set(fd, f);
+        return fd;
+      }
+    } catch (e) {
+      const code = (e as { code?: string }).code ?? "EIO";
+      notFound(path, ERRNO[code] ?? "Input/output error");
+    }
+  }
   const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile)?.contents : undefined;
   if (st?.device || (st && !shared && !write && st.size >= LAZY_MIN && fs.canReadRange(abs))) {
     const tab = table(t);
@@ -251,6 +309,7 @@ export function closeFd(t: JThread, fd: number) {
   if (f) {
     const ok = flush(t, f);
     tab.files.delete(fd);
+    f.close();
     if (f.writable && f.path) t.vm.opts.fileClosed?.(f.path);
     // the descriptor is closed either way, as with close(2)
     if (!ok) throw writeFailed(t, f.path);
