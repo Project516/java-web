@@ -341,6 +341,13 @@ export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint): bool
   return t.vm.fs.setMtime(abs, ms, ns);
 }
 
+// write(2) on a descriptor opened read-only fails with EBADF.
+function writableFile(t: JThread, fd: number): OpenFile {
+  const f = fileOf(t, fd);
+  if (!f.writable) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
+  return f;
+}
+
 export function fileOf(t: JThread, fd: number): OpenFile {
   const f = table(t).files.get(fd);
   if (!f) throw new PendingThrow("java/io/IOException", "Stream Closed");
@@ -472,9 +479,7 @@ function writeOut(t: JThread, fd: number, bytes: Uint8Array) {
   else if (fd === 2) t.vm.opts.stderr(bytes.slice());
   else if (processPipe(t, fd)) return writeProcessPipe(t, processPipe(t, fd)!, bytes);
   else {
-    const f = fileOf(t, fd);
-    if (!f.writable) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
-    f.write(bytes);
+    writableFile(t, fd).write(bytes);
   }
 }
 
@@ -658,11 +663,11 @@ export const natives: Natives = {
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
     return len === 0 ? 0 : fileOf(t, fdOf(t, self, RAF)).read(u8(a), off, len);
   },
-  [`${RAF}.write0(I)V`]: (t, [self, b]) => fileOf(t, fdOf(t, self, RAF)).write(Uint8Array.of(b & 0xff)),
+  [`${RAF}.write0(I)V`]: (t, [self, b]) => writableFile(t, fdOf(t, self, RAF)).write(Uint8Array.of(b & 0xff)),
   [`${RAF}.writeBytes0([BII)V`]: (t, [self, b, off, len]) => {
     const a = nonNull<JArray>(b);
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
-    fileOf(t, fdOf(t, self, RAF)).write(u8(a, off, len));
+    writableFile(t, fdOf(t, self, RAF)).write(u8(a, off, len));
   },
   [`${RAF}.getFilePointer()J`]: (t, [self]) => BigInt(fileOf(t, fdOf(t, self, RAF)).pos),
   [`${RAF}.seek0(J)V`]: (t, [self, pos]) => { fileOf(t, fdOf(t, self, RAF)).pos = Number(pos); },

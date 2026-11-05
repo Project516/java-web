@@ -43,6 +43,12 @@ public class StreamingFile {
         System.out.println(again.length() + " " + Files.size(big));
       }
       System.out.println(Files.size(big));
+      try (RandomAccessFile ro = new RandomAccessFile(big.toFile(), "r")) {
+        ro.write(1);
+        System.out.println("wrote");
+      } catch (java.io.IOException e) {
+        System.out.println(e.getMessage() + " " + Files.size(big));
+      }
     } finally {
       Files.deleteIfExists(big);
     }
