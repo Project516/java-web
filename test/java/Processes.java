@@ -45,7 +45,7 @@ public class Processes {
       Files.writeString(file, "input\n");
       Process redirectedInput = new ProcessBuilder("cat").redirectInput(file.toFile()).start();
       System.out.println("input=" + output(redirectedInput) + ":" + redirectedInput.waitFor());
-      Process merged = new ProcessBuilder("sh", "-c", "printf out; printf err >&2").redirectErrorStream(true).start();
+      Process merged = new ProcessBuilder("sh", "-c", "printf out; printf err >&2").redirectError(file.toFile()).redirectErrorStream(true).start();
       String both = output(merged);
       System.out.println("merged=" + (both.contains("out") && both.contains("err")) + ":" + merged.waitFor());
       Process redirect = new ProcessBuilder("echo", "file").redirectOutput(file.toFile()).start();

@@ -136,7 +136,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
             stdio.push(hostFd);
           }
         }
-        if (redirectError && typeof stdio[1] === "number") stdio[2] = stdio[1];
+        if (redirectError) stdio[2] = stdio[1];
         const child = spawn(command, args, { cwd: dir ? decode(dir) : t.vm.opts.cwd, env, stdio: stdio as [any, any, any] });
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
