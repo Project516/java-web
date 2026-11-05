@@ -27,7 +27,8 @@ for (const file of files) {
   const main = file.slice(0, -5);
   const input = readInput(main);
   const vmFlags = flags(file, "java");
-  test(main, async () => {
+  // other processes are visible to java-web through Linux's /proc only
+  test(main, { skip: main === "Processes" && process.platform !== "linux" }, async () => {
     const ref = spawnSync(hotspot("java"), [...vmFlags, "-cp", out, main], { input, encoding: "utf8" });
     const stdout: Uint8Array[] = [];
     const stderr: Uint8Array[] = [];
