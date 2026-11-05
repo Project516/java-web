@@ -8,9 +8,9 @@ public class HeapCap {
         try {
             while (true) keep.add(new byte[256 * 1024]);
         } catch (OutOfMemoryError e) {
-            System.out.println("OutOfMemoryError: " + e.getMessage());
+            // free the heap before printing: building the message allocates too
             keep.clear();
-            System.gc();
+            System.out.println("OutOfMemoryError: " + e.getMessage());
         }
         for (int i = 0; i < 16; i++) keep.add(new byte[256 * 1024]);
         System.out.println("continued");
