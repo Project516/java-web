@@ -1053,6 +1053,7 @@ java/lang/Thread/SleepSanity.java
 java/lang/Thread/SleepWithDuration.java
 java/lang/Thread/ThreadStateTest.java
 java/lang/Thread/ThreadStopTest.java
+java/lang/Thread/UncaughtExceptionsTest.java
 java/lang/Thread/virtual/Collectable.java
 java/lang/Thread/virtual/Locking.java
 java/lang/Thread/virtual/Reflection.java
