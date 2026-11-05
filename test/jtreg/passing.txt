@@ -2144,6 +2144,14 @@ java/nio/file/Path/PathOps.java
 java/nio/file/Path/ToRealPath.java
 java/nio/file/Path/UriImportExport.java
 java/nio/file/PathMatcher/Basic.java
+java/nio/file/WatchService/Basic.java
+java/nio/file/WatchService/LotsOfCancels.java
+java/nio/file/WatchService/LotsOfCloses.java
+java/nio/file/WatchService/LotsOfEntries.java
+java/nio/file/WatchService/LotsOfEvents.java
+java/nio/file/WatchService/MayFlies.java
+java/nio/file/WatchService/SensitivityModifier.java
+java/nio/file/WatchService/UpdateInterference.java
 java/nio/file/attribute/AclEntry/EmptySet.java
 java/nio/file/attribute/AclFileAttributeView/Basic.java
 java/nio/file/attribute/BasicFileAttributeView/Basic.java

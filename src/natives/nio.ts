@@ -4,7 +4,7 @@
 import type { JObject } from "../runtime.ts";
 import type { Stat } from "../fs.ts";
 import { preCloseSock } from "../sockets.ts";
-import { sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
+import { closeInotify, sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import { closeFd, endsInDot, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
 import type { OpenFile } from "./io.ts";
@@ -164,7 +164,10 @@ export const natives: Natives = {
       throw e;
     }
   },
-  [`${N}close0(I)V`]: (t, [fd]) => closeFd(t, fd),
+  [`${N}close0(I)V`]: (t, [fd]) => {
+    closeInotify(t, fd);
+    closeFd(t, fd);
+  },
   [`${N}dup(I)I`]: () => unixError(ENOSYS),
   [`${N}mkdir0(JI)V`]: (t, [p]) => {
     const abs = path(t, p);
