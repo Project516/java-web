@@ -25,13 +25,13 @@ const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
 const IN_MASK_ADD = IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE;
 const MAX_INOTIFY_BYTES = 1 << 20;
 
-function inotify(t: JThread): Inotify | undefined {
-  return t.vm.state.get("inotify") as Inotify | undefined;
+function inotify(t: JThread, fd: number): Inotify | undefined {
+  return (t.vm.state.get("inotify") as Map<number, Inotify> | undefined)?.get(fd);
 }
 
 function initInotify(t: JThread): number {
-  const old = inotify(t);
-  if (old) return old.sock.fd;
+  let all = t.vm.state.get("inotify") as Map<number, Inotify> | undefined;
+  if (!all) t.vm.state.set("inotify", (all = new Map()));
   const sock = new Sock("stream");
   sock.connected = true;
   sock.blocking = false;
@@ -64,8 +64,7 @@ function initInotify(t: JThread): number {
     }
   });
   const fd = register(t, sock);
-  sock.impl = state;
-  t.vm.state.set("inotify", state);
+  all.set(fd, state);
   t.vm.exited.then(() => state.remove());
   return fd;
 }
@@ -524,8 +523,8 @@ export const natives: Natives = {
   },
   "sun/nio/fs/LinuxWatchService.inotifyInit()I": (t) => initInotify(t),
   "sun/nio/fs/LinuxWatchService.inotifyAddWatch(IJI)I": (t, [fd, address, mask]) => {
-    const state = inotify(t);
-    if (!state || state.sock.fd !== fd || !socksOf(t.vm.state).has(fd)) throw ioError(EBADF);
+    const state = inotify(t, fd);
+    if (!state || !socksOf(t.vm.state).has(fd)) throw ioError(EBADF);
     const path = nativePath(t, address);
     if (!t.vm.fs.stat(path)?.dir) throw ioError(ENOENT);
     let wd = state.paths.get(path);
@@ -537,8 +536,8 @@ export const natives: Natives = {
     return wd;
   },
   "sun/nio/fs/LinuxWatchService.inotifyRmWatch(II)V": (t, [fd, wd]) => {
-    const state = inotify(t);
-    if (!state || state.sock.fd !== fd) throw ioError(EBADF);
+    const state = inotify(t, fd);
+    if (!state) throw ioError(EBADF);
     const watch = state.watches.get(wd);
     if (watch) {
       state.watches.delete(wd);
@@ -574,7 +573,9 @@ export const natives: Natives = {
     return yield* xmit(t, s, t.vm.mem.u8.slice(Number(address), Number(address) + len));
   },
   "sun/nio/fs/UnixNativeDispatcher.close0(I)V": (t, [fd]) => {
-    if (inotify(t)?.sock.fd === fd) inotify(t)!.remove();
+    const state = inotify(t, fd);
+    state?.remove();
+    (t.vm.state.get("inotify") as Map<number, Inotify> | undefined)?.delete(fd);
     closeFd(t, fd);
   },
   [`${N}isIPv6Available0()Z`]: () => 0,
