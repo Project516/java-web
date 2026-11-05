@@ -4,16 +4,52 @@
 import { JArray, JObject } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
+import type { JVM } from "../jvm.ts";
 import type { FileHandle, Stat, VFS } from "../fs.ts";
 import { closeSockFd } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
 // A file's bytes, shared by every descriptor open on it, as an inode is.
+// Small files live in data; past STREAM_MIN the file is read and written on
+// the host through one handle instead, so its size does not cost memory.
 interface Contents {
   data: Uint8Array;
   size: number;
   dirty: boolean;
+  refs: number;
+  host?: FileHandle;
+}
+
+// Opens a file's host handle when it outgrows memory. Kept apart from the
+// contents, which a boot snapshot saves.
+const hostOpeners = new WeakMap<Contents, () => FileHandle | undefined>();
+const closesHosts = new WeakSet<JVM>();
+
+// Host handles of files the program leaves open close when its VM exits.
+function closeHostsOnExit(vm: JVM) {
+  if (closesHosts.has(vm)) return;
+  closesHosts.add(vm);
+  vm.exited.then(() => {
+    const tab = vm.state.get("fds") as FdTable | undefined;
+    for (const f of tab?.files.values() ?? []) {
+      f.contents.host?.close();
+      f.contents.host = undefined;
+    }
+  });
+}
+
+// Bigger files stream to the host where the backend can: small ones stay in
+// memory, where many small reads and writes cost no system call each.
+const STREAM_MIN = 4 << 20;
+
+function hostCall<T>(call: () => T): T {
+  try { return call(); }
+  catch (e) {
+    if (e instanceof PendingThrow) throw e;
+    const code = (e as { code?: string }).code ?? "EIO";
+    throw new PendingThrow("java/io/IOException", ERRNO[code] ?? "Input/output error");
+  }
 }
 
 export class OpenFile {
@@ -26,7 +62,8 @@ export class OpenFile {
   detached?: { path: string; stat: Stat; writable: boolean };
   constructor(path: string, data: Uint8Array, writable: boolean, contents?: Contents) {
     this.path = path;
-    this.contents = contents ?? { data, size: data.length, dirty: false };
+    this.contents = contents ?? { data, size: data.length, dirty: false, refs: 0 };
+    this.contents.refs++;
     this.writable = writable;
   }
 
@@ -40,12 +77,25 @@ export class OpenFile {
   read(dst: Uint8Array, off: number, len: number): number {
     if (this.pos >= this.size) return -1;
     const n = Math.min(len, this.size - this.pos);
+    const host = this.contents.host;
+    if (host) {
+      const got = hostCall(() => host.read(dst, off, n, this.pos));
+      this.pos += got;
+      return got || -1;
+    }
     dst.set(this.data.subarray(this.pos, this.pos + n), off);
     this.pos += n;
     return n;
   }
 
   write(src: Uint8Array) {
+    const host = this.contents.host;
+    if (host) {
+      hostCall(() => host.write(src, this.pos));
+      this.pos += src.length;
+      if (this.pos > this.size) this.size = this.pos;
+      return;
+    }
     // past the end, the gap reads as zeros (the buffer may hold bytes from before a truncation)
     if (this.pos > this.size) this.data.fill(0, this.size, Math.min(this.pos, this.data.length));
     const end = this.pos + src.length;
@@ -58,9 +108,18 @@ export class OpenFile {
     this.pos = end;
     if (end > this.size) this.size = end;
     this.dirty = true;
+    if (this.size >= STREAM_MIN) this.stream();
   }
 
   setLength(n: number) {
+    const host = this.contents.host;
+    if (host) {
+      hostCall(() => host.truncate(n));
+      this.size = n;
+      if (this.pos > n) this.pos = n;
+      return;
+    }
+    if (n >= STREAM_MIN && this.stream()) return this.setLength(n);
     if (n > this.data.length) {
       const next = new Uint8Array(n);
       next.set(this.data.subarray(0, this.size));
@@ -71,46 +130,38 @@ export class OpenFile {
     this.dirty = true;
   }
 
-  retain() {}
-  release() {}
-  close() {}
-}
+  // Moves the bytes to the host file; on failure they stay in memory and the
+  // flush that writes them out reports the error.
+  private stream(): boolean {
+    const c = this.contents;
+    const open = hostOpeners.get(c);
+    if (!open || !this.path) return false;
+    let host: FileHandle | undefined;
+    try {
+      host = open();
+      if (!host) throw new Error("no host file");
+      host.write(c.data.subarray(0, c.size), 0);
+      host.truncate(c.size);
+    } catch {
+      host?.close();
+      hostOpeners.delete(c);
+      return false;
+    }
+    c.host = host;
+    c.data = new Uint8Array(0);
+    c.dirty = false;
+    return true;
+  }
 
-class HostFile extends OpenFile {
-  private refs = 1;
-  private handle: FileHandle;
-  constructor(path: string, writable: boolean, handle: FileHandle, contents?: Contents) {
-    super(path, new Uint8Array(0), writable, contents);
-    this.handle = handle;
+  // a mapping keeps the file open after its descriptor closes
+  retain() { this.contents.refs++; }
+  release() {
+    if (--this.contents.refs === 0 && this.contents.host) {
+      this.contents.host.close();
+      this.contents.host = undefined;
+    }
   }
-  override get size() { return this.handle.size(); }
-  override set size(_n: number) { throw new Error("Use setLength"); }
-  private fail(e: unknown): never {
-    const code = (e as { code?: string }).code ?? "EIO";
-    throw new PendingThrow("java/io/IOException", ERRNO[code] ?? "Input/output error");
-  }
-  override read(dst: Uint8Array, off: number, len: number): number {
-    try {
-      const n = this.handle.read(dst, off, len, this.pos);
-      this.pos += n;
-      return n || -1;
-    } catch (e) { return this.fail(e); }
-  }
-  override write(src: Uint8Array) {
-    try {
-      this.handle.write(src, this.pos);
-      this.pos += src.length;
-    } catch (e) { this.fail(e); }
-  }
-  override setLength(n: number) {
-    try {
-      this.handle.truncate(n);
-      if (this.pos > n) this.pos = n;
-    } catch (e) { this.fail(e); }
-  }
-  override retain() { this.refs++; }
-  override release() { if (--this.refs === 0) this.handle.close(); }
-  override close() { this.release(); }
+  close() { this.release(); }
 }
 
 // Reads and writes a character device as a stream.
@@ -200,23 +251,6 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   syncPath(t, abs);
   const st = fs.stat(abs);
   if (st?.dir) notFound(path, "Is a directory");
-  if (!st?.device) {
-    try {
-      const handle = fs.openFile(abs, write, truncate, readable);
-      if (handle) {
-        const shared = [...table(t).files.values()].find((o) => o.path === abs && o instanceof HostFile)?.contents;
-        const f = new HostFile(abs, write, handle, shared);
-        if (append) f.pos = f.size;
-        const tab = table(t);
-        const fd = tab.next++;
-        tab.files.set(fd, f);
-        return fd;
-      }
-    } catch (e) {
-      const code = (e as { code?: string }).code ?? "EIO";
-      notFound(path, ERRNO[code] ?? "Input/output error");
-    }
-  }
   const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile)?.contents : undefined;
   if (st?.device || (st && !shared && !write && st.size >= LAZY_MIN && fs.canReadRange(abs))) {
     const tab = table(t);
@@ -224,6 +258,17 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     return tab.next++;
   }
   if (write && fs.denied(abs)) notFound(path, "Permission denied");
+  if (st && !shared && !truncate && st.size >= STREAM_MIN && fs.canOpenFile(abs)) {
+    const host = openHost(fs, abs, write, readable);
+    if (host) {
+      closeHostsOnExit(t.vm);
+      const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host });
+      if (append) f.pos = f.size;
+      const tab = table(t);
+      tab.files.set(tab.next, f);
+      return tab.next++;
+    }
+  }
   let data: Uint8Array;
   if (!st) {
     if (!write) notFound(path);
@@ -238,12 +283,25 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     else data = fs.read(abs) ?? notFound(path, "Operation not supported");
   }
   const f = new OpenFile(abs, data, write, shared);
+  if (!shared && fs.canOpenFile(abs)) {
+    const vm = t.vm;
+    hostOpeners.set(f.contents, () => (closeHostsOnExit(vm), fs.openFile(abs, true, false, true)));
+  }
   if (truncate && st) f.setLength(0);
   if (append) f.pos = f.size;
   const tab = table(t);
   const fd = tab.next++;
   tab.files.set(fd, f);
   return fd;
+}
+
+// Read and write if the host allows, so other descriptors can share the handle.
+function openHost(fs: VFS, abs: string, write: boolean, readable: boolean): FileHandle | undefined {
+  try { return fs.openFile(abs, write, false, true); }
+  catch {
+    try { return readable ? undefined : fs.openFile(abs, write, false, false); }
+    catch { return undefined; }
+  }
 }
 
 // Writes reach the file system when a file is closed. Another open or a stat

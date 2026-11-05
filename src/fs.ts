@@ -159,6 +159,11 @@ export class VFS {
     return r ? r[0].read(r[1]) : null;
   }
 
+  canOpenFile(path: string): boolean {
+    const r = this.resolve(path);
+    return !!r && r[0].writable && !!r[0].openFile;
+  }
+
   openFile(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle | undefined {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].openFile) return undefined;

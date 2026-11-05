@@ -289,6 +289,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
     classCount: vm.classCount,
     state: [...s].filter(([k, x]) => {
       if (k === "socks" && x.socks.size) throw new Error("snapshot: a socket is open");
+      if (k === "fds" && [...x.files.values()].some((f: any) => f.contents.host)) throw new Error("snapshot: a file streamed to the host is open");
       return !TRANSIENT.has(k) && !k.startsWith("parked:");
     }).map(([k, v]) => [k, e.enc(v, `state.${k}`)]),
     pending: e.enc(refs?.pending ?? [], "refs.pending"),

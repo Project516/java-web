@@ -28,5 +28,23 @@ public class StreamingFile {
     } finally {
       Files.deleteIfExists(path);
     }
+    Path big = Files.createTempFile("streaming-file", ".bin");
+    try {
+      try (RandomAccessFile out = new RandomAccessFile(big.toFile(), "rw")) {
+        out.setLength(6L << 20);
+        out.seek((6L << 20) - 1);
+        out.write(7);
+      }
+      try (RandomAccessFile again = new RandomAccessFile(big.toFile(), "rw")) {
+        again.seek((6L << 20) - 1);
+        System.out.println(again.read() + " " + again.length());
+        again.write(9);
+        again.setLength(1000);
+        System.out.println(again.length() + " " + Files.size(big));
+      }
+      System.out.println(Files.size(big));
+    } finally {
+      Files.deleteIfExists(big);
+    }
   }
 }
