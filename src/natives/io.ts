@@ -313,7 +313,8 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     else data = fs.read(abs) ?? notFound(path, "Operation not supported");
   }
   const f = new OpenFile(abs, data, write, shared);
-  if (!shared && fs.canOpenFile(abs)) {
+  // only a writer can grow a file, so read-only files never hold an opener
+  if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs)) {
     const vm = t.vm;
     hostOpeners.set(f.contents, () => (closeHostsOnExit(vm), openHost(fs, abs, true, readable)));
   }
