@@ -24,6 +24,7 @@ export interface Stat {
 // browser too. Host devices are never touched.
 export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"]);
 
+// Errors carry an errno name in `code`, as Node's do.
 export interface FileHandle {
   size(): number;
   read(dst: Uint8Array, off: number, len: number, pos: number): number;

@@ -36,6 +36,7 @@ export function processPipe(t: JThread, fd: number): ProcessPipe | undefined {
 // A file's bytes, shared by every descriptor open on it, as an inode is.
 // Small files live in data; past STREAM_MIN the file is read and written on
 // the host through one handle instead, so its size does not cost memory.
+// size is kept here in both cases: changes made outside the VM are not seen.
 interface Contents {
   data: Uint8Array;
   size: number;
@@ -309,7 +310,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   const f = new OpenFile(abs, data, write, shared);
   if (!shared && fs.canOpenFile(abs)) {
     const vm = t.vm;
-    hostOpeners.set(f.contents, () => (closeHostsOnExit(vm), fs.openFile(abs, true, false, true)));
+    hostOpeners.set(f.contents, () => (closeHostsOnExit(vm), openHost(fs, abs, true, readable)));
   }
   if (truncate && st) f.setLength(0);
   if (append) { f.pos = f.size; f.append = true; }
