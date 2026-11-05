@@ -44,6 +44,28 @@ public class StreamingFile {
       }
       System.out.println(Files.size(big));
       try (RandomAccessFile ro = new RandomAccessFile(big.toFile(), "r")) {
+        ro.setLength(0);
+      } catch (java.io.IOException e) {
+        System.out.println(e.getMessage());
+      }
+      Files.write(big, new byte[5 << 20]);
+      try (RandomAccessFile reader = new RandomAccessFile(big.toFile(), "r");
+           RandomAccessFile writer = new RandomAccessFile(big.toFile(), "rw")) {
+        writer.seek(1 << 20);
+        writer.write(42);
+        reader.seek(1 << 20);
+        System.out.println(reader.read() + " " + reader.length());
+      }
+      Path moved = big.resolveSibling(big.getFileName() + ".moved");
+      try (var out = new java.io.FileOutputStream(big.toFile())) {
+        out.write(new byte[1 << 20]);
+        Files.move(big, moved);
+        for (int i = 0; i < 5; i++) out.write(new byte[1 << 20]);
+      }
+      System.out.println(Files.exists(big) + " " + Files.size(moved));
+      Files.delete(moved);
+      Files.write(big, new byte[1000]);
+      try (RandomAccessFile ro = new RandomAccessFile(big.toFile(), "r")) {
         ro.write(1);
         System.out.println("wrote");
       } catch (java.io.IOException e) {

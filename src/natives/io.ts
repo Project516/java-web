@@ -43,11 +43,12 @@ interface Contents {
   dirty: boolean;
   refs: number;
   host?: FileHandle;
+  hostWritable?: boolean;
 }
 
 // Opens a file's host handle when it outgrows memory. Kept apart from the
 // contents, which a boot snapshot saves.
-const hostOpeners = new WeakMap<Contents, () => FileHandle | undefined>();
+const hostOpeners = new WeakMap<Contents, (path: string) => FileHandle | undefined>();
 const closesHosts = new WeakSet<JVM>();
 
 // A snapshot cannot hold a host handle, nor the opener a file may still need.
@@ -168,7 +169,7 @@ export class OpenFile {
     if (!open || !this.path) return false;
     let host: FileHandle | undefined;
     try {
-      host = open();
+      host = open(this.path);
       if (!host) throw new Error("no host file");
       host.write(c.data.subarray(0, c.size), 0);
       host.truncate(c.size);
@@ -178,6 +179,7 @@ export class OpenFile {
       return false;
     }
     c.host = host;
+    c.hostWritable = true;
     c.data = new Uint8Array(0);
     c.dirty = false;
     return true;
@@ -292,7 +294,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     const host = openHost(fs, abs, write, readable);
     if (host) {
       closeHostsOnExit(t.vm);
-      const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host });
+      const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host, hostWritable: write });
       if (append) { f.pos = f.size; f.append = true; }
       const tab = table(t);
       tab.files.set(tab.next, f);
@@ -312,11 +314,18 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     else if (truncate) data = new Uint8Array(0);
     else data = fs.read(abs) ?? notFound(path, "Operation not supported");
   }
+  // a writer joining a file read through a read-only host handle needs a writable one
+  if (write && shared?.host && !shared.hostWritable) {
+    const host = openHost(fs, abs, true, true) ?? notFound(path, "Permission denied");
+    shared.host.close();
+    shared.host = host;
+    shared.hostWritable = true;
+  }
   const f = new OpenFile(abs, data, write, shared);
   // only a writer can grow a file, so read-only files never hold an opener
   if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs)) {
     const vm = t.vm;
-    hostOpeners.set(f.contents, () => (closeHostsOnExit(vm), openHost(fs, abs, true, readable)));
+    hostOpeners.set(f.contents, (current) => (closeHostsOnExit(vm), openHost(fs, current, true, readable)));
   }
   if (truncate && st) f.setLength(0);
   if (append) { f.pos = f.size; f.append = true; }
