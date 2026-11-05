@@ -70,6 +70,17 @@ export class VFS {
   private setTimes = new Map<string, { ms: number; ns: bigint }>();
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
+  private watchers = new Set<(path: string, event: "create" | "modify" | "delete") => void>();
+
+  watchChanges(watcher: (path: string, event: "create" | "modify" | "delete") => void): () => void {
+    this.watchers.add(watcher);
+    return () => this.watchers.delete(watcher);
+  }
+
+  private changed(path: string, event: "create" | "modify" | "delete") {
+    path = normalize(path);
+    for (const watcher of this.watchers) watcher(path, event);
+  }
 
   resolvePath(path: string): string {
     const normalized = normalize(path);
@@ -174,7 +185,11 @@ export class VFS {
 
   write(path: string, data: Uint8Array): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].write?.(r[1], data);
+    if (!r || !r[0].writable) return false;
+    const exists = !!r[0].stat(r[1]);
+    if (!r[0].write?.(r[1], data)) return false;
+    this.changed(path, exists ? "modify" : "create");
+    return true;
   }
 
   writeError(path: string): string | undefined {
@@ -184,19 +199,24 @@ export class VFS {
 
   mkdir(path: string): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].mkdir?.(r[1]);
+    if (!r || !r[0].writable || !r[0].mkdir?.(r[1])) return false;
+    this.changed(path, "create");
+    return true;
   }
 
   remove(path: string): boolean {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].remove?.(r[1])) return false;
     this.setTimes.delete(normalize(path));
+    this.changed(path, "delete");
     return true;
   }
 
   rename(from: string, to: string): boolean {
     const a = this.resolve(from), b = this.resolve(to);
     if (!a || !b || a[0] !== b[0] || !a[0].writable || !a[0].rename?.(a[1], b[1])) return false;
+    this.changed(from, "delete");
+    this.changed(to, "create");
     // set times move with the files, which keep their times
     const src = normalize(from), dst = normalize(to);
     const under = (p: string, root: string) => p === root || p.startsWith(root + "/");
@@ -224,6 +244,7 @@ export class VFS {
   setMtime(path: string, ms: number, ns?: bigint): boolean {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms)) return false;
+    this.changed(path, "modify");
     const n = normalize(path);
     const st = ns === undefined ? null : r[0].stat(r[1]);
     // only a time the host kept, give or take its rounding; a host can clamp it
