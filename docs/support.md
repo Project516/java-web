@@ -12,6 +12,9 @@ java-web targets headless Java: console apps, libraries and javac.
 - `Deflater` writes valid DEFLATE streams using stored blocks. Compression
   levels and strategies currently do not reduce output size; compressed bytes
   and compression ratios differ from HotSpot's zlib output.
+- `WatchService` reports files the program itself, or another thread in the
+  same VM, creates, changes or deletes. It does not see changes made outside
+  the VM, by other programs on the host.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
   processes, and native libraries other than JS natives.
 

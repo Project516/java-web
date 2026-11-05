@@ -79,6 +79,12 @@ function initInotify(t: JThread): number {
   return fd;
 }
 
+// Stops an inotify descriptor's watches before the descriptor closes.
+export function closeInotify(t: JThread, fd: number) {
+  inotify(t, fd)?.remove();
+  (t.vm.state.get("inotify") as Map<number, Inotify> | undefined)?.delete(fd);
+}
+
 // the JDK thread token for signalling a thread out of a blocking call
 const blocked = new WeakMap<JThread, () => void>();
 
@@ -581,12 +587,6 @@ export const natives: Natives = {
     const s = socksOf(t.vm.state).get(fd);
     if (!s) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [EBADF] });
     return yield* xmit(t, s, t.vm.mem.u8.slice(Number(address), Number(address) + len));
-  },
-  "sun/nio/fs/UnixNativeDispatcher.close0(I)V": (t, [fd]) => {
-    const state = inotify(t, fd);
-    state?.remove();
-    (t.vm.state.get("inotify") as Map<number, Inotify> | undefined)?.delete(fd);
-    closeFd(t, fd);
   },
   [`${N}isIPv6Available0()Z`]: () => 0,
   [`${N}isReusePortAvailable0()Z`]: () => 1,
