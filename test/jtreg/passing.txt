@@ -1426,6 +1426,7 @@ java/math/BigDecimal/ToPlainStringTests.java
 java/math/BigDecimal/ValueOfDouble.java
 java/math/BigDecimal/ZeroScalingTests.java
 java/math/BigInteger/BigIntegerParallelMultiplyTest.java
+java/math/BigInteger/BitLengthOverflow.java
 java/math/BigInteger/CompareToTests.java
 java/math/BigInteger/DoubleValueOverflow.java
 java/math/BigInteger/HashCode.java
