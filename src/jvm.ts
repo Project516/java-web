@@ -337,6 +337,9 @@ export class JVM {
       c.methods.push(m);
       c.methodMap.set(m.key, m);
     }
+    // Runtime members own the metadata now; discard the parsed member records.
+    cf.fields = [];
+    cf.methods = [];
     c.state = LINKED;
     if (!hidden) map.set(cf.name, c);
     this.created?.push(c);
