@@ -87,10 +87,13 @@ export class VFS {
   private warmTrace: WarmTrace | null = null;
   private warmTraceSize = 0;
   private warmTraceTooLarge = false;
+  // paths the VM itself changed while tracing: saved as they are at save time
+  private warmChanged: Set<string> | null = null;
 
   beginWarmTrace(): boolean {
     if (this.warmTrace) return false;
     this.warmTrace = { reads: [], missing: [], lists: [] };
+    this.warmChanged = new Set();
     this.warmTraceSize = 0;
     this.warmTraceTooLarge = false;
     return true;
@@ -99,13 +102,40 @@ export class VFS {
   endWarmTrace(): WarmTrace | null {
     const trace = this.warmTraceTooLarge ? null : this.warmTrace;
     this.warmTrace = null;
+    this.warmChanged = null;
     this.warmTraceTooLarge = false;
     return trace;
   }
 
+  // What the traced paths hold now. A later start checks against this, so a
+  // file the warm-up wrote itself (javac's output) does not count as changed.
   peekWarmTrace(): WarmTrace | null {
     if (!this.warmTrace || this.warmTraceTooLarge) return null;
-    return structuredClone(this.warmTrace);
+    const changed = this.warmChanged!;
+    const touched = (p: string) => changed.has(p) || [...changed].some((c) => c.startsWith(p === "/" ? "/" : p + "/"));
+    const trace: WarmTrace = { reads: [], missing: [], lists: [] };
+    const tracing = this.warmTrace;
+    this.warmTrace = null;
+    try {
+      for (const [p, hash] of tracing.reads) {
+        if (!changed.has(p)) trace.reads.push([p, hash]);
+        else {
+          const now = this.read(p);
+          if (now) trace.reads.push([p, digest(now)]);
+          else trace.missing.push(p);
+        }
+      }
+      for (const p of tracing.missing) {
+        const now = changed.has(p) ? this.read(p) : null;
+        if (now) trace.reads.push([p, digest(now)]);
+        // a directory the warm-up made itself needs no check
+        else if (!changed.has(p) || !this.stat(p)) trace.missing.push(p);
+      }
+      for (const [p, names] of tracing.lists) trace.lists.push([p, touched(p) ? this.list(p) : names]);
+    } finally {
+      this.warmTrace = tracing;
+    }
+    return trace;
   }
 
   recordWarmFile(path: string) {
@@ -160,6 +190,19 @@ export class VFS {
   private warmTraceDigest(path: string): string | null {
     const data = this.read(path);
     return data ? digest(data) : null;
+  }
+
+  private watchers = new Set<(path: string, event: "create" | "modify" | "delete") => void>();
+
+  watchChanges(watcher: (path: string, event: "create" | "modify" | "delete") => void): () => void {
+    this.watchers.add(watcher);
+    return () => this.watchers.delete(watcher);
+  }
+
+  private changed(path: string, event: "create" | "modify" | "delete") {
+    path = normalize(path);
+    for (const watcher of this.watchers) watcher(path, event);
+    this.warmChanged?.add(path);
   }
 
   resolvePath(path: string): string {
@@ -289,7 +332,11 @@ export class VFS {
 
   write(path: string, data: Uint8Array): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].write?.(r[1], data);
+    if (!r || !r[0].writable) return false;
+    const exists = !!r[0].stat(r[1]);
+    if (!r[0].write?.(r[1], data)) return false;
+    this.changed(path, exists ? "modify" : "create");
+    return true;
   }
 
   writeError(path: string): string | undefined {
@@ -299,19 +346,24 @@ export class VFS {
 
   mkdir(path: string): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].mkdir?.(r[1]);
+    if (!r || !r[0].writable || !r[0].mkdir?.(r[1])) return false;
+    this.changed(path, "create");
+    return true;
   }
 
   remove(path: string): boolean {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].remove?.(r[1])) return false;
     this.setTimes.delete(normalize(path));
+    this.changed(path, "delete");
     return true;
   }
 
   rename(from: string, to: string): boolean {
     const a = this.resolve(from), b = this.resolve(to);
     if (!a || !b || a[0] !== b[0] || !a[0].writable || !a[0].rename?.(a[1], b[1])) return false;
+    this.changed(from, "delete");
+    this.changed(to, "create");
     // set times move with the files, which keep their times
     const src = normalize(from), dst = normalize(to);
     const under = (p: string, root: string) => p === root || p.startsWith(root + "/");
@@ -339,6 +391,7 @@ export class VFS {
   setMtime(path: string, ms: number, ns?: bigint): boolean {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms)) return false;
+    this.changed(path, "modify");
     const n = normalize(path);
     const st = ns === undefined ? null : r[0].stat(r[1]);
     // only a time the host kept, give or take its rounding; a host can clamp it

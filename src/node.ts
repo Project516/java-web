@@ -16,6 +16,7 @@ import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
+import { processNatives } from "./process-node.ts";
 import { PendingThrow } from "./thread.ts";
 import { setMaxHeap } from "./runtime.ts";
 import type { NetBackend } from "./sockets.ts";
@@ -372,7 +373,7 @@ function nodeVm(o: NodeRunOptions): JVM {
   vfs.mount("/", new NodeBackend("/", true));
   // built as dist/node.js, it reads the packaged image next to it
   const packaged = !o.jdk && fs.existsSync(path.join(here, "boot.pack"));
-  const jdk = o.jdk ?? defaultJdk;
+  const jdk = path.resolve(o.jdk ?? defaultJdk);
   if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
     throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
   }
@@ -422,6 +423,7 @@ function nodeVm(o: NodeRunOptions): JVM {
       process.stdin.resume();
     }),
   });
+  vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged, o.input === undefined));
   bridges.set(vm, bridge);
   // A runaway must not take the machine down; per-site caps catch most.
   const maxRss = (o.maxRssMb ?? 2048) * 2 ** 20;
@@ -501,6 +503,8 @@ function heapSize(s: string): number {
 export function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
+  const javaChild = argv[0] === "--java-child";
+  if (javaChild) i++;
   for (; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-cp" || a === "-classpath" || a === "--class-path") o.classpath = argv[++i].split(":");
@@ -523,10 +527,14 @@ export function main(argv: string[]) {
       }
       setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
     }
-    else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (a === "--jdk") o.jdk = argv[++i];
-    else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
+    else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
+    else if (javaChild && a.startsWith("-")) {
+      console.error(`Unrecognized option: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);
+      process.exit(1);
+    }
+    else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);
     else { o.mainClass = a; i++; break; }
   }
   o.args = argv.slice(i);
