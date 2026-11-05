@@ -37,6 +37,23 @@ public class Processes {
     Process background = new ProcessBuilder("sh", "-c", "sleep 2 & exit 0").start();
     System.out.println("background=" + background.waitFor(500, TimeUnit.MILLISECONDS));
     Thread.sleep(2200);
+    Process release = new ProcessBuilder("cat").redirectInput(new File(System.getProperty("java.home"), "release")).start();
+    System.out.println("jdk-input=" + output(release).contains("JAVA_VERSION=") + ":" + release.waitFor());
+    Process tree = new ProcessBuilder("sh", "-c", "sleep 5 & wait").start();
+    try {
+      ProcessHandle descendant = null;
+      for (int i = 0; i < 100 && descendant == null; i++) {
+        descendant = tree.toHandle().children().findFirst().orElse(null);
+        if (descendant == null) Thread.sleep(20);
+      }
+      System.out.println("descendant=" + (descendant != null && descendant.destroyForcibly()));
+    } finally {
+      if (!tree.waitFor(6, TimeUnit.SECONDS)) {
+        tree.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
+        tree.destroyForcibly();
+        tree.waitFor();
+      }
+    }
     Process exit = new ProcessBuilder("sh", "-c", "exit 17").start();
     System.out.println("exit=" + exit.waitFor());
     Path dir = Files.createTempDirectory("process-test");
@@ -57,6 +74,8 @@ public class Processes {
       System.out.println("order=" + output(ordered).equals("ab".repeat(100)) + ":" + ordered.waitFor());
       Process redirect = new ProcessBuilder("echo", "file").redirectOutput(file.toFile()).start();
       System.out.println("redirect=" + redirect.waitFor() + ":" + Files.readString(file).trim());
+      Process append = new ProcessBuilder("echo", "extra").redirectOutput(ProcessBuilder.Redirect.appendTo(file.toFile())).start();
+      System.out.println("append=" + append.waitFor() + ":" + Files.readString(file).trim().replace("\n", "|"));
       Process sleep = new ProcessBuilder("sleep", "2").start();
       System.out.println("info=" + sleep.info().command().isPresent() + ":" + sleep.info().startInstant().isPresent() + ":" + sleep.info().totalCpuDuration().isPresent() + ":" + ProcessHandle.current().info().command().isPresent());
       System.out.println("handle=" + sleep.toHandle().isAlive() + ":" + (sleep.pid() == sleep.toHandle().pid()));

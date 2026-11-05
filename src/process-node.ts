@@ -8,7 +8,7 @@ import { JArray } from "./runtime.ts";
 import { PendingThrow } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 import { addProcessPipe, closeFd, fileOf, flushOrThrow, processPipe } from "./natives/io.ts";
-import type { ProcessPipe } from "./natives/io.ts";
+import type { OpenFile, ProcessPipe } from "./natives/io.ts";
 import type { Natives } from "./natives/util.ts";
 import { u8 } from "./natives/util.ts";
 
@@ -174,6 +174,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       const stdio: (number | "pipe" | Socket)[] = [];
       let merged: { reader: Socket; writer: Socket } | undefined;
       let pipelineInput: Pipe | undefined;
+      let imageInput: OpenFile | undefined;
       try {
         for (let i = 0; i < 3; i++) {
           const fd = descriptors[i];
@@ -185,9 +186,14 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
           } else {
             const file = fileOf(t, fd);
             flushOrThrow(t, file);
-            const hostFd = fs.openSync(file.path, i === 0 ? fs.constants.O_RDONLY : fs.constants.O_WRONLY | (file.pos > 0 ? fs.constants.O_APPEND : 0));
-            opened.push(hostFd);
-            stdio.push(hostFd);
+            if (i === 0 && file.path.startsWith(`${t.vm.opts.javaHome}/`)) {
+              imageInput = file;
+              stdio.push("pipe");
+            } else {
+              const hostFd = fs.openSync(file.path, i === 0 ? fs.constants.O_RDONLY : fs.constants.O_WRONLY | (file.append ? fs.constants.O_APPEND : 0));
+              opened.push(hostFd);
+              stdio.push(hostFd);
+            }
           }
         }
         if (redirectError && stdio[1] === "pipe") {
@@ -248,6 +254,21 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         });
         children.set(pid, record);
         if (pipelineInput) pipelineInput.forward(child.stdin!);
+        if (imageInput) {
+          const input = imageInput, output = child.stdin!;
+          output.on("error", () => {});
+          void (async () => {
+            const buffer = new Uint8Array(65536);
+            try {
+              while (!output.destroyed) {
+                const n = input.read(buffer, 0, buffer.length);
+                if (n < 0) break;
+                const error = await new Promise<Error | null | undefined>((resolve) => output.write(buffer.slice(0, n), resolve));
+                if (error) break;
+              }
+            } finally { output.end(); }
+          })().catch(() => {});
+        }
         return pid;
       } catch (e) {
         merged?.writer.destroy();
@@ -280,8 +301,12 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       return code;
     },
     "java/lang/ProcessHandleImpl.destroy0(JJZ)Z": (_t, [pid, start, force]) => {
+      if (pid <= 0n || pid === BigInt(process.pid)) return 0;
       const child = children.get(Number(pid));
-      return child && child.code === null && (start === 0n || start === child.start) && child.process.kill(force ? "SIGKILL" : "SIGTERM") ? 1 : 0;
+      if (child) return child.code === null && (start === 0n || start === child.start) && child.process.kill(force ? "SIGKILL" : "SIGTERM") ? 1 : 0;
+      const info = processInfo(pid);
+      if (!info || (start !== 0n && start !== info.start)) return 0;
+      try { process.kill(Number(pid), force ? "SIGKILL" : "SIGTERM"); return 1; } catch { return 0; }
     },
     "java/lang/ProcessHandleImpl.getProcessPids0(J[J[J[J)I": (_t, [pid, pids, ppids, starts]) => {
       if (boot === null) {

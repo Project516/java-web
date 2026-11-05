@@ -43,6 +43,7 @@ export class OpenFile {
   // "" once the file is unlinked: it lives until closed, but no path reaches it
   path: string;
   pos = 0;
+  append = false;
   writable: boolean;
   contents: Contents;
   ino?: number;
@@ -204,7 +205,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   }
   const f = new OpenFile(abs, data, write, shared);
   if (truncate && st) f.setLength(0);
-  if (append) f.pos = f.size;
+  if (append) { f.pos = f.size; f.append = true; }
   const tab = table(t);
   const fd = tab.next++;
   tab.files.set(fd, f);
