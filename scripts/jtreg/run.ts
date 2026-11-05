@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { hotspot } from "../hotspot.ts";
 
@@ -54,6 +55,89 @@ if (!existsSync(testRoot)) {
   process.exit(2);
 }
 const javaHome = dirname(dirname(realpathSync(hotspot("java"))));
+
+// ---- @requires --------------------------------------------------------------
+
+// What jtreg reports for a release Linux HotSpot with default options. A
+// property not listed makes the test skip.
+const required: Record<string, string> = {
+  "os.family": "linux",
+  "os.arch": process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "amd64" : process.arch,
+  "os.maxMemory": String(totalmem()),
+  "sun.arch.data.model": "64",
+  "vm.bits": "64",
+  "vm.continuations": "true",
+  "vm.flagless": "true",
+  "vm.debug": "false",
+  "vm.musl": "false",
+  "vm.compMode": "Xmixed",
+  "vm.gc": "null",
+  "vm.gc.G1": "true",
+  "vm.gc.Serial": "true",
+  "vm.gc.Parallel": "true",
+  "vm.gc.Z": "false",
+  "vm.hasJFR": "true",
+  "vm.graal.enabled": "false",
+  "vm.cpu.features": "",
+};
+
+function size(s: string): number {
+  const m = s.match(/^(\d+)([kmgt]?)$/i);
+  return m ? Number(m[1]) * 1024 ** (m[2] ? "kmgt".indexOf(m[2].toLowerCase()) + 1 : 0) : NaN;
+}
+
+// Evaluates a jtreg @requires expression: & | ! ( ) and == != >= <= ~= over properties.
+function requiresHolds(expr: string): boolean {
+  const toks = expr.match(/"[^"]*"|==|!=|>=|<=|~=|[()&|!<>]|[^\s()&|!=<>~"]+/g) ?? [];
+  let i = 0;
+  const value = (): string | null => {
+    const t = toks[i++];
+    if (t === undefined) throw new Error("incomplete");
+    if (t.startsWith('"')) return t.slice(1, -1);
+    if (/^[\d.]+[kmgt]?$/i.test(t) || t === "true" || t === "false") return t;
+    if (t.startsWith("vm.opt.")) return null;
+    if (t.startsWith("vm.gc.") && !(t in required)) return "false";
+    if (t in required) return required[t];
+    throw new Error(`unknown property ${t}`);
+  };
+  const atom = (): boolean => {
+    if (toks[i] === "(") {
+      i++;
+      const v = or();
+      if (toks[i++] !== ")") throw new Error("missing )");
+      return v;
+    }
+    if (toks[i] === "!") {
+      i++;
+      return !atom();
+    }
+    const a = value();
+    const op = toks[i];
+    if (!op || !/^(==|!=|>=|<=|~=|<|>)$/.test(op)) return a === "true";
+    i++;
+    const b = value();
+    switch (op) {
+      case "==": return a === b;
+      case "!=": return a !== b;
+      case "~=": return a !== null && new RegExp(b ?? "").test(a);
+    }
+    const x = size(a ?? ""), y = size(b ?? "");
+    return op === ">=" ? x >= y : op === "<=" ? x <= y : op === ">" ? x > y : x < y;
+  };
+  const and = (): boolean => {
+    let v = atom();
+    while (toks[i] === "&") { i++; const r = atom(); v = v && r; }
+    return v;
+  };
+  const or = (): boolean => {
+    let v = and();
+    while (toks[i] === "|") { i++; const r = and(); v = v || r; }
+    return v;
+  };
+  const v = or();
+  if (i < toks.length) throw new Error("trailing input");
+  return v;
+}
 
 type Kind = "main" | "testng" | "junit" | "compile";
 // a compile action keeps its javac options in opts and its files in args
@@ -140,7 +224,13 @@ function parseFile(file: string): TestCase[] {
         case "build": tc.build.push(...value.split(/\s+/).filter(Boolean)); break;
         case "modules": tc.modules.push(...value.split(/\s+/).filter(Boolean)); break;
         case "enablePreview": tc.preview = true; break;
-        case "requires": tc.skip ??= "requires"; break;
+        case "requires":
+          try {
+            if (!requiresHolds(value)) tc.skip ??= "requires";
+          } catch (e) {
+            tc.skip ??= `requires: ${(e as Error).message}`;
+          }
+          break;
         case "ignore": tc.skip ??= "ignore"; break;
         case "clean": tc.skip ??= "@clean"; break;
         case "compile": {
