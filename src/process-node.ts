@@ -233,13 +233,23 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       return child && child.code === null && (start === 0n || start === child.start) && child.process.kill(force ? "SIGKILL" : "SIGTERM") ? 1 : 0;
     },
     "java/lang/ProcessHandleImpl.getProcessPids0(J[J[J[J)I": (_t, [pid, pids, ppids, starts]) => {
-      const live = [...children.entries()].filter(([, child]) => child.code === null && (pid === 0n || pid === BigInt(process.pid)));
-      for (let i = 0; i < Math.min(live.length, pids.a.length); i++) {
-        pids.a[i] = BigInt(live[i][0]);
-        if (ppids) ppids.a[i] = BigInt(process.pid);
-        if (starts) starts.a[i] = live[i][1].start;
+      let count = 0;
+      for (const name of fs.readdirSync("/proc")) {
+        if (!/^\d+$/.test(name)) continue;
+        try {
+          const stat = fs.readFileSync(`/proc/${name}/stat`, "utf8");
+          const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+          const ppid = BigInt(fields[1]);
+          if (fields[0] === "Z" || (pid !== 0n && ppid !== pid)) continue;
+          if (count < pids.a.length) {
+            pids.a[count] = BigInt(name);
+            if (ppids) ppids.a[count] = ppid;
+            if (starts) starts.a[count] = children.get(Number(name))?.start ?? 0n;
+          }
+          count++;
+        } catch { /* process exited */ }
       }
-      return live.length;
+      return count;
     },
     "java/lang/ProcessHandleImpl$Info.initIDs()V": () => undefined,
     "java/lang/ProcessHandleImpl$Info.info0(J)V": (t, [self, pid]) => {

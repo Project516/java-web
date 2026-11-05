@@ -53,6 +53,7 @@ public class Processes {
       Process sleep = new ProcessBuilder("sleep", "2").start();
       System.out.println("handle=" + sleep.toHandle().isAlive() + ":" + (sleep.pid() == sleep.toHandle().pid()));
       System.out.println("child=" + ProcessHandle.current().children().anyMatch(p -> p.pid() == sleep.pid()));
+      System.out.println("all=" + ProcessHandle.allProcesses().anyMatch(p -> p.pid() == ProcessHandle.current().pid()));
       System.out.println("parent=" + sleep.toHandle().parent().map(p -> p.pid() == ProcessHandle.current().pid()).orElse(false));
       System.out.println("timeout=" + sleep.waitFor(50, TimeUnit.MILLISECONDS));
       sleep.destroyForcibly();
