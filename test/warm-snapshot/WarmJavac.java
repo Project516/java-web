@@ -11,7 +11,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 
 public class WarmJavac {
-  public static String compile(String sourcePath, String missing) throws Exception {
+  public static String compile(String sourcePath, String missing, String outDir) throws Exception {
     String source = Files.readString(Path.of(sourcePath));
     Files.exists(Path.of(missing));
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -27,6 +27,11 @@ public class WarmJavac {
       @Override public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind, FileObject sibling) { return output; }
     };
     boolean ok = compiler.getTask(null, manager, null, List.of("-g:none", "-classpath", ""), null, List.of(input)).call();
-    return ok ? Base64.getEncoder().encodeToString(bytes.toByteArray()) : "compile failed";
+    if (!ok) return "compile failed";
+    // output the warm-up itself writes must not make the next start miss
+    Path out = Path.of(outDir);
+    Files.createDirectories(out);
+    Files.write(out.resolve("Result.class"), bytes.toByteArray());
+    return Base64.getEncoder().encodeToString(bytes.toByteArray());
   }
 }

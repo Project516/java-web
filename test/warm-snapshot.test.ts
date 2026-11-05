@@ -22,13 +22,14 @@ function scratch() {
 }
 
 async function compile(cache: string, source: string, missing: string) {
+  const out = join(cache, "out");
   let log = "";
   const error = console.error;
   console.error = (...args: unknown[]) => { log += `${args.join(" ")}\n`; };
   let vm: Awaited<ReturnType<typeof startLibrary>> | undefined;
   try {
     vm = await startLibrary({ classpath: [classes], snapshotDir: cache, warmSnapshot: true, debug: true });
-    return { result: await vm.callStatic("WarmJavac", "compile", [source, missing]), log };
+    return { result: await vm.callStatic("WarmJavac", "compile", [source, missing, out]), log };
   } finally {
     vm?.halt(0);
     console.error = error;
