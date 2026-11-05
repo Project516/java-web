@@ -13,6 +13,7 @@ export interface InitMessage {
   env: Record<string, string>;
   localeData: boolean;
   warmSnapshot: boolean;
+  debug: boolean;
   // JNI names of natives the page implements
   natives: string[];
   // report the download of the runtime
