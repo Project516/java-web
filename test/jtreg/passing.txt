@@ -3517,3 +3517,14 @@ jdk/nio/zipfs/testng/test/ChannelTests.java
 jdk/nio/zipfs/testng/test/ManifestOrderTest.java
 jdk/nio/zipfs/testng/test/PosixAttributeViewTest.java
 jdk/nio/zipfs/testng/util/ZipFsBaseTest.java
+java/io/FileInputStream/LargeFileAvailable.java
+java/nio/channels/Channels/TransferTo_2GB_transferFrom.java
+java/nio/channels/Channels/TransferTo_2GB_transferTo.java
+java/nio/channels/FileChannel/LoopingTruncate.java
+java/nio/channels/FileChannel/Transfer2GPlus.java
+java/nio/channels/FileChannel/Transfer4GBFile.java
+java/nio/channels/FileChannel/TransferTo6GBFile.java
+java/nio/file/Files/SBC.java
+java/util/zip/ZipFile/CenSizeTooLarge.java
+java/util/zip/ZipFile/EndOfCenValidation.java
+jdk/nio/zipfs/EndOfCenValidation.java

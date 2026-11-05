@@ -54,7 +54,7 @@ const closesHosts = new WeakSet<JVM>();
 
 // A snapshot cannot hold a host handle, nor the opener a file may still need.
 export function streams(f: OpenFile): boolean {
-  return !!f.contents.host || hostOpeners.has(f.contents);
+  return f instanceof DirectoryFile || !!f.contents.host || hostOpeners.has(f.contents);
 }
 
 // Host handles of files the program leaves open close when its VM exits.
@@ -120,7 +120,8 @@ export class OpenFile {
     return n;
   }
 
-  write(src: Uint8Array) {
+  write(src: Uint8Array, atPosition = false) {
+    if (this.append && !atPosition) this.pos = this.size;
     const host = this.contents.host;
     if (host) {
       hostCall(() => host.write(src, this.pos));
@@ -128,9 +129,10 @@ export class OpenFile {
       if (this.pos > this.size) this.size = this.pos;
       return;
     }
+    const end = this.pos + src.length;
+    if (end >= STREAM_MIN && this.stream()) return this.write(src, atPosition);
     // past the end, the gap reads as zeros (the buffer may hold bytes from before a truncation)
     if (this.pos > this.size) this.data.fill(0, this.size, Math.min(this.pos, this.data.length));
-    const end = this.pos + src.length;
     if (end > this.data.length) {
       const next = new Uint8Array(Math.max(end, this.data.length * 2, 64));
       next.set(this.data.subarray(0, this.size));
@@ -140,7 +142,6 @@ export class OpenFile {
     this.pos = end;
     if (end > this.size) this.size = end;
     this.dirty = true;
-    if (this.size >= STREAM_MIN) this.stream();
   }
 
   setLength(n: number) {
@@ -195,6 +196,26 @@ export class OpenFile {
     }
   }
   close() { this.release(); }
+}
+
+// A read-only directory descriptor can be opened, but cannot be read as bytes.
+class DirectoryFile extends OpenFile {
+  constructor(path: string, size: number) {
+    super(path, new Uint8Array(0), false);
+    this.size = size;
+  }
+
+  override read(): number {
+    throw new PendingThrow("java/io/IOException", "Is a directory");
+  }
+
+  override write(): void {
+    throw new PendingThrow("java/io/IOException", "Is a directory");
+  }
+
+  override setLength(): void {
+    throw new PendingThrow("java/io/IOException", "Is a directory");
+  }
 }
 
 // Reads and writes a character device as a stream.
@@ -284,12 +305,17 @@ function notFound(path: string, why = "No such file or directory"): never {
 }
 
 // Opens a path and returns its descriptor number.
-export function openFile(t: JThread, path: string, write: boolean, truncate: boolean, append: boolean, readable = true): number {
+export function openFile(t: JThread, path: string, write: boolean, truncate: boolean, append: boolean, readable = true, allowDirectory = false): number {
   const fs = t.vm.fs;
   const abs = resolvePath(t, path);
   syncPath(t, abs);
   const st = fs.stat(abs);
-  if (st?.dir) notFound(path, "Is a directory");
+  if (st?.dir) {
+    if (!allowDirectory || write) notFound(path, "Is a directory");
+    const tab = table(t);
+    tab.files.set(tab.next, new DirectoryFile(abs, st.size));
+    return tab.next++;
+  }
   const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile)?.contents : undefined;
   if (st?.device || (st && !shared && !write && st.size >= LAZY_MIN && fs.canReadRange(abs))) {
     const tab = table(t);
@@ -297,7 +323,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     return tab.next++;
   }
   if (write && fs.denied(abs)) notFound(path, "Permission denied");
-  if (st && !shared && !truncate && st.size >= STREAM_MIN && fs.canOpenFile(abs)) {
+  if (st && !shared && !truncate && st.size >= STREAM_MIN && fs.canOpenFile(abs, write)) {
     const host = openHost(fs, abs, write, readable);
     if (host) {
       closeHostsOnExit(t.vm);
@@ -330,7 +356,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   }
   const f = new OpenFile(abs, data, write, shared);
   // only a writer can grow a file, so read-only files never hold an opener
-  if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs)) {
+  if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs, true)) {
     const vm = t.vm;
     const c = f.contents;
     hostOpeners.set(c, (current) => {
