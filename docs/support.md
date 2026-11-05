@@ -12,8 +12,13 @@ java-web targets headless Java: console apps, libraries and javac.
 - `Deflater` writes valid DEFLATE streams using stored blocks. Compression
   levels and strategies currently do not reduce output size; compressed bytes
   and compression ratios differ from HotSpot's zlib output.
+- Child processes (`ProcessBuilder`, `Runtime.exec`, `ProcessHandle`) work
+  under Node and run the host's programs. Starting `java` starts another
+  java-web VM on the same image. A child cannot use a directory that exists only
+  in the VM, such as `/jdk`, as its working directory. `ProcessHandle` reads
+  other processes from Linux's `/proc`; elsewhere it sees only its own children.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
-  processes, and native libraries other than JS natives.
+  processes in the browser, and native libraries other than JS natives.
 
 ## Locales
 
