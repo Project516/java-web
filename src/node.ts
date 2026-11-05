@@ -40,7 +40,16 @@ export class NodeBackend implements Backend {
   openFile(p: string, write: boolean, truncate: boolean, readable: boolean) {
     const flags = write ? (readable ? fs.constants.O_RDWR : fs.constants.O_WRONLY) | fs.constants.O_CREAT | (truncate ? fs.constants.O_TRUNC : 0) : fs.constants.O_RDONLY;
     let fd: number;
-    try { fd = fs.openSync(this.host(p), flags, 0o666); }
+    try {
+      const host = this.host(p);
+      const stat = fs.statSync(host, { throwIfNoEntry: false });
+      if (stat && !stat.isFile()) throw Object.assign(new Error("Not a regular file"), { code: "EOPNOTSUPP" });
+      fd = fs.openSync(host, flags | fs.constants.O_NONBLOCK, 0o666);
+      if (!fs.fstatSync(fd).isFile()) {
+        fs.closeSync(fd);
+        throw Object.assign(new Error("Not a regular file"), { code: "EOPNOTSUPP" });
+      }
+    }
     catch (e) {
       this.writeFailure = [p, (e as NodeJS.ErrnoException).code ?? "EIO"];
       throw e;
