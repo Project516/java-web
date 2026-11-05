@@ -325,7 +325,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   // only a writer can grow a file, so read-only files never hold an opener
   if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs)) {
     const vm = t.vm;
-    hostOpeners.set(f.contents, (current) => (closeHostsOnExit(vm), openHost(fs, current, true, readable)));
+    hostOpeners.set(f.contents, (current) => (closeHostsOnExit(vm), openHost(fs, current, write, readable)));
   }
   if (truncate && st) f.setLength(0);
   if (append) { f.pos = f.size; f.append = true; }
