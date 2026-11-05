@@ -236,6 +236,15 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       return child && child.code === null && (start === 0n || start === child.start) && child.process.kill(force ? "SIGKILL" : "SIGTERM") ? 1 : 0;
     },
     "java/lang/ProcessHandleImpl.getProcessPids0(J[J[J[J)I": (_t, [pid, pids, ppids, starts]) => {
+      if (boot === null) {
+        const live = [...children.entries()].filter(([, child]) => child.code === null && (pid === 0n || pid === BigInt(process.pid)));
+        for (let i = 0; i < Math.min(live.length, pids.a.length); i++) {
+          pids.a[i] = BigInt(live[i][0]);
+          if (ppids) ppids.a[i] = BigInt(process.pid);
+          if (starts) starts.a[i] = live[i][1].start;
+        }
+        return live.length;
+      }
       let count = 0;
       let names: string[];
       try { names = fs.readdirSync("/proc"); } catch { names = []; }
