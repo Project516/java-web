@@ -3246,6 +3246,14 @@ java/util/logging/TestLoggingWithMainAppContext.java
 java/util/logging/TestMainAppContext.java
 java/util/logging/TestUILoggerContext.java
 java/util/logging/XMLFormatterDate.java
+java/util/prefs/AddNodeChangeListener.java
+java/util/prefs/CodePointZeroPrefsTest.java
+java/util/prefs/CommentsInXml.java
+java/util/prefs/ConflictInFlush.java
+java/util/prefs/ExportNode.java
+java/util/prefs/ExportSubtree.java
+java/util/prefs/RemoveNullKeyCheck.java
+java/util/prefs/RemoveUnregedListener.java
 java/util/prefs/SerializeExceptions.java
 java/util/regex/ImmutableMatchResultTest.java
 java/util/regex/NamedGroupsTests.java

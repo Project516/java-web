@@ -356,10 +356,74 @@ function pathOf(t: JThread, file: JObject): string {
   return t.vm.jsString(t.vm.getField(file, "java/io/File", "path"));
 }
 
+// java.util.prefs lock files: fcntl locks, which only this VM's threads can
+// contend for here. path -> readers, or -1 while one writer holds it.
+interface PrefsLock { path: string; shared: boolean }
+function prefsLocks(t: JThread) {
+  let s = t.vm.state.get("prefsLocks") as { held: Map<string, number>; fds: Map<number, PrefsLock> } | undefined;
+  if (!s) t.vm.state.set("prefsLocks", (s = { held: new Map(), fds: new Map() }));
+  return s;
+}
+// Linux errno numbers of the codes Node reports by name
+const ERRNO_NUMBER: Record<string, number> = {
+  EPERM: 1, ENOENT: 2, EIO: 5, EBADF: 9, EAGAIN: 11, ENOMEM: 12, EACCES: 13, ENOTDIR: 20, EINVAL: 22, ENFILE: 23,
+  EMFILE: 24, ENOSPC: 28, EROFS: 30, ENAMETOOLONG: 36, ELOOP: 40, ENOTSUP: 95, EOPNOTSUPP: 95, EDQUOT: 122,
+};
+
+function intPair(t: JThread, a: number, b: number): JArray {
+  const arr = t.vm.newArray(t.vm.primClass("I"), 2);
+  (arr.a as Int32Array).set([a, b]);
+  return arr;
+}
+
 const FOS = "java/io/FileOutputStream", FIS = "java/io/FileInputStream", RAF = "java/io/RandomAccessFile";
 const UFS = "java/io/UnixFileSystem";
 
 export const natives: Natives = {
+  // the errno of chmod(2), or 0
+  "java/util/prefs/FileSystemPreferences.chmod(Ljava/lang/String;I)I": (t, [name, mode]) => {
+    const abs = resolvePath(t, t.vm.jsString(name));
+    if (!t.vm.fs.stat(abs)) return ERRNO_NUMBER.ENOENT;
+    const ok = t.vm.fs.chmod(abs, (m) => (m & ~0o7777) | (mode & 0o7777));
+    return ok === false ? ERRNO_NUMBER[t.vm.fs.chmodError(abs) ?? "EIO"] ?? ERRNO_NUMBER.EIO : 0;
+  },
+  // [fd, errno]; fd 0 when the file could not be opened or locked
+  "java/util/prefs/FileSystemPreferences.lockFile0(Ljava/lang/String;IZ)[I": (t, [name, mode, shared]) => {
+    const abs = resolvePath(t, t.vm.jsString(name));
+    let fd: number;
+    try {
+      fd = openFile(t, abs, !shared, false, false);
+    } catch {
+      return intPair(t, 0, t.vm.fs.stat(abs) ? ERRNO_NUMBER.EACCES : ERRNO_NUMBER.ENOENT);
+    }
+    // the requested mode, as HotSpot's fchmod gives it; a failure is ignored there too
+    if (!shared) t.vm.fs.chmod(abs, (m) => (m & ~0o7777) | (mode & 0o7777));
+    const { held, fds } = prefsLocks(t);
+    const now = held.get(abs) ?? 0;
+    if (shared ? now < 0 : now !== 0) {
+      closeFd(t, fd);
+      return intPair(t, 0, ERRNO_NUMBER.EAGAIN);
+    }
+    held.set(abs, shared ? now + 1 : -1);
+    fds.set(fd, { path: abs, shared: !!shared });
+    return intPair(t, fd, 0);
+  },
+  "java/util/prefs/FileSystemPreferences.unlockFile0(I)I": (t, [fd]) => {
+    const { held, fds } = prefsLocks(t);
+    const lock = fds.get(fd);
+    if (lock) {
+      fds.delete(fd);
+      const now = held.get(lock.path) ?? 0;
+      if (lock.shared && now > 1) held.set(lock.path, now - 1);
+      else held.delete(lock.path);
+    }
+    try {
+      closeFd(t, fd);
+    } catch {
+      return ERRNO_NUMBER.EIO;
+    }
+    return 0;
+  },
   // serialization: the default serialVersionUID depends on whether the class
   // itself declares a static initializer
   "java/io/ObjectStreamClass.initNative()V": () => undefined,
