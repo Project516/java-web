@@ -10,7 +10,7 @@ import { platformProperties, vmProperties } from "./natives/misc.ts";
 import { restorePending, restoreReference } from "./natives/ref.ts";
 import { MAX_HEAP } from "./runtime.ts";
 import type { WarmTrace } from "./fs.ts";
-import { reopenSnapshotFile, OpenFile } from "./natives/io.ts";
+import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
 import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
@@ -299,6 +299,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
     state: [...s].filter(([k, x]) => {
       if (k === "socks" && x.socks.size) throw new Error("snapshot: a socket is open");
       if (k === "continuations" && x.busy) throw new Error("snapshot: a continuation is active");
+      if (k === "fds" && [...x.files.values()].some(streams)) throw new Error("snapshot: a host file that streams is open");
       return !TRANSIENT.has(k) && !k.startsWith("parked:");
     }).map(([k, v]) => [k, k === "fds" ? snapshotFds(v) : e.enc(v, `state.${k}`)]),
     pending: e.enc(refs?.pending ?? [], "refs.pending"),

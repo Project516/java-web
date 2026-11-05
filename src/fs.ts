@@ -26,8 +26,18 @@ export interface Stat {
 // browser too. Host devices are never touched.
 export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"]);
 
+// Errors carry an errno name in `code`, as Node's do.
+export interface FileHandle {
+  size(): number;
+  read(dst: Uint8Array, off: number, len: number, pos: number): number;
+  write(src: Uint8Array, pos: number): void;
+  truncate(size: number): void;
+  close(): void;
+}
+
 export interface Backend {
   readonly writable: boolean;
+  openFile?(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle;
   // A host backend can follow symlinks before resolving parent components.
   resolvePath?(path: string): string | null;
   stat(path: string): Stat | null;
@@ -285,6 +295,25 @@ export class VFS {
     const data = r ? r[0].read(r[1]) : null;
     this.traceRead(path, data);
     return data;
+  }
+
+  canOpenFile(path: string): boolean {
+    const r = this.resolve(path);
+    return !!r && r[0].writable && !!r[0].openFile;
+  }
+
+  openFile(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle | undefined {
+    const r = this.resolve(path);
+    if (!r || !r[0].writable || !r[0].openFile) return undefined;
+    const h = r[0].openFile(r[1], write, truncate, readable);
+    // writes through the handle are changes watchers see, as writes through VFS.write are
+    return {
+      size: () => h.size(),
+      read: (dst, off, len, pos) => h.read(dst, off, len, pos),
+      close: () => h.close(),
+      write: (src, pos) => { h.write(src, pos); this.changed(path, "modify"); },
+      truncate: (size) => { h.truncate(size); this.changed(path, "modify"); },
+    };
   }
 
   // Whether part of a file can be read without reading all of it.

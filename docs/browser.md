@@ -132,7 +132,7 @@ With `warmSnapshot: true`, `cheerpjRunLibrary` also saves its VM after a call
 returns once its calls have loaded at least 200 classes since boot (one javac
 compile loads over a thousand) and no library handles are live. Later library
 starts with the same class path restore that image, after checking that the
-files, missing paths and directory listings those calls used are unchanged; a
-javac compile from it takes about 1 s instead of 6 s on a Raspberry Pi 5. An
-image is about 18 MB. IndexedDB keeps the 2 most recent warm images separately
+files, missing paths and directory listings those calls used are unchanged; the
+first javac compile after it took 2.7 s instead of 5.3 s in Chromium on a
+Raspberry Pi 5. An image is about 18 MB. IndexedDB keeps the 2 most recent warm images separately
 from boot snapshots.
