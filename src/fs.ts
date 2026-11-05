@@ -34,7 +34,7 @@ export interface FileHandle {
 
 export interface Backend {
   readonly writable: boolean;
-  openFile?(path: string, write: boolean, truncate: boolean): FileHandle;
+  openFile?(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle;
   // A host backend can follow symlinks before resolving parent components.
   resolvePath?(path: string): string | null;
   stat(path: string): Stat | null;
@@ -159,10 +159,10 @@ export class VFS {
     return r ? r[0].read(r[1]) : null;
   }
 
-  openFile(path: string, write: boolean, truncate: boolean): FileHandle | undefined {
+  openFile(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle | undefined {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].openFile) return undefined;
-    return r[0].openFile(r[1], write, truncate);
+    return r[0].openFile(r[1], write, truncate, readable);
   }
 
   // Whether part of a file can be read without reading all of it.

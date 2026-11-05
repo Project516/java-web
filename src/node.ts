@@ -37,9 +37,14 @@ export class NodeBackend implements Backend {
   private host(p: string) {
     return this.root === "/" ? p : this.root + p;
   }
-  openFile(p: string, write: boolean, truncate: boolean) {
-    const flags = write ? fs.constants.O_RDWR | fs.constants.O_CREAT | (truncate ? fs.constants.O_TRUNC : 0) : fs.constants.O_RDONLY;
-    const fd = fs.openSync(this.host(p), flags, 0o666);
+  openFile(p: string, write: boolean, truncate: boolean, readable: boolean) {
+    const flags = write ? (readable ? fs.constants.O_RDWR : fs.constants.O_WRONLY) | fs.constants.O_CREAT | (truncate ? fs.constants.O_TRUNC : 0) : fs.constants.O_RDONLY;
+    let fd: number;
+    try { fd = fs.openSync(this.host(p), flags, 0o666); }
+    catch (e) {
+      this.writeFailure = [p, (e as NodeJS.ErrnoException).code ?? "EIO"];
+      throw e;
+    }
     return {
       size: () => fs.fstatSync(fd).size,
       read: (dst: Uint8Array, off: number, len: number, pos: number) => fs.readSync(fd, dst, off, len, pos),

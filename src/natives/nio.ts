@@ -152,7 +152,7 @@ export const natives: Natives = {
     if (st?.dir && write) unixError(EISDIR);
     if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
     try {
-      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0);
+      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1);
       fileOf(t, fd).ino = fileInode(t, abs);
       return fd;
     } catch (e) {

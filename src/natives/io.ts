@@ -194,7 +194,7 @@ function notFound(path: string, why = "No such file or directory"): never {
 }
 
 // Opens a path and returns its descriptor number.
-export function openFile(t: JThread, path: string, write: boolean, truncate: boolean, append: boolean): number {
+export function openFile(t: JThread, path: string, write: boolean, truncate: boolean, append: boolean, readable = true): number {
   const fs = t.vm.fs;
   const abs = resolvePath(t, path);
   syncPath(t, abs);
@@ -202,7 +202,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   if (st?.dir) notFound(path, "Is a directory");
   if (!st?.device) {
     try {
-      const handle = fs.openFile(abs, write, truncate);
+      const handle = fs.openFile(abs, write, truncate, readable);
       if (handle) {
         const shared = [...table(t).files.values()].find((o) => o.path === abs && o instanceof HostFile)?.contents;
         const f = new HostFile(abs, write, handle, shared);
@@ -503,7 +503,7 @@ export const natives: Natives = {
   },
 
   [`${FOS}.open0(Ljava/lang/String;Z)V`]: (t, [self, path, append]) =>
-    setFd(t, self, FOS, openFile(t, t.vm.jsString(path), true, !append, append === 1)),
+    setFd(t, self, FOS, openFile(t, t.vm.jsString(path), true, !append, append === 1, false)),
   [`${FOS}.writeBytes([BIIZ)V`]: (t, [self, b, off, len]) => {
     const a = nonNull<JArray>(b);
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
