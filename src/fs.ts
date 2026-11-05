@@ -179,7 +179,15 @@ export class VFS {
   openFile(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle | undefined {
     const r = this.resolve(path);
     if (!r || !r[0].writable || !r[0].openFile) return undefined;
-    return r[0].openFile(r[1], write, truncate, readable);
+    const h = r[0].openFile(r[1], write, truncate, readable);
+    // writes through the handle are changes watchers see, as writes through VFS.write are
+    return {
+      size: () => h.size(),
+      read: (dst, off, len, pos) => h.read(dst, off, len, pos),
+      close: () => h.close(),
+      write: (src, pos) => { h.write(src, pos); this.changed(path, "modify"); },
+      truncate: (size) => { h.truncate(size); this.changed(path, "modify"); },
+    };
   }
 
   // Whether part of a file can be read without reading all of it.

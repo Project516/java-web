@@ -26,6 +26,13 @@ public class WatchService {
       Files.writeString(file, "first");
       Files.writeString(file, "second");
       Files.delete(file);
+      // past 4 MiB the file streams to the host; its writes still report changes
+      Path big = dir.resolve("big");
+      try (var out = Files.newOutputStream(big)) {
+        byte[] block = new byte[1 << 20];
+        for (int i = 0; i < 6; i++) out.write(block);
+      }
+      Files.delete(big);
       Thread.sleep(100);
       collect(watch, events);
     }
