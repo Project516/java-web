@@ -18,7 +18,7 @@ const FD = "java/io/FileDescriptor";
 const IOS_EOF = -1, IOS_UNAVAILABLE = -2, IOS_INTERRUPTED = -3;
 const EEXIST = 17, EBADF = 9, EPROTO = 71, ENOTDIR = 20;
 
-type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; remove: () => void };
+type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; overflowed: boolean; remove: () => void };
 const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
 const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
 const IN_IGNORED = 0x8000;
@@ -35,7 +35,7 @@ function initInotify(t: JThread): number {
   const sock = new Sock("stream");
   sock.connected = true;
   sock.blocking = false;
-  const state: Inotify = { sock, watches: new Map(), paths: new Map(), nextWd: 1, remove: () => {} };
+  const state: Inotify = { sock, watches: new Map(), paths: new Map(), nextWd: 1, overflowed: false, remove: () => {} };
   state.remove = t.vm.fs.watchChanges((path, event) => {
     const slash = path.lastIndexOf("/");
     const parent = slash === 0 ? "/" : path.slice(0, slash);
@@ -62,14 +62,17 @@ function initInotify(t: JThread): number {
       view.setUint32(8, 0, true);
       view.setUint32(12, len, true);
       bytes.set(name, 16);
+      // as Linux: a full queue keeps its events, gains one overflow record and drops new ones
       if (sock.rxBytes + bytes.length > MAX_INOTIFY_BYTES) {
-        sock.rx = [];
-        sock.rxBytes = 0;
-        const overflow = new Uint8Array(16);
-        new DataView(overflow.buffer).setUint32(4, IN_Q_OVERFLOW, true);
-        sock.push(overflow);
-        break;
+        if (!state.overflowed) {
+          const overflow = new Uint8Array(16);
+          new DataView(overflow.buffer).setUint32(4, IN_Q_OVERFLOW, true);
+          sock.push(overflow);
+          state.overflowed = true;
+        }
+        continue;
       }
+      state.overflowed = false;
       sock.push(bytes);
     }
   });
