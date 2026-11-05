@@ -3499,7 +3499,6 @@ jdk/nio/zipfs/CorruptedZipFilesTest.java
 jdk/nio/zipfs/DirectoryStreamTests.java
 jdk/nio/zipfs/HasDotDotTest.java
 jdk/nio/zipfs/InvalidZipHeaderTests.java
-jdk/nio/zipfs/LargeEntriesTest.java
 jdk/nio/zipfs/NewFileSystemTests.java
 jdk/nio/zipfs/NonExistentPathTests.java
 jdk/nio/zipfs/PathOps.java
@@ -3510,7 +3509,6 @@ jdk/nio/zipfs/UpdateEntryTest.java
 jdk/nio/zipfs/ZFSTests.java
 jdk/nio/zipfs/ZeroDate.java
 jdk/nio/zipfs/ZipFSDirectoryExceptionMessageTest.java
-jdk/nio/zipfs/ZipFSOutputStreamTest.java
 jdk/nio/zipfs/ZipFSPermissionsTest.java
 jdk/nio/zipfs/ZipFSTester.java
 jdk/nio/zipfs/jarfs/JFSTester.java

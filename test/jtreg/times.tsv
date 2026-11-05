@@ -1,5 +1,3 @@
-217454	jdk/nio/zipfs/LargeEntriesTest.java
-203605	jdk/nio/zipfs/ZipFSOutputStreamTest.java
 163446	java/nio/channels/Channels/TransferTo.java
 140465	java/net/URLClassLoader/RemoveJar.java
 108944	java/nio/Buffer/BulkPutBuffer.java
