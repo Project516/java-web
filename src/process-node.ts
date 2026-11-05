@@ -111,7 +111,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
       if (fields[0] === "Z" || boot === null) return null;
       // Linux x64 and arm64 report process start times in 1/100-second ticks.
-      return { parent: BigInt(fields[1]), start: boot + BigInt(fields[19]) * 10n };
+      return { parent: BigInt(fields[1]), start: boot + BigInt(fields[19]) * 10n,
+        cpu: (BigInt(fields[11]) + BigInt(fields[12])) * 10000000n };
     } catch { return null; }
   };
   return {
@@ -270,6 +271,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         const command = fs.readlinkSync(`/proc/${pid}/exe`);
         const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0$/, "").split("\0").slice(1);
         t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "startTime", info.start);
+        t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "totalTime", info.cpu);
         t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "command", t.vm.str(command));
         t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "arguments", t.vm.newObjectArray("java/lang/String", (child?.args ?? argv).map((arg) => t.vm.str(arg))));
         if (fs.statSync(`/proc/${pid}`).uid === process.getuid?.())
