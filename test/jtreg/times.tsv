@@ -2761,6 +2761,7 @@
 2392	java/util/PriorityQueue/RemoveContains.java
 2389	java/nio/MappedByteBuffer/ForceViews.java
 2389	java/io/Externalizable/compatibility/ExternalizableBlockData.java
+2389	java/math/BigInteger/BitLengthOverflow.java
 2386	java/security/cert/PKIXBuilderParameters/InvalidParameters.java
 2386	java/net/URL/RelativeURLTest.java
 2385	java/util/HashMap/OverrideIsEmpty.java
