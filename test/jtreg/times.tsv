@@ -2,7 +2,9 @@
 108944	java/nio/Buffer/BulkPutBuffer.java
 108484	java/net/httpclient/HandshakeFailureTest.java
 108005	java/security/cert/CertPathValidator/crlDP/CheckAllCRLs.java
+105037	java/nio/channels/Channels/TransferTo_2GB_transferFrom.java
 101333	java/net/httpclient/websocket/PendingPingBinaryClose.java
+101139	java/nio/channels/Channels/TransferTo_2GB_transferTo.java
 100190	java/net/URL/EarlyOrDelayedParsing.java
 97238	java/net/httpclient/websocket/PendingPongBinaryClose.java
 93525	java/util/zip/DeInflate.java
@@ -410,6 +412,7 @@
 11071	java/text/Format/DateFormat/LenientSpaceParsingTest.java
 11063	java/beans/XMLEncoder/java_awt_CardLayout.java
 11038	java/security/Signature/NONEwithRSA.java
+11036	java/nio/channels/FileChannel/Transfer2GPlus.java
 11016	java/lang/reflect/Generics/ThreadSafety.java
 11011	java/util/concurrent/ConcurrentHashMap/ToArray.java
 11003	java/text/Format/DecimalFormat/MantissaDigits.java
@@ -913,6 +916,7 @@
 6451	java/util/Optional/BasicLong.java
 6449	java/net/httpclient/HttpResponseInputStreamTest.java
 6442	java/util/jar/JarFile/mrjar/TestVersionedStream.java
+6442	java/util/zip/ZipFile/CenSizeTooLarge.java
 6438	java/util/logging/LoggingDeadlock5.java
 6438	java/text/Format/DateFormat/Bug4845901.java
 6436	java/time/test/java/time/format/TestTextParser.java
@@ -2177,11 +2181,13 @@
 3091	javax/xml/jaxp/Encodings/CheckEncodingPropertiesFile.java
 3091	java/beans/Introspector/7122138/Test7122138.java
 3090	java/lang/management/ClassLoadingMXBean/LoadCounts.java
+3090	jdk/nio/zipfs/EndOfCenValidation.java
 3089	java/util/logging/FileHandlerPatternExceptions.java
 3089	java/net/URLClassLoader/closetest/GetResourceAsStream.java
 3087	java/security/SecureRandom/NextBytesNull.java
 3087	java/io/LineNumberReader/MarkSplitCRLF.java
 3082	java/util/concurrent/ExecutorService/Invoke.java
+3082	java/util/zip/ZipFile/EndOfCenValidation.java
 3079	java/util/Vector/LastIndexOf.java
 3079	java/security/spec/EllipticCurveMatch.java
 3073	java/util/jar/JarFile/SignedJarFileGetInputStream.java
@@ -3011,6 +3017,7 @@
 2078	java/io/Serializable/InvalidObjectException/TestIoeConstructors.java
 2077	java/io/Serializable/enum/array/Test.java
 2075	java/lang/Byte/Decode.java
+2072	java/nio/channels/FileChannel/TransferTo6GBFile.java
 2071	java/util/concurrent/forkjoin/AsyncShutdownNow.java
 2070	java/nio/Buffer/Order.java
 2070	java/math/BigInteger/CompareToTests.java
@@ -3078,6 +3085,7 @@
 2010	java/lang/System/Logger/Level/LoggerLevelTest.java
 2010	java/lang/Class/getMethod/NullInParamList.java
 2007	java/nio/channels/AsynchronousChannelGroup/Unbounded.java
+2006	java/nio/channels/FileChannel/Transfer4GBFile.java
 2005	java/lang/Class/getDeclaredField/Exceptions.java
 2004	java/util/concurrent/CopyOnWriteArrayList/EqualsRace.java
 2000	java/util/logging/Reflect.java
@@ -3400,12 +3408,15 @@
 1140	java/security/BasicPermission/ExitVMEquals.java
 1133	java/security/BasicPermission/EqualsImplies.java
 1128	java/lang/Throwable/LegacyChainedExceptionSerialization.java
+1125	java/nio/file/Files/SBC.java
 1122	java/nio/channels/FileChannel/ClosedChannelTransfer.java
 1112	java/nio/channels/Selector/CloseThenRegister.java
 1106	java/nio/channels/FileChannel/Force.java
 1100	java/net/URLConnection/GetContentType.java
+1077	java/io/FileInputStream/LargeFileAvailable.java
 1074	java/nio/channels/Selector/SelectAfterRead.java
 1070	java/nio/file/Files/FileAttributes.java
+1038	java/nio/channels/FileChannel/LoopingTruncate.java
 1036	java/net/URL/Constructor.java
 1019	java/nio/channels/DatagramChannel/StressNativeSignal.java
 1011	java/nio/channels/SocketChannel/CloseAfterConnect.java

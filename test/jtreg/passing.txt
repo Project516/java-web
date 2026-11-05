@@ -437,6 +437,7 @@ java/io/FileDescriptor/RememberAppend.java
 java/io/FileDescriptor/Sharing.java
 java/io/FileDescriptor/Sync.java
 java/io/FileInputStream/Available.java
+java/io/FileInputStream/LargeFileAvailable.java
 java/io/FileInputStream/NegativeAvailable.java
 java/io/FileInputStream/OpenDir.java
 java/io/FileInputStream/OpsAfterClose.java
@@ -1923,6 +1924,8 @@ java/nio/channels/Channels/ReadOffset.java
 java/nio/channels/Channels/ShortWrite.java
 java/nio/channels/Channels/SocketChannelStreams.java
 java/nio/channels/Channels/TinyBuffers.java
+java/nio/channels/Channels/TransferTo_2GB_transferFrom.java
+java/nio/channels/Channels/TransferTo_2GB_transferTo.java
 java/nio/channels/Channels/Write.java
 java/nio/channels/ConfigureBlocking.java
 java/nio/channels/DatagramChannel/AdaptorAsyncCloseAfterReceive.java
@@ -1967,6 +1970,7 @@ java/nio/channels/FileChannel/GetClosedChannel.java
 java/nio/channels/FileChannel/InterruptDeadlock.java
 java/nio/channels/FileChannel/InterruptMapDeadlock.java
 java/nio/channels/FileChannel/LongTransferTest.java
+java/nio/channels/FileChannel/LoopingTruncate.java
 java/nio/channels/FileChannel/MapAssertions.java
 java/nio/channels/FileChannel/MapOverEnd.java
 java/nio/channels/FileChannel/MapReadOnly.java
@@ -1984,8 +1988,11 @@ java/nio/channels/FileChannel/ReleaseOnCloseDeadlock.java
 java/nio/channels/FileChannel/ScatteringRead.java
 java/nio/channels/FileChannel/TempDirectBuffersReclamation.java
 java/nio/channels/FileChannel/Transfer.java
+java/nio/channels/FileChannel/Transfer2GPlus.java
+java/nio/channels/FileChannel/Transfer4GBFile.java
 java/nio/channels/FileChannel/TransferFromExtend.java
 java/nio/channels/FileChannel/TransferOverlappedFileChannel.java
+java/nio/channels/FileChannel/TransferTo6GBFile.java
 java/nio/channels/FileChannel/TransferToAppending.java
 java/nio/channels/FileChannel/TransferToChannel.java
 java/nio/channels/FileChannel/TransferToNonWritable.java
@@ -2134,6 +2141,7 @@ java/nio/file/Files/Misc.java
 java/nio/file/Files/Mismatch.java
 java/nio/file/Files/NameLimits.java
 java/nio/file/Files/ReadWriteString.java
+java/nio/file/Files/SBC.java
 java/nio/file/Files/StreamTest.java
 java/nio/file/Files/probeContentType/ForceLoad.java
 java/nio/file/Files/walkFileTree/MaxDepth.java
@@ -3342,10 +3350,12 @@ java/util/zip/ZipEntry/Clone.java
 java/util/zip/ZipEntry/Constructor.java
 java/util/zip/ZipEntry/MaxZipEntryFieldSizeTest.java
 java/util/zip/ZipFile/Assortment.java
+java/util/zip/ZipFile/CenSizeTooLarge.java
 java/util/zip/ZipFile/ClearStaleZipFileInputStreams.java
 java/util/zip/ZipFile/Comment.java
 java/util/zip/ZipFile/Constructor.java
 java/util/zip/ZipFile/CorruptedZipFiles.java
+java/util/zip/ZipFile/EndOfCenValidation.java
 java/util/zip/ZipFile/EnumerateAfterClose.java
 java/util/zip/ZipFile/FinalizeInflater.java
 java/util/zip/ZipFile/GetInputStreamNPETest.java
@@ -3468,3 +3478,4 @@ javax/xml/jaxp/transform/8062923/XslSubstringTest.java
 javax/xml/jaxp/validation/8015092/XPathWhiteSpaceTest.java
 javax/xml/jaxp/validation/8015243/AnyURITest.java
 javax/xml/jaxp/validation/8049514/FeaturePropagationTest.java
+jdk/nio/zipfs/EndOfCenValidation.java

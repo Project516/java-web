@@ -297,14 +297,14 @@ export class VFS {
     return data;
   }
 
-  canOpenFile(path: string): boolean {
+  canOpenFile(path: string, write: boolean): boolean {
     const r = this.resolve(path);
-    return !!r && r[0].writable && !!r[0].openFile;
+    return !!r && (!write || r[0].writable) && !!r[0].openFile;
   }
 
   openFile(path: string, write: boolean, truncate: boolean, readable: boolean): FileHandle | undefined {
     const r = this.resolve(path);
-    if (!r || !r[0].writable || !r[0].openFile) return undefined;
+    if (!r || ((write || truncate) && !r[0].writable) || !r[0].openFile) return undefined;
     const h = r[0].openFile(r[1], write, truncate, readable);
     // writes through the handle are changes watchers see, as writes through VFS.write are
     return {

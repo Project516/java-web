@@ -152,7 +152,7 @@ export const natives: Natives = {
     if (st?.dir && write) unixError(EISDIR);
     if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
     try {
-      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1);
+      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1, true);
       fileOf(t, fd).ino = fileInode(t, abs);
       return fd;
     } catch (e) {
@@ -333,7 +333,7 @@ function writeBack(t: JThread, m: Mapping, base: number, addr: number, len: numb
   if (n <= 0) return true;
   const save = m.f.pos;
   m.f.pos = at;
-  m.f.write(t.vm.mem.u8.slice(addr, addr + n));
+  m.f.write(t.vm.mem.u8.slice(addr, addr + n), true);
   m.f.pos = save;
   return flush(t, m.f);
 }
