@@ -78,3 +78,9 @@ are unchanged; a javac compile from it takes about 1 s instead of 6 s on a
 Raspberry Pi 5. An image is about 18 MB; warm snapshots share the snapshot
 directory and keep the 2 most recent. They build on boot snapshots, so with
 `snapshotDir: null` there are none.
+
+The image is only reused while every file the warm-up read is unchanged, so
+warm up with calls that read fixed files: for example, compile a small source
+that never changes before the first real compile. A first compile of the user's
+own project records that project's files and directory listings, and the image
+then misses as soon as one of them changes.

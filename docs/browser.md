@@ -36,6 +36,7 @@ and `cjFileBlob(path)` also work.
 - `preloadProgress(done, total)` reports the bytes of the runtime downloaded at start.
   `total` is 0 while the server has not sent a length; the last call has `done === total`.
 - `cheerpjInit({ warmSnapshot: true })` saves a library VM once its calls have warmed it up (see below).
+- `cheerpjInit({ debug: true })` logs VM events to the console, such as whether a warm snapshot was saved, skipped as busy (and why) or restored.
 - A file Java closes under `/files/downloads/` is downloaded by the browser.
   `/files/uploads/` exists for files the page adds there.
 - The browser console gets whole lines, so two `print` calls and a `println` log one
@@ -135,4 +136,11 @@ starts with the same class path restore that image, after checking that the
 files, missing paths and directory listings those calls used are unchanged; the
 first javac compile after it took 2.7 s instead of 5.3 s in Chromium on a
 Raspberry Pi 5. An image is about 18 MB. IndexedDB keeps the 2 most recent warm images separately
-from boot snapshots.
+from boot snapshots. With `debug: true`, the console says whether a VM was
+saved, skipped as busy (with the reason) or restored, and why a restore missed.
+
+The image is only reused while every file the warm-up read is unchanged, so
+warm up with calls that read fixed files: for example, compile a small source
+that never changes before the first real compile. A first compile of the user's
+own project records that project's files and directory listings, and the image
+then misses as soon as one of them changes.
