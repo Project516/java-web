@@ -56,6 +56,11 @@ public class StreamingFile {
         reader.seek(1 << 20);
         System.out.println(reader.read() + " " + reader.length());
       }
+      try (var out = new java.io.FileOutputStream(big.toFile(), true);
+           var in = new java.io.FileInputStream(big.toFile())) {
+        out.write(7);
+        System.out.println(in.skip(5 << 20) + " " + in.read() + " " + in.read());
+      }
       Path moved = big.resolveSibling(big.getFileName() + ".moved");
       try (var out = new java.io.FileOutputStream(big.toFile())) {
         out.write(new byte[1 << 20]);
