@@ -16,7 +16,7 @@ import type { Natives } from "./util.ts";
 
 const FD = "java/io/FileDescriptor";
 const IOS_EOF = -1, IOS_UNAVAILABLE = -2, IOS_INTERRUPTED = -3;
-const EEXIST = 17, EBADF = 9, EPROTO = 71, ENOTDIR = 20;
+const EEXIST = 17, EBADF = 9, EPROTO = 71, ENOTDIR = 20, EFAULT = 14;
 
 type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; overflowed: boolean; remove: () => void };
 const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
@@ -238,6 +238,7 @@ function* pollPair(t: JThread, a: Sock, b: Sock): NativeGen {
 function nativePath(t: JThread, address: bigint): string {
   const bytes = t.vm.mem.u8;
   const start = Number(address);
+  if (start <= 0 || start >= bytes.length) throw ioError(EFAULT);
   const end = bytes.indexOf(0, start);
   if (end < 0) throw ioError(EINVAL);
   return resolvePath(t, new TextDecoder().decode(bytes.subarray(start, end)));
