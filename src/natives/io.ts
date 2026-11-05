@@ -208,6 +208,14 @@ class DirectoryFile extends OpenFile {
   override read(): number {
     throw new PendingThrow("java/io/IOException", "Is a directory");
   }
+
+  override write(): void {
+    throw new PendingThrow("java/io/IOException", "Is a directory");
+  }
+
+  override setLength(): void {
+    throw new PendingThrow("java/io/IOException", "Is a directory");
+  }
 }
 
 // Reads and writes a character device as a stream.
