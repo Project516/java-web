@@ -18,8 +18,20 @@ public class Processes {
     cat.getOutputStream().write("pipe text\n".getBytes(StandardCharsets.UTF_8));
     cat.getOutputStream().close();
     System.out.println("cat=" + output(cat) + ":" + cat.waitFor());
+    var pipeline = ProcessBuilder.startPipeline(java.util.List.of(
+        new ProcessBuilder("echo", "pipeline"), new ProcessBuilder("cat")));
+    System.out.println("pipeline=" + output(pipeline.get(1)) + ":" + pipeline.get(0).waitFor() + ":" + pipeline.get(1).waitFor());
     Process nested = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-Dprocess.test=ok", "-cp", System.getProperty("java.class.path"), "Processes", "child").start();
     System.out.println(output(nested) + ":" + nested.waitFor());
+    try {
+      new ProcessBuilder("/no-such-java-web-program").start();
+      System.out.println("missing=false");
+    } catch (IOException e) {
+      System.out.println("missing=" + e.getMessage().contains("error=2"));
+    }
+    Process background = new ProcessBuilder("sh", "-c", "sleep 2 & exit 0").start();
+    System.out.println("background=" + background.waitFor(500, TimeUnit.MILLISECONDS));
+    Thread.sleep(2200);
     Process exit = new ProcessBuilder("sh", "-c", "exit 17").start();
     System.out.println("exit=" + exit.waitFor());
     Path dir = Files.createTempDirectory("process-test");
@@ -41,6 +53,7 @@ public class Processes {
       Process sleep = new ProcessBuilder("sleep", "2").start();
       System.out.println("handle=" + sleep.toHandle().isAlive() + ":" + (sleep.pid() == sleep.toHandle().pid()));
       System.out.println("child=" + ProcessHandle.current().children().anyMatch(p -> p.pid() == sleep.pid()));
+      System.out.println("parent=" + sleep.toHandle().parent().map(p -> p.pid() == ProcessHandle.current().pid()).orElse(false));
       System.out.println("timeout=" + sleep.waitFor(50, TimeUnit.MILLISECONDS));
       sleep.destroyForcibly();
       sleep.waitFor();
