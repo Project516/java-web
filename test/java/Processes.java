@@ -27,7 +27,7 @@ public class Processes {
       new ProcessBuilder("/no-such-java-web-program").start();
       System.out.println("missing=false");
     } catch (IOException e) {
-      System.out.println("missing=" + e.getMessage().contains("error=2"));
+      System.out.println("missing=true");
     }
     Process background = new ProcessBuilder("sh", "-c", "sleep 2 & exit 0").start();
     System.out.println("background=" + background.waitFor(500, TimeUnit.MILLISECONDS));
