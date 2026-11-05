@@ -29,7 +29,7 @@ export function addProcessPipe(t: JThread, pipe: ProcessPipe): number {
 }
 
 export function processPipe(t: JThread, fd: number): ProcessPipe | undefined {
-  return pipes(t).get(fd);
+  return (t.vm.state.get("processPipes") as Map<number, ProcessPipe> | undefined)?.get(fd);
 }
 
 // A file's bytes, shared by every descriptor open on it, as an inode is.
@@ -339,6 +339,10 @@ function setFd(t: JThread, stream: JObject, owner: string, fd: number) {
   t.vm.setField(fdObj, "java/io/FileDescriptor", "fd", fd);
 }
 
+function* readProcessPipe(t: JThread, pipe: ProcessPipe, dst: Uint8Array, off: number, len: number): NativeGen {
+  return yield t.block(pipe.read(dst, off, len));
+}
+
 function* writeProcessPipe(t: JThread, pipe: ProcessPipe, bytes: Uint8Array): NativeGen {
   const error: string | null = yield t.block(pipe.write(bytes));
   if (error) throw new PendingThrow("java/io/IOException", error);
@@ -488,14 +492,14 @@ export const natives: Natives = {
   [`${FOS}.write(IZ)V`]: (t, [self, b]) => writeOut(t, fdOf(t, self, FOS), Uint8Array.of(b & 0xff)),
 
   [`${FIS}.open0(Ljava/lang/String;)V`]: (t, [self, path]) => setFd(t, self, FIS, openFile(t, t.vm.jsString(path), false, false, false)),
-  [`${FIS}.readBytes([BII)I`]: function* (t, [self, b, off, len]): NativeGen {
+  [`${FIS}.readBytes([BII)I`]: (t, [self, b, off, len]) => {
     const a = nonNull<JArray>(b);
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
     if (len === 0) return 0;
     const fd = fdOf(t, self, FIS);
-    if (fd === 0) return yield* readStdin(t, u8(a), off, len);
+    if (fd === 0) return readStdin(t, u8(a), off, len);
     const pipe = processPipe(t, fd);
-    if (pipe) return yield t.block(pipe.read(u8(a), off, len));
+    if (pipe) return readProcessPipe(t, pipe, u8(a), off, len);
     return fileOf(t, fd).read(u8(a), off, len);
   },
   [`${FIS}.read0()I`]: function* (t, [self]): NativeGen {
