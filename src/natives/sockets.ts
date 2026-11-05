@@ -22,6 +22,7 @@ const EEXIST = 17, EBADF = 9, EPROTO = 71;
 type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; remove: () => void };
 const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
 const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
+const IN_IGNORED = 0x8000;
 const IN_MASK_ADD = IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE;
 const MAX_INOTIFY_BYTES = 1 << 20;
 
@@ -41,6 +42,16 @@ function initInotify(t: JThread): number {
     const parent = slash === 0 ? "/" : path.slice(0, slash);
     const name = new TextEncoder().encode(path.slice(slash + 1));
     for (const [wd, watch] of state.watches) {
+      if (event === "delete" && watch.path === path) {
+        const bytes = new Uint8Array(16);
+        const view = new DataView(bytes.buffer);
+        view.setInt32(0, wd, true);
+        view.setUint32(4, IN_IGNORED, true);
+        sock.push(bytes);
+        state.watches.delete(wd);
+        state.paths.delete(path);
+        continue;
+      }
       if (watch.path !== parent) continue;
       const mask = event === "create" ? IN_CREATE : event === "delete" ? IN_DELETE : IN_MODIFY;
       if (!(watch.mask & mask)) continue;
