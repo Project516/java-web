@@ -18,7 +18,7 @@ import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { processNatives } from "./process-node.ts";
 import { PendingThrow } from "./thread.ts";
-import { setMaxHeap } from "./runtime.ts";
+import { clearAllocationCheck, hasMaxHeap, MAX_HEAP, resetAllocationCheck, setAllocationCheck, setMaxHeap } from "./runtime.ts";
 import type { NetBackend } from "./sockets.ts";
 
 // A host directory exposed read-only (or writable) inside the VFS.
@@ -409,6 +409,13 @@ function nodeVm(o: NodeRunOptions): JVM {
   const toVfs = (p: string) => path.resolve(p);
   const classpath = o.jar ? [toVfs(o.jar)] : o.classpath.map(toVfs);
   const natives = o.natives ?? {};
+  if (hasMaxHeap()) {
+    const gc = (globalThis as { gc?: () => void }).gc;
+    setAllocationCheck(MAX_HEAP, () => {
+      const m = process.memoryUsage();
+      return m.heapUsed + m.arrayBuffers;
+    }, gc);
+  } else clearAllocationCheck();
   const bridge = new Bridge({
     call: (_, req) => vm.library.request(req),
     release: (_, ids) => vm.library.release(ids),
@@ -450,6 +457,7 @@ function nodeVm(o: NodeRunOptions): JVM {
       process.stdin.on("end", onEnd);
       process.stdin.resume();
     }),
+    afterBoot: resetAllocationCheck,
   });
   vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged, o.input === undefined));
   bridges.set(vm, bridge);

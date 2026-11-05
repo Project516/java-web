@@ -32,22 +32,30 @@ for (const file of files) {
     const ref = spawnSync(hotspot("java"), [...vmFlags, "-cp", out, main], { input, encoding: "utf8" });
     const stdout: Uint8Array[] = [];
     const stderr: Uint8Array[] = [];
-    // module options go in as the properties HotSpot's launcher makes of them
-    const opts = { classpath: [out], props: {}, enablePreview: false };
-    const assertions: string[] = [];
-    for (let i = 0; i < vmFlags.length; i++) {
-      if (vmFlags[i] === "--enable-preview") opts.enablePreview = true;
-      else if (!moduleFlag(opts, vmFlags[i], vmFlags[i + 1])) assertions.push(vmFlags[i]);
-      else if (!vmFlags[i].includes("=")) i++;
+    let code: number;
+    if (vmFlags.some((f) => f.startsWith("-Xmx"))) {
+      const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...vmFlags, "-cp", out, main], { input, encoding: "utf8" });
+      stdout.push(new TextEncoder().encode(got.stdout));
+      stderr.push(new TextEncoder().encode(got.stderr));
+      code = got.status ?? 1;
+    } else {
+      // module options go in as the properties HotSpot's launcher makes of them
+      const opts = { classpath: [out], props: {}, enablePreview: false };
+      const assertions: string[] = [];
+      for (let i = 0; i < vmFlags.length; i++) {
+        if (vmFlags[i] === "--enable-preview") opts.enablePreview = true;
+        else if (!moduleFlag(opts, vmFlags[i], vmFlags[i + 1])) assertions.push(vmFlags[i]);
+        else if (!vmFlags[i].includes("=")) i++;
+      }
+      code = await runNode({
+        ...opts,
+        mainClass: main,
+        assertions,
+        stdout: (b) => stdout.push(b),
+        stderr: (b) => stderr.push(b),
+        input: input === undefined ? undefined : new TextEncoder().encode(input),
+      });
     }
-    const code = await runNode({
-      ...opts,
-      mainClass: main,
-      assertions,
-      stdout: (b) => stdout.push(b),
-      stderr: (b) => stderr.push(b),
-      input: input === undefined ? undefined : new TextEncoder().encode(input),
-    });
     const text = (parts: Uint8Array[]) => Buffer.concat(parts).toString("utf8");
     // one comparison, so a failure shows stderr and the exit code along with stdout
     assert.deepEqual(

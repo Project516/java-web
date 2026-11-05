@@ -86,6 +86,7 @@ export interface JvmOptions {
     drop: (key: string) => void;
   };
   warmSnapshot?: boolean;
+  afterBoot?: () => void;
 }
 
 // what a resumed thread body yields first, before the run under it returns
@@ -1326,6 +1327,7 @@ export class JVM {
       const set = system.methodMap.get("setProperty(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;")!;
       yield t.call(set, this.str("sun.java.command"), this.str(cmd));
     }
+    this.opts.afterBoot?.();
   }
 
   private *mainGen(t: JThread, mode: number, what: string, args: string[], restored: boolean): NativeGen {

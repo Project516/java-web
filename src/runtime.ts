@@ -161,6 +161,7 @@ export class JObject {
   constructor(cls: JClass, f: any[]) {
     this.cls = cls;
     this.f = f;
+    if (allocationCheck?.enabled) allocated(32);
   }
 }
 
@@ -182,6 +183,7 @@ export class JArray extends JObject {
   constructor(cls: JClass, a: ArrayData) {
     super(cls, EMPTY);
     this.a = a;
+    if (allocationCheck?.enabled) allocated(ArrayBuffer.isView(a) ? a.byteLength : a.length * 4);
   }
 }
 
@@ -372,11 +374,36 @@ export function primName(c: string) {
   throw new Error(`not a primitive: ${c}`);
 }
 
-// Reported by Runtime.maxMemory; no array may be bigger. -Xmx lowers it; the
-// total of live objects is not counted.
+// Reported by Runtime.maxMemory and the per-array limit. Node adds a sampled
+// live-heap check when -Xmx is set; browser allocations keep the per-array cap.
 export let MAX_HEAP = 1 << 30;
+let explicitMaxHeap = false;
 export function setMaxHeap(bytes: number) {
   MAX_HEAP = Math.min(bytes, 1 << 30);
+  explicitMaxHeap = true;
+}
+export function hasMaxHeap() { return explicitMaxHeap; }
+let allocationCheck: { cap: number; step: number; allocated: number; baseline: number; enabled: boolean; usage: () => number; gc?: () => void } | null = null;
+export function setAllocationCheck(cap: number, usage: () => number, gc?: () => void) {
+  allocationCheck = { cap, step: Math.max(4 << 20, cap / 16), allocated: 0, baseline: 0, enabled: false, usage, gc };
+}
+export function clearAllocationCheck() { allocationCheck = null; }
+export function resetAllocationCheck() {
+  if (!allocationCheck) return;
+  allocationCheck.baseline = allocationCheck.usage();
+  allocationCheck.allocated = 0;
+  allocationCheck.enabled = true;
+}
+function allocated(bytes: number) {
+  const check = allocationCheck;
+  if (!check?.enabled || bytes <= 0) return;
+  check.allocated += bytes;
+  if (check.gc ? check.allocated < check.step : check.allocated <= check.cap) return;
+  check.allocated = 0;
+  if (check.usage() - check.baseline > check.cap) {
+    check.gc?.();
+    if (check.usage() - check.baseline > check.cap) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  }
 }
 const ELEM_SIZE: Record<string, number> = { Z: 1, B: 1, C: 2, S: 2, I: 4, F: 4, J: 8, D: 8, L: 4 };
 
