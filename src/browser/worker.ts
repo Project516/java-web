@@ -193,6 +193,7 @@ function newVm(classpath: string[], vmId: number, library = false): JVM {
     stderr: (data) => post({ type: "out", fd: 2, data }, [data.buffer as ArrayBuffer]),
     stdin: readStdin,
     hostName: config!.hostName,
+    debug: config!.debug,
     env: config!.env,
     loadNativeLibrary,
     fileClosed,
