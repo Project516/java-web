@@ -13,7 +13,6 @@ import type { Datagram, Endpoint } from "../sockets.ts";
 import { closeFd, newFd, openFile, resolvePath } from "./io.ts";
 import { inet4, inetBytes, socketAddress } from "./net.ts";
 import type { Natives } from "./util.ts";
-import { normalize } from "../fs.ts";
 
 const FD = "java/io/FileDescriptor";
 const IOS_EOF = -1, IOS_UNAVAILABLE = -2, IOS_INTERRUPTED = -3;
@@ -232,7 +231,7 @@ function nativePath(t: JThread, address: bigint): string {
   let end = Number(address);
   const start = end;
   while (bytes[end] !== 0) end++;
-  return normalize(new TextDecoder().decode(bytes.subarray(start, end)));
+  return resolvePath(t, new TextDecoder().decode(bytes.subarray(start, end)));
 }
 
 // Takes stream bytes: into(cap) moves up to cap bytes and returns the count.

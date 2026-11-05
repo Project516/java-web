@@ -17,7 +17,7 @@ public class WatchService {
   }
 
   public static void main(String[] args) throws Exception {
-    Path dir = Files.createTempDirectory("watch");
+    Path dir = Files.createTempDirectory(Path.of("."), "watch");
     Path file = dir.resolve("item");
     TreeSet<String> events = new TreeSet<>();
     try (java.nio.file.WatchService watch = dir.getFileSystem().newWatchService()) {
