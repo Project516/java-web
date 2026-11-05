@@ -355,6 +355,7 @@ function writeAt(t: JThread, fdObj: JObject, addr: bigint, len: number, pos: num
     return len;
   }
   const f = chanFile(t, fdObj);
+  if (!f.writable) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
   const save = f.pos;
   if (pos !== null) f.pos = pos;
   f.write(data);
@@ -407,7 +408,10 @@ Object.assign(natives, {
     return BigInt(f.pos);
   },
   [`${UFD}truncate0(Ljava/io/FileDescriptor;J)I`]: (t: JThread, [fd, size]: any[]) => {
-    chanFile(t, fd).setLength(Number(size));
+    const f = chanFile(t, fd);
+    // ftruncate(2) on a descriptor not open for writing
+    if (!f.writable) throw new PendingThrow("java/io/IOException", "Invalid argument");
+    f.setLength(Number(size));
     return 0;
   },
   [`${UFD}size0(Ljava/io/FileDescriptor;)J`]: (t: JThread, [fd]: any[]) => BigInt(chanFile(t, fd).size),
