@@ -16,8 +16,10 @@ class Pipe implements ProcessPipe {
   private ended = false;
   private inputs: Readable[] = [];
   private pendingInputs = 0;
+  private output: Writable | null;
   private wake: (() => void)[] = [];
-  constructor(input: Readable | null, private output: Writable | null) {
+  constructor(input: Readable | null, output: Writable | null) {
+    this.output = output;
     if (input) this.attach(input);
     output?.on("error", () => {});
   }
@@ -78,7 +80,7 @@ type Child = { process: ChildProcess; start: bigint; exited: Promise<number>; co
 const decode = (a: JArray | null) => a ? new TextDecoder().decode(u8(a)).replace(/\0$/, "") : "";
 const block = (a: JArray | null) => a && a.a.length ? decode(a).split("\0") : [];
 
-export function processNatives(entry: string, jdk: string, packaged: boolean): Natives {
+export function processNatives(entry: string, jdk: string, packaged: boolean, hostInput: boolean): Natives {
   const children = new Map<number, Child>();
   return {
     "java/lang/ProcessImpl.forkAndExec(I[B[B[BI[BI[B[IZ)I": function* (t, [, , , prog, argBlock, , envBlock, , dir, fds, redirectError]): NativeGen {
@@ -99,7 +101,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean): N
       try {
         for (let i = 0; i < 3; i++) {
           const fd = descriptors[i];
-          if (fd < 0 || fd <= 2) stdio.push("pipe");
+          if (i === 0 && fd === 0 && hostInput) stdio.push(0);
+          else if (fd < 0 || fd <= 2) stdio.push("pipe");
           else {
             const file = fileOf(t, fd);
             flushOrThrow(t, file);
@@ -110,9 +113,10 @@ export function processNatives(entry: string, jdk: string, packaged: boolean): N
         }
         if (redirectError && typeof stdio[1] === "number") stdio[2] = stdio[1];
         const child = spawn(command, args, { cwd: dir ? decode(dir) : t.vm.opts.cwd, env, stdio: stdio as [any, any, any] });
-        const exited = new Promise<number>((resolve) => child.once("exit", (code, signal) => {
-          resolve(code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0));
-        }));
+        const status = (code: number | null, signal: NodeJS.Signals | null) =>
+          code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
+        const exited = new Promise<number>((resolve) => child.once("exit", (code, signal) => resolve(status(code, signal))));
+        const closed = new Promise<number>((resolve) => child.once("close", (code, signal) => resolve(status(code, signal))));
         const error: NodeJS.ErrnoException | null = yield t.block(new Promise((resolve) => {
           child.once("spawn", () => resolve(null));
           child.once("error", resolve);
@@ -124,7 +128,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean): N
         }
         const pid = child.pid!;
         const record: Child = { process: child, start: BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), exited: null! };
-        record.exited = exited.then((code) => (record.code = code));
+        void exited.then((code) => (record.code = code));
+        record.exited = closed;
         children.set(pid, record);
         let stdoutPipe: Pipe | undefined;
         for (let i = 0; i < 3; i++) {
@@ -137,8 +142,22 @@ export function processNatives(entry: string, jdk: string, packaged: boolean): N
             if (i === 1) stdoutPipe = pipe;
             descriptors[i] = addProcessPipe(t, pipe);
           } else {
-            if (descriptors[i] <= 2 && i !== 0) (child.stdio[i] as Readable)?.on("data", (data: Buffer) => (i === 1 ? t.vm.opts.stdout : t.vm.opts.stderr)(new Uint8Array(data)));
-            if (descriptors[i] === 0) (child.stdio[i] as Writable)?.end();
+            if (descriptors[i] <= 2 && i !== 0) {
+              const output = descriptors[i] === 1 ? t.vm.opts.stdout : t.vm.opts.stderr;
+              (child.stdio[i] as Readable)?.on("data", (data: Buffer) => output(new Uint8Array(data)));
+            }
+            if (i === 0 && descriptors[i] === 0 && stdio[i] === "pipe") {
+              const input = child.stdio[i] as Writable;
+              input.on("error", () => {});
+              void (async () => {
+                while (!input.destroyed) {
+                  const chunk = await t.vm.opts.stdin?.();
+                  if (!chunk) break;
+                  if (!input.write(chunk)) await new Promise<void>((resolve) => input.once("drain", resolve));
+                }
+                input.end();
+              })();
+            }
             descriptors[i] = -1;
           }
         }
@@ -183,7 +202,10 @@ export function processNatives(entry: string, jdk: string, packaged: boolean): N
       const child = children.get(Number(pid));
       if (!child || child.code !== null) return;
       t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "startTime", child.start);
-      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "command", t.vm.str(child.command));
+      let command = child.command;
+      try { command = fs.readlinkSync(`/proc/${pid}/exe`); } catch { /* process exited */ }
+      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "command", t.vm.str(command));
+      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "user", t.vm.str(os.userInfo().username));
       t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "arguments", t.vm.newObjectArray("java/lang/String", child.args.map((arg) => t.vm.str(arg))));
     },
   };

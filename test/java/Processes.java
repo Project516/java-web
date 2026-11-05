@@ -30,14 +30,25 @@ public class Processes {
       Process env = pb.start();
       System.out.println("env=" + output(env).replace(dir.toString(), "dir") + ":" + env.waitFor());
       Path file = dir.resolve("out");
+      Files.writeString(file, "input\n");
+      Process redirectedInput = new ProcessBuilder("cat").redirectInput(file.toFile()).start();
+      System.out.println("input=" + output(redirectedInput) + ":" + redirectedInput.waitFor());
+      Process merged = new ProcessBuilder("sh", "-c", "printf out; printf err >&2").redirectErrorStream(true).start();
+      String both = output(merged);
+      System.out.println("merged=" + (both.contains("out") && both.contains("err")) + ":" + merged.waitFor());
       Process redirect = new ProcessBuilder("echo", "file").redirectOutput(file.toFile()).start();
       System.out.println("redirect=" + redirect.waitFor() + ":" + Files.readString(file).trim());
       Process sleep = new ProcessBuilder("sleep", "2").start();
       System.out.println("handle=" + sleep.toHandle().isAlive() + ":" + (sleep.pid() == sleep.toHandle().pid()));
+      System.out.println("child=" + ProcessHandle.current().children().anyMatch(p -> p.pid() == sleep.pid()));
       System.out.println("timeout=" + sleep.waitFor(50, TimeUnit.MILLISECONDS));
       sleep.destroyForcibly();
       sleep.waitFor();
       System.out.println("alive=" + sleep.isAlive());
+      Process terminated = new ProcessBuilder("sleep", "2").start();
+      terminated.destroy();
+      terminated.waitFor();
+      System.out.println("destroy=" + terminated.isAlive());
     } finally {
       Files.deleteIfExists(dir.resolve("out"));
       Files.delete(dir);

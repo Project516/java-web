@@ -344,7 +344,7 @@ function nodeVm(o: NodeRunOptions): JVM {
   vfs.mount("/", new NodeBackend("/", true));
   // built as dist/node.js, it reads the packaged image next to it
   const packaged = !o.jdk && fs.existsSync(path.join(here, "boot.pack"));
-  const jdk = o.jdk ?? defaultJdk;
+  const jdk = path.resolve(o.jdk ?? defaultJdk);
   if (!packaged && !fs.existsSync(path.join(jdk, "lib", "packages.txt"))) {
     throw new Error(`no JDK image at ${jdk}: run \`pnpm jdk\` in a checkout, or keep dist/node.js next to boot.pack and jdk/`);
   }
@@ -390,7 +390,7 @@ function nodeVm(o: NodeRunOptions): JVM {
       process.stdin.resume();
     }),
   });
-  vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged));
+  vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged, o.input === undefined));
   bridges.set(vm, bridge);
   // A runaway must not take the machine down; per-site caps catch most.
   const maxRss = (o.maxRssMb ?? 2048) * 2 ** 20;
