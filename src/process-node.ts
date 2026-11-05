@@ -103,6 +103,17 @@ const block = (a: JArray | null) => a && a.a.length ? decode(a).split("\0") : []
 
 export function processNatives(entry: string, jdk: string, packaged: boolean, hostInput: boolean): Natives {
   const children = new Map<number, Child>();
+  let boot: bigint | null = null;
+  try { boot = BigInt(/^btime (\d+)$/m.exec(fs.readFileSync("/proc/stat", "utf8"))![1]) * 1000n; } catch { /* no procfs */ }
+  const processInfo = (pid: bigint | number) => {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (fields[0] === "Z" || boot === null) return null;
+      // Linux x64 and arm64 report process start times in 1/100-second ticks.
+      return { parent: BigInt(fields[1]), start: boot + BigInt(fields[19]) * 10n };
+    } catch { return null; }
+  };
   return {
     "java/lang/ProcessImpl.forkAndExec(I[B[B[BI[BI[B[IZ)I": function* (t, [, , , prog, argBlock, , envBlock, , dir, fds, redirectError]): NativeGen {
       let command = decode(prog);
@@ -184,7 +195,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
           throw new PendingThrow("java/io/IOException", `error=${errno}, ${reason}`);
         }
         const pid = child.pid!;
-        const record: Child = { process: child, start: BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), exited: null! };
+        const record: Child = { process: child, start: processInfo(pid)?.start ?? BigInt(Date.now()), code: null, command: decode(prog), args: block(argBlock), exited: null! };
         record.exited = exited.then((code) => {
           record.code = code;
           return new Promise<number>((resolve) => setImmediate(() => resolve(code)));
@@ -202,24 +213,16 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
     },
     "java/lang/ProcessHandleImpl.getCurrentPid0()J": () => BigInt(process.pid),
     "java/lang/ProcessHandleImpl.isAlive0(J)J": (_t, [pid]) => {
-      if (Number(pid) === process.pid) return 0n;
       const child = children.get(Number(pid));
       if (child) return child.code === null ? child.start : -1n;
-      if (pid <= 0n) return -1n;
-      try {
-        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-        return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z ") ? -1n : 0n;
-      } catch { return -1n; }
+      if (Number(pid) === process.pid && boot === null) return 0n;
+      return pid > 0n ? processInfo(pid)?.start ?? -1n : -1n;
     },
     "java/lang/ProcessHandleImpl.parent0(JJ)J": (_t, [pid, start]) => {
       const child = children.get(Number(pid));
       if (child) return child.code === null && (start === 0n || start === child.start) ? BigInt(process.pid) : -1n;
-      if (pid <= 0n) return -1n;
-      try {
-        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-        return fields[0] === "Z" ? -1n : BigInt(fields[1]);
-      } catch { return -1n; }
+      const info = pid > 0n ? processInfo(pid) : null;
+      return info && (start === 0n || start === info.start) ? info.parent : -1n;
     },
     "java/lang/ProcessHandleImpl.waitForProcessExit0(JZ)I": function* (t, [pid, reap]): NativeGen {
       const child = children.get(Number(pid));
@@ -234,33 +237,35 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
     },
     "java/lang/ProcessHandleImpl.getProcessPids0(J[J[J[J)I": (_t, [pid, pids, ppids, starts]) => {
       let count = 0;
-      for (const name of fs.readdirSync("/proc")) {
+      let names: string[];
+      try { names = fs.readdirSync("/proc"); } catch { names = []; }
+      for (const name of names) {
         if (!/^\d+$/.test(name)) continue;
-        try {
-          const stat = fs.readFileSync(`/proc/${name}/stat`, "utf8");
-          const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-          const ppid = BigInt(fields[1]);
-          if (fields[0] === "Z" || (pid !== 0n && ppid !== pid)) continue;
-          if (count < pids.a.length) {
-            pids.a[count] = BigInt(name);
-            if (ppids) ppids.a[count] = ppid;
-            if (starts) starts.a[count] = children.get(Number(name))?.start ?? 0n;
-          }
-          count++;
-        } catch { /* process exited */ }
+        const info = processInfo(Number(name));
+        if (!info || (pid !== 0n && info.parent !== pid)) continue;
+        if (count < pids.a.length) {
+          pids.a[count] = BigInt(name);
+          if (ppids) ppids.a[count] = info.parent;
+          if (starts) starts.a[count] = info.start;
+        }
+        count++;
       }
       return count;
     },
     "java/lang/ProcessHandleImpl$Info.initIDs()V": () => undefined,
     "java/lang/ProcessHandleImpl$Info.info0(J)V": (t, [self, pid]) => {
       const child = children.get(Number(pid));
-      if (!child || child.code !== null) return;
-      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "startTime", child.start);
-      let command = child.command;
-      try { command = fs.readlinkSync(`/proc/${pid}/exe`); } catch { /* process exited */ }
-      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "command", t.vm.str(command));
-      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "user", t.vm.str(os.userInfo().username));
-      t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "arguments", t.vm.newObjectArray("java/lang/String", child.args.map((arg) => t.vm.str(arg))));
+      const info = processInfo(pid);
+      if (!info || (child && child.code !== null)) return;
+      try {
+        const command = fs.readlinkSync(`/proc/${pid}/exe`);
+        const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0$/, "").split("\0").slice(1);
+        t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "startTime", info.start);
+        t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "command", t.vm.str(command));
+        t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "arguments", t.vm.newObjectArray("java/lang/String", (child?.args ?? argv).map((arg) => t.vm.str(arg))));
+        if (fs.statSync(`/proc/${pid}`).uid === process.getuid?.())
+          t.vm.setField(self, "java/lang/ProcessHandleImpl$Info", "user", t.vm.str(os.userInfo().username));
+      } catch { /* process exited or is inaccessible */ }
     },
   };
 }
