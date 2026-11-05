@@ -504,11 +504,11 @@ export function main(argv: string[]) {
     }
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
+    else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (javaChild && a.startsWith("-")) {
       console.error(`Unrecognized option: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);
       process.exit(1);
     }
-    else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (a === "--max-rss") o.maxRssMb = Number(argv[++i]);
     else { o.mainClass = a; i++; break; }
   }
