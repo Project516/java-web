@@ -9,6 +9,29 @@ import { closeSockFd } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
+export interface ProcessPipe {
+  read(dst: Uint8Array, off: number, len: number): Promise<number>;
+  write(bytes: Uint8Array): Promise<string | null>;
+  available(): number;
+  close(): void;
+}
+
+function pipes(t: JThread): Map<number, ProcessPipe> {
+  let map = t.vm.state.get("processPipes") as Map<number, ProcessPipe> | undefined;
+  if (!map) t.vm.state.set("processPipes", (map = new Map()));
+  return map;
+}
+
+export function addProcessPipe(t: JThread, pipe: ProcessPipe): number {
+  const fd = newFd(t);
+  pipes(t).set(fd, pipe);
+  return fd;
+}
+
+export function processPipe(t: JThread, fd: number): ProcessPipe | undefined {
+  return pipes(t).get(fd);
+}
+
 // A file's bytes, shared by every descriptor open on it, as an inode is.
 interface Contents {
   data: Uint8Array;
@@ -246,6 +269,12 @@ export function newFd(t: JThread): number {
 
 export function closeFd(t: JThread, fd: number) {
   if (closeSockFd(t.vm.state, t.vm.net, fd)) return;
+  const pipe = processPipe(t, fd);
+  if (pipe) {
+    pipes(t).delete(fd);
+    pipe.close();
+    return;
+  }
   const tab = table(t);
   const f = tab.files.get(fd);
   if (f) {
@@ -310,9 +339,15 @@ function setFd(t: JThread, stream: JObject, owner: string, fd: number) {
   t.vm.setField(fdObj, "java/io/FileDescriptor", "fd", fd);
 }
 
+function* writeProcessPipe(t: JThread, pipe: ProcessPipe, bytes: Uint8Array): NativeGen {
+  const error: string | null = yield t.block(pipe.write(bytes));
+  if (error) throw new PendingThrow("java/io/IOException", error);
+}
+
 function writeOut(t: JThread, fd: number, bytes: Uint8Array) {
   if (fd === 1) t.vm.opts.stdout(bytes.slice());
   else if (fd === 2) t.vm.opts.stderr(bytes.slice());
+  else if (processPipe(t, fd)) return writeProcessPipe(t, processPipe(t, fd)!, bytes);
   else {
     const f = fileOf(t, fd);
     if (!f.writable) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
@@ -448,23 +483,26 @@ export const natives: Natives = {
   [`${FOS}.writeBytes([BIIZ)V`]: (t, [self, b, off, len]) => {
     const a = nonNull<JArray>(b);
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
-    writeOut(t, fdOf(t, self, FOS), u8(a, off, len));
+    return writeOut(t, fdOf(t, self, FOS), u8(a, off, len));
   },
   [`${FOS}.write(IZ)V`]: (t, [self, b]) => writeOut(t, fdOf(t, self, FOS), Uint8Array.of(b & 0xff)),
 
   [`${FIS}.open0(Ljava/lang/String;)V`]: (t, [self, path]) => setFd(t, self, FIS, openFile(t, t.vm.jsString(path), false, false, false)),
-  [`${FIS}.readBytes([BII)I`]: (t, [self, b, off, len]) => {
+  [`${FIS}.readBytes([BII)I`]: function* (t, [self, b, off, len]): NativeGen {
     const a = nonNull<JArray>(b);
     if (off < 0 || len < 0 || off + len > a.a.length) throw new PendingThrow("java/lang/IndexOutOfBoundsException");
     if (len === 0) return 0;
     const fd = fdOf(t, self, FIS);
-    if (fd === 0) return readStdin(t, u8(a), off, len);
+    if (fd === 0) return yield* readStdin(t, u8(a), off, len);
+    const pipe = processPipe(t, fd);
+    if (pipe) return yield t.block(pipe.read(u8(a), off, len));
     return fileOf(t, fd).read(u8(a), off, len);
   },
   [`${FIS}.read0()I`]: function* (t, [self]): NativeGen {
     const fd = fdOf(t, self, FIS);
     const one = new Uint8Array(1);
-    const n = fd === 0 ? yield* readStdin(t, one, 0, 1) : fileOf(t, fd).read(one, 0, 1);
+    const pipe = processPipe(t, fd);
+    const n = fd === 0 ? yield* readStdin(t, one, 0, 1) : pipe ? yield t.block(pipe.read(one, 0, 1)) : fileOf(t, fd).read(one, 0, 1);
     return n <= 0 ? -1 : one[0];
   },
   [`${FIS}.length0()J`]: (t, [self]) => BigInt(fileOf(t, fdOf(t, self, FIS)).size),
@@ -479,10 +517,12 @@ export const natives: Natives = {
   [`${FIS}.available0()I`]: (t, [self]) => {
     const fd = fdOf(t, self, FIS);
     if (fd === 0) return (t.vm.state.get("stdin") as Stdin | undefined)?.buf.length ?? 0;
+    const pipe = processPipe(t, fd);
+    if (pipe) return pipe.available();
     const f = fileOf(t, fd);
     return Math.min(Math.max(0, f.size - f.pos), 0x7fffffff);
   },
-  [`${FIS}.isRegularFile0(Ljava/io/FileDescriptor;)Z`]: (t, [, fdObj]) => t.vm.getField(fdObj, "java/io/FileDescriptor", "fd") > 2,
+  [`${FIS}.isRegularFile0(Ljava/io/FileDescriptor;)Z`]: (t, [, fdObj]) => t.vm.getField(fdObj, "java/io/FileDescriptor", "fd") > 2 && !processPipe(t, t.vm.getField(fdObj, "java/io/FileDescriptor", "fd")),
 
   [`${RAF}.open0(Ljava/lang/String;I)V`]: (t, [self, path, mode]) =>
     setFd(t, self, RAF, openFile(t, t.vm.jsString(path), (mode & 2) !== 0, false, false)),
