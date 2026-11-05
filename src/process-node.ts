@@ -219,7 +219,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
             if (descriptors[i] <= 2 && i !== 0) {
               const output = descriptors[i] === 1 ? t.vm.opts.stdout : t.vm.opts.stderr;
               const stream = i === 1 && merged ? merged.reader : child.stdio[i] as Readable;
-              stream?.on("data", (data: Buffer) => output(new Uint8Array(data)));
+              stream?.on("error", () => {});
+              stream?.on("data", (data: Buffer) => { try { output(new Uint8Array(data)); } catch { /* output closed */ } });
             }
             if (i === 0 && descriptors[i] === 0 && stdio[i] === "pipe") {
               const input = child.stdio[i] as Writable;

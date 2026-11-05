@@ -131,11 +131,12 @@ test("dist/node.js and the java-web command run a program as HotSpot does", { sk
   }
 });
 
-test("dist/node.js starts child processes", { skip }, () => {
+test("dist/node.js starts child processes", { skip: skip || process.platform !== "linux" }, () => {
   mkdirSync(out, { recursive: true });
   spawnSync(hotspot("javac"), ["-d", out, join(root, "test", "java", "Processes.java")], { stdio: "inherit" });
   const ref = spawnSync(hotspot("java"), ["-cp", out, "Processes"], { encoding: "utf8" });
-  const got = spawnSync(process.execPath, [node, "-cp", out, "Processes"], { encoding: "utf8" });
+  const got = spawnSync(process.execPath, [node, "-cp", out, "Processes"], { encoding: "utf8", timeout: 120_000 });
+  assert.equal(got.error, undefined);
   assert.deepEqual({ stdout: got.stdout, stderr: got.stderr, code: got.status }, { stdout: ref.stdout, stderr: ref.stderr, code: ref.status });
 });
 
