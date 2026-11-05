@@ -48,10 +48,12 @@ public class Processes {
       Process merged = new ProcessBuilder("sh", "-c", "printf out; printf err >&2").redirectError(file.toFile()).redirectErrorStream(true).start();
       String both = output(merged);
       System.out.println("merged=" + (both.contains("out") && both.contains("err")) + ":" + merged.waitFor());
+      Process ordered = new ProcessBuilder("sh", "-c", "i=0; while [ $i -lt 100 ]; do printf a; printf b >&2; i=$((i+1)); done").redirectErrorStream(true).start();
+      System.out.println("order=" + output(ordered).equals("ab".repeat(100)) + ":" + ordered.waitFor());
       Process redirect = new ProcessBuilder("echo", "file").redirectOutput(file.toFile()).start();
       System.out.println("redirect=" + redirect.waitFor() + ":" + Files.readString(file).trim());
       Process sleep = new ProcessBuilder("sleep", "2").start();
-      System.out.println("info=" + sleep.info().command().isPresent() + ":" + sleep.info().startInstant().isPresent() + ":" + ProcessHandle.current().info().command().isPresent());
+      System.out.println("info=" + sleep.info().command().isPresent() + ":" + sleep.info().startInstant().isPresent() + ":" + sleep.info().totalCpuDuration().isPresent() + ":" + ProcessHandle.current().info().command().isPresent());
       System.out.println("handle=" + sleep.toHandle().isAlive() + ":" + (sleep.pid() == sleep.toHandle().pid()));
       System.out.println("child=" + ProcessHandle.current().children().anyMatch(p -> p.pid() == sleep.pid()));
       System.out.println("all=" + ProcessHandle.allProcesses().anyMatch(p -> p.pid() == ProcessHandle.current().pid()));
