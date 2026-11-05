@@ -50,6 +50,11 @@ interface Contents {
 const hostOpeners = new WeakMap<Contents, () => FileHandle | undefined>();
 const closesHosts = new WeakSet<JVM>();
 
+// A snapshot cannot hold a host handle, nor the opener a file may still need.
+export function streams(f: OpenFile): boolean {
+  return !!f.contents.host || hostOpeners.has(f.contents);
+}
+
 // Host handles of files the program leaves open close when its VM exits.
 function closeHostsOnExit(vm: JVM) {
   if (closesHosts.has(vm)) return;

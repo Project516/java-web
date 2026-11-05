@@ -8,6 +8,7 @@ import { parseClass } from "./classfile.ts";
 import type { JVM } from "./jvm.ts";
 import { platformProperties, vmProperties } from "./natives/misc.ts";
 import { restorePending, restoreReference } from "./natives/ref.ts";
+import { streams } from "./natives/io.ts";
 import { MAX_HEAP } from "./runtime.ts";
 import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
@@ -289,7 +290,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string): SnapshotImage {
     classCount: vm.classCount,
     state: [...s].filter(([k, x]) => {
       if (k === "socks" && x.socks.size) throw new Error("snapshot: a socket is open");
-      if (k === "fds" && [...x.files.values()].some((f: any) => f.contents.host)) throw new Error("snapshot: a file streamed to the host is open");
+      if (k === "fds" && [...x.files.values()].some(streams)) throw new Error("snapshot: a host file that streams is open");
       return !TRANSIENT.has(k) && !k.startsWith("parked:");
     }).map(([k, v]) => [k, e.enc(v, `state.${k}`)]),
     pending: e.enc(refs?.pending ?? [], "refs.pending"),
