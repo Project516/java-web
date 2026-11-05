@@ -509,7 +509,9 @@ export function main(argv: string[]) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);
   }
-  Promise.resolve().then(() => runNode(o)).then((code) => process.exit(code), (e) => {
+  // Collecting first: node's exit teardown can deadlock while it frees very
+  // large array buffers (seen on x64 CI runners with a few hundred MB left).
+  Promise.resolve().then(() => runNode(o)).then((code) => (globalThis.gc?.(), process.exit(code)), (e) => {
     console.error(`java-web: ${(e as Error).message}`);
     process.exit(1);
   });
