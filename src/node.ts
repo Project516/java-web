@@ -149,6 +149,14 @@ export class NodeBackend implements Backend {
       return false;
     }
   }
+  space(p: string) {
+    try {
+      const s = fs.statfsSync(this.host(p), { bigint: true });
+      return { bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
+    } catch {
+      return null;
+    }
+  }
   setMtime(p: string, ms: number) {
     try {
       fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);

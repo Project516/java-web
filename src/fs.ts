@@ -1,5 +1,12 @@
 // Virtual file system the Java side sees. Paths are absolute and use "/".
 
+export interface Space {
+  bsize: bigint;
+  blocks: bigint;
+  bfree: bigint;
+  bavail: bigint;
+}
+
 export interface Stat {
   dir: boolean;
   size: number;
@@ -33,6 +40,8 @@ export interface Backend {
   mkdir?(path: string): boolean;
   remove?(path: string): boolean;
   rename?(from: string, to: string): boolean;
+  // the file system holding path: block size and block counts, as statvfs gives them
+  space?(path: string): Space | null;
   // sets the modification time, in milliseconds since the epoch
   setMtime?(path: string, ms: number): boolean;
   // whether the host refuses to write the file, or to create it when it is missing
@@ -200,6 +209,13 @@ export class VFS {
   writable(path: string): boolean {
     const r = this.resolve(path);
     return !!r && r[0].writable;
+  }
+
+  // A file system without its own figures reports 4 KB blocks and no space,
+  // as Linux does for virtual file systems such as /proc.
+  space(path: string): Space {
+    const r = this.resolve(path);
+    return (r && r[0].space?.(r[1])) ?? { bsize: 4096n, blocks: 0n, bfree: 0n, bavail: 0n };
   }
 
   // ns, when given, is the exact time asked for. Hosts keep times as floating

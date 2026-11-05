@@ -1979,6 +1979,10 @@ java/nio/channels/FileChannel/Truncate.java
 java/nio/channels/FileChannel/TruncateRAF.java
 java/nio/channels/FileChannel/TryLock.java
 java/nio/channels/FileChannel/Write.java
+java/nio/channels/FileChannel/directio/PreadDirect.java
+java/nio/channels/FileChannel/directio/PwriteDirect.java
+java/nio/channels/FileChannel/directio/ReadDirect.java
+java/nio/channels/FileChannel/directio/WriteDirect.java
 java/nio/channels/FileLock/FileLockConstructor.java
 java/nio/channels/FileLock/FileLockGC.java
 java/nio/channels/FileLock/Overlaps.java
@@ -2109,7 +2113,6 @@ java/nio/file/Files/CopyToNonDefaultFS.java
 java/nio/file/Files/CreateDirectories.java
 java/nio/file/Files/CustomOptions.java
 java/nio/file/Files/FileAttributes.java
-java/nio/file/Files/InterruptCopy.java
 java/nio/file/Files/Links.java
 java/nio/file/Files/Misc.java
 java/nio/file/Files/Mismatch.java
