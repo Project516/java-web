@@ -412,9 +412,9 @@ export function syncPath(t: JThread, abs: string) {
 }
 
 // Pending writes go out first, so closing the file later does not change the time again.
-export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint, noFollow = false): boolean {
+export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint, noFollow = false, atime?: { ms: number; ns: bigint }): boolean {
   syncPath(t, abs);
-  return t.vm.fs.setMtime(abs, ms, ns, noFollow);
+  return t.vm.fs.setMtime(abs, ms, ns, noFollow, atime);
 }
 
 // write(2) on a descriptor opened read-only fails with EBADF.

@@ -12,6 +12,13 @@ import type { OpenFile, ProcessPipe } from "./natives/io.ts";
 import type { Natives } from "./natives/util.ts";
 import { u8 } from "./natives/util.ts";
 
+// the variable that carries a java-web child's environment when Node cannot
+export const ENV_CHANNEL = "JAVA_WEB_ENV";
+
+// the command that starts a java-web VM as the `java` of a child process
+export const javaChild = (entry: string, jdk: string, packaged: boolean) =>
+  [process.execPath, entry, "--java-child", ...(packaged ? [] : ["--jdk", jdk])];
+
 const drained = (output: Writable) => output.writableNeedDrain
   ? new Promise<void>((resolve) => { output.once("drain", resolve); output.once("close", resolve); })
   : undefined;
@@ -189,13 +196,17 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
       const testJdk = t.vm.props.get("test.jdk");
       const java = command === "java" || command === "/jdk/bin/java" || command === `${jdk}/bin/java` || !!(testJdk && command === `${testJdk}/bin/java`);
       if (java) {
-        command = process.execPath;
-        args = [entry, "--java-child", ...(packaged ? [] : ["--jdk", jdk]), ...args];
+        [command, ...args] = [...javaChild(entry, jdk, packaged), ...args];
       }
-      const env = envBlock === null ? t.vm.opts.env : Object.fromEntries(block(envBlock).map((s) => {
-        const i = s.indexOf("=", 1);
+      let env = envBlock === null ? t.vm.opts.env : Object.fromEntries(block(envBlock).map((s) => {
+        const i = s.indexOf("=");
         return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
       }));
+      // a host process cannot have a variable with an empty name; the java-web child reads it from here
+      if (java && env && "" in env) {
+        const { "": _, ...rest } = env;
+        env = { ...rest, [ENV_CHANNEL]: JSON.stringify(env) };
+      }
       const descriptors = (fds as JArray).a as Int32Array;
       const opened: number[] = [];
       const stdio: (number | "pipe" | Socket)[] = [];

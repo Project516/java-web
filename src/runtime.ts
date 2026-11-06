@@ -508,6 +508,7 @@ function store(bytes: number): [ArrayBuffer, number] | null {
 }
 
 export function newArrayData(elem: string, n: number): ArrayData {
+  if (n > 0x7ffffffd) throw new PendingThrow("java/lang/OutOfMemoryError", "Requested array size exceeds VM limit");
   const bytes = n * ELEM_SIZE[elem];
   if (bytes > MAX_HEAP) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
   const at = elem === "L" ? null : store(bytes);

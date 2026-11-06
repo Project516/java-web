@@ -29,7 +29,7 @@ java-web targets headless Java: console apps, libraries and javac.
   host's inode numbers and link counts, and the modes `open` and `mkdir` ask
   for, less the process's umask. In-memory files get synthetic inode numbers, a
   link count of 1 and default modes.
-- `-XX:OnOutOfMemoryError` runs no command, and `StackWalker`
+- `-XX:OnOutOfMemoryError` runs its commands under Node only, and `StackWalker`
   has no live locals or operands. A virtual thread that yields while it
   holds a monitor stays pinned to its carrier.
 - `ThreadMXBean` describes threads and finds deadlocks, but has no CPU times
@@ -37,8 +37,10 @@ java-web targets headless Java: console apps, libraries and javac.
   find a frame's locked monitors from its synchronized blocks as compilers emit
   them, and list a monitor taken any other way with stack depth -1.
 - `WatchService` reports files the program itself, or another thread in the
-  same VM, creates, changes or deletes. It does not see changes made outside
-  the VM, including by child processes the program starts.
+  same VM, creates, changes or deletes. Under Node it also reports what other
+  processes do to a watched host directory, with Node's `fs.watch` (so a short-lived
+  entry can show as a delete without its create). Elsewhere it does not see
+  changes made outside the VM.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
   processes in the browser, and native libraries other than JS natives.
 

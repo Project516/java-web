@@ -860,6 +860,8 @@ java/lang/Package/PackageVersionTest.java
 java/lang/PrimitiveSumMinMaxTest.java
 java/lang/Process/WaitFor.java
 java/lang/Process/WaitForDuration.java
+java/lang/ProcessBuilder/Basic.java#2
+java/lang/ProcessBuilder/Basic.java#3
 java/lang/ProcessBuilder/CloseRace.java
 java/lang/ProcessBuilder/DestroyTest.java
 java/lang/ProcessBuilder/InheritIOEHandle.java
@@ -1939,6 +1941,7 @@ java/nio/Buffer/Chars.java
 java/nio/Buffer/Chew.java
 java/nio/Buffer/CopyDirectMemory.java
 java/nio/Buffer/GetChars.java
+java/nio/Buffer/LimitDirectMemory.java
 java/nio/Buffer/Order.java
 java/nio/Buffer/ReachabilityTest.java
 java/nio/Buffer/StringCharBufferSliceTest.java
@@ -2201,6 +2204,7 @@ java/nio/file/Files/NotADirectory.java
 java/nio/file/Files/ReadWriteString.java
 java/nio/file/Files/SetLastModifiedTime.java
 java/nio/file/Files/StreamTest.java
+java/nio/file/Files/SymlinkTime.java
 java/nio/file/Files/TemporaryFiles.java
 java/nio/file/Files/probeContentType/ForceLoad.java
 java/nio/file/Files/probeContentType/ParallelProbes.java
@@ -2215,6 +2219,7 @@ java/nio/file/Path/ToRealPath.java
 java/nio/file/Path/UriImportExport.java
 java/nio/file/PathMatcher/Basic.java
 java/nio/file/WatchService/Basic.java
+java/nio/file/WatchService/DeleteInterference.java
 java/nio/file/WatchService/LotsOfCancels.java
 java/nio/file/WatchService/LotsOfCloses.java
 java/nio/file/WatchService/LotsOfEntries.java
@@ -2225,6 +2230,7 @@ java/nio/file/WatchService/UpdateInterference.java
 java/nio/file/attribute/AclEntry/EmptySet.java
 java/nio/file/attribute/AclFileAttributeView/Basic.java
 java/nio/file/attribute/BasicFileAttributeView/Basic.java
+java/nio/file/attribute/BasicFileAttributeView/UnixSocketFile.java
 java/nio/file/attribute/DosFileAttributeView/Basic.java
 java/nio/file/attribute/FileTime/Basic.java
 java/nio/file/attribute/PosixFileAttributeView/Basic.java

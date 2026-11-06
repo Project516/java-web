@@ -1,6 +1,7 @@
 // Node entry: java-web [-cp path] [-Dk=v] [--debug] Main [args] | -jar app.jar [args]
 
 import { isAssertionFlag, parseAssertions } from "./assertions.ts";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,7 +17,7 @@ import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
-import { processNatives } from "./process-node.ts";
+import { ENV_CHANNEL, javaChild, processNatives } from "./process-node.ts";
 import { PendingThrow } from "./thread.ts";
 import { heapSize } from "./heapsize.ts";
 import { clearAllocationCheck, hasMaxHeap, MAX_HEAP, resetAllocationCheck, setAllocationCheck, setMaxHeap } from "./runtime.ts";
@@ -83,7 +84,8 @@ export class NodeBackend implements Backend {
     let st: Stat | null = null;
     try {
       const s = fs.statSync(this.host(p));
-      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
+      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, atime: s.atimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
+      if (!s.isDirectory() && !s.isFile()) st.special = true;
     } catch {
       st = null;
     }
@@ -94,7 +96,7 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.lstatSync(this.host(p));
       if (!s.isSymbolicLink()) return null;
-      return { dir: false, size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, link: s.size, ino: s.ino, nlink: s.nlink };
+      return { dir: false, size: s.size, mtime: s.mtimeMs, atime: s.atimeMs, mode: s.mode & 0o7777, link: s.size, ino: s.ino, nlink: s.nlink };
     } catch {
       return null;
     }
@@ -139,7 +141,19 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.statSync(this.host(p));
       if (!s.isFile() || s.size > MAX_FILE) return null;
-      return new Uint8Array(fs.readFileSync(this.host(p)));
+      // opening a file does not read it on the host, so it must not touch the access time
+      let fd: number;
+      try {
+        fd = fs.openSync(this.host(p), fs.constants.O_RDONLY | (fs.constants.O_NOATIME ?? 0));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EPERM") throw e;
+        fd = fs.openSync(this.host(p), fs.constants.O_RDONLY);
+      }
+      try {
+        return new Uint8Array(fs.readFileSync(fd));
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {
       return null;
     }
@@ -232,10 +246,40 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
-  setMtime(p: string, ms: number, noFollow = false) {
+  watch(p: string, onEvent: (name: string, event: "create" | "modify" | "delete") => void) {
+    const host = this.host(p);
     try {
-      if (noFollow) fs.lutimesSync(this.host(p), fs.lstatSync(this.host(p)).atime, ms / 1000);
-      else fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);
+      const exists = (file: string) => {
+        try {
+          return !!fs.lstatSync(file, { throwIfNoEntry: false });
+        } catch {
+          return false;
+        }
+      };
+      const watcher = fs.watch(host, { persistent: false }, (type, name) => {
+        if (name === null) return;
+        const child = exists(path.join(host, name));
+        // the directory's own events carry its name
+        if (name === path.basename(host) && !child) return exists(host) ? undefined : onEvent("", "delete");
+        if (type === "change") return onEvent(name, "modify");
+        onEvent(name, child ? "create" : "delete");
+      });
+      watcher.on("error", () => {});
+      return () => watcher.close();
+    } catch {
+      return null;
+    }
+  }
+  signature(p: string) {
+    const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
+    return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
+  }
+  setMtime(p: string, ms: number, noFollow = false, atimeMs?: number) {
+    try {
+      const host = this.host(p);
+      const atime = atimeMs === undefined ? (noFollow ? fs.lstatSync(host) : fs.statSync(host)).atimeMs : atimeMs;
+      if (noFollow) fs.lutimesSync(host, atime / 1000, ms / 1000);
+      else fs.utimesSync(host, atime / 1000, ms / 1000);
       return true;
     } catch {
       return false;
@@ -292,6 +336,12 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
+  onOutOfMemoryError?: string[];
+  // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
+  vmOutputToStderr?: boolean;
+  // -XX:MaxDirectMemorySize in bytes
+  maxDirectMemory?: number;
   // what InetAddress.getLocalHost() reports instead of the host's name
   hostName?: string;
   // what System.getenv() returns instead of the host's environment
@@ -345,6 +395,23 @@ function hostOut(s: NodeJS.WriteStream) {
 }
 function onOutError(this: NodeJS.WriteStream) {
   broken.add(this);
+}
+
+// What HotSpot does on the first OutOfMemoryError: it prints the commands and
+// runs each through /bin/sh, with %p the process id, before throwing.
+function runOnOutOfMemory(commands: string[], message: string | null, out: ((b: Uint8Array) => void) | undefined, fd: number, java: string[]) {
+  const say = (line: string) => out ? out(new TextEncoder().encode(line + "\n")) : fs.writeSync(fd, line + "\n");
+  say(`#\n# java.lang.OutOfMemoryError: ${message ?? "null"}`);
+  for (const raw of commands) {
+    say(`# -XX:OnOutOfMemoryError="${raw}"`);
+    for (const part of raw.split(";")) {
+      const cmd = part.replaceAll("%p", String(process.pid));
+      say(`#   Executing /bin/sh -c "${cmd}"...`);
+      // java.home is not a host path, so a command that starts java-web's java starts it directly
+      const run = cmd.replace(/^\s*(\/jdk\/bin\/java|java)(?=\s|$)/, java.map((w) => `'${w.replaceAll("'", "'\\''")}'`).join(" "));
+      spawnSync("/bin/sh", ["-c", run], { stdio: "inherit" });
+    }
+  }
 }
 
 function defaultSnapshotDir(): string | null {
@@ -479,7 +546,11 @@ function nodeVm(o: NodeRunOptions): JVM {
     javaHome: "/jdk",
     localeData: o.localeData,
     classpath,
-    props: { "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props },
+    props: {
+      "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props,
+      // only the option sets it, as in HotSpot
+      "sun.nio.MaxDirectMemorySize": String(o.maxDirectMemory ?? -1),
+    },
     cwd: toVfs(process.cwd()),
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
@@ -505,6 +576,7 @@ function nodeVm(o: NodeRunOptions): JVM {
       process.stdin.resume();
     }),
     afterBoot: resetAllocationCheck,
+    onOutOfMemory: o.onOutOfMemoryError && ((message) => runOnOutOfMemory(o.onOutOfMemoryError!, message, o.vmOutputToStderr ? o.stderr : o.stdout, o.vmOutputToStderr ? 2 : 1, javaChild(fileURLToPath(import.meta.url), jdk, packaged))),
   });
   vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged, o.input === undefined));
   bridges.set(vm, bridge);
@@ -576,12 +648,33 @@ export function moduleFlag(o: NodeRunOptions, arg: string, next: string | undefi
   return true;
 }
 
+// java -version: the launcher's three lines, built from the VM's properties
+async function printVersion(o: NodeRunOptions) {
+  const vm = await startLibrary(o);
+  const System = await libraryOf(vm).java.lang.System;
+  const [version, date, runtimeName, vendor, runtime, vmName, vmVersion, vmInfo] = await Promise.all(
+    ["java.version", "java.version.date", "java.runtime.name", "java.vendor.version", "java.runtime.version", "java.vm.name", "java.vm.version", "java.vm.info"]
+      .map((k) => System.getProperty(k)));
+  const extra = vendor ? `${vendor} ` : "";
+  process.stderr.write(`openjdk version "${version}" ${date}${/-LTS$/.test(runtime) ? " LTS" : ""}\n` +
+    `${runtimeName} ${extra}(build ${runtime})\n${vmName} ${extra}(build ${vmVersion}, ${vmInfo})\n`);
+  vm.halt(0);
+}
+
 // the java-web command, which dist/cli.js runs
 export function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
+  let version = false;
   const javaChild = argv[0] === "--java-child";
-  if (javaChild) i++;
+  if (javaChild) {
+    i++;
+    const sent = process.env[ENV_CHANNEL];
+    if (sent !== undefined) {
+      o.env = JSON.parse(sent);
+      delete process.env[ENV_CHANNEL];
+    }
+  }
   for (; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-cp" || a === "-classpath" || a === "--class-path") o.classpath = argv[++i].split(":");
@@ -594,6 +687,7 @@ export function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
+    else if (a === "-version") version = true;
     else if (a.startsWith("-Xmx")) {
       // x64 HotSpot refuses to start below 2 MB and rounds up to 2 MB steps
       const n = /^-Xmx\d+[kmg]?$/i.test(a) ? heapSize(a.slice(4)) : 0;
@@ -603,6 +697,17 @@ export function main(argv: string[]) {
         process.exit(1);
       }
       setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
+    }
+    else if (a === "-XX:+DisplayVMOutputToStderr") o.vmOutputToStderr = true;
+    else if (a === "-XX:-DisplayVMOutputToStderr") o.vmOutputToStderr = false;
+    else if (a.startsWith("-XX:OnOutOfMemoryError=")) (o.onOutOfMemoryError ??= []).push(a.slice(23));
+    else if (a.startsWith("-XX:MaxDirectMemorySize=")) {
+      const n = heapSize(a.slice(24));
+      if (!(n >= 0) || !Number.isInteger(n)) {
+        console.error(`Improperly specified VM option '${a.slice(4)}'\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);
+        process.exit(1);
+      }
+      o.maxDirectMemory = n;
     }
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
@@ -615,6 +720,13 @@ export function main(argv: string[]) {
     else { o.mainClass = a; i++; break; }
   }
   o.args = argv.slice(i);
+  if (version) {
+    printVersion(o).then(() => process.exit(0), (e) => {
+      console.error(`java-web: ${(e as Error).message}`);
+      process.exit(1);
+    });
+    return;
+  }
   if (!o.mainClass && !o.jar) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);

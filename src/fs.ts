@@ -16,8 +16,13 @@ export interface Stat {
   // the modification time in nanoseconds, when it was set with more precision
   // than mtime keeps
   mtimeNs?: bigint;
+  // the access time, when the backend keeps one (mtime otherwise), and in nanoseconds
+  atime?: number;
+  atimeNs?: bigint;
   // permission and special bits, when the backend can report them
   mode?: number;
+  // a socket, FIFO or device on the host, which cannot be opened here
+  special?: boolean;
   // a character device; it streams and is never read whole
   device?: boolean;
   // lstat of a symbolic link: the length of its target, which is also its size
@@ -60,8 +65,8 @@ export interface Backend {
   rename?(from: string, to: string): boolean;
   // the file system holding path: block size and block counts, as statvfs gives them
   space?(path: string): Space | null;
-  // sets the modification time, in milliseconds since the epoch
-  setMtime?(path: string, ms: number, noFollow?: boolean): boolean;
+  // sets the modification time, and the access time when given, in milliseconds since the epoch
+  setMtime?(path: string, ms: number, noFollow?: boolean, atimeMs?: number): boolean;
   // whether the host refuses to write the file, or to create it when it is missing
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
@@ -76,6 +81,10 @@ export interface Backend {
   link?(existing: string, path: string): string | undefined;
   // the path with every link resolved, where the missing tail stays as written
   realpath?(path: string): string | null;
+  // reports changes others make to a directory's entries (name "" is the directory itself); returns what stops it
+  watch?(path: string, onEvent: (name: string, event: "create" | "modify" | "delete") => void): (() => void) | null;
+  // changes whenever the entry's content or times do, or is "" when it is missing
+  signature?(path: string): string;
 }
 
 export interface WarmTrace {
@@ -104,7 +113,7 @@ export function normalize(path: string): string {
 
 export class VFS {
   // path -> the time a VM set, and the mtime the backend reported right after
-  private setTimes = new Map<string, { ms: number; ns: bigint }>();
+  private setTimes = new Map<string, { ms: number; ns: bigint; atime?: { ms: number; ns: bigint } }>();
   private mounts: { prefix: string; backend: Backend }[] = [];
   private hidden: string[] = [];
   private warmTrace: WarmTrace | null = null;
@@ -229,6 +238,51 @@ export class VFS {
   private changedNormalized(path: string, event: "create" | "modify" | "delete") {
     for (const watcher of this.watchers) watcher(path, event);
     this.warmChanged?.add(path);
+    if (this.hostWatches.size === 0) return;
+    const watch = this.hostWatches.get(parentOf(path));
+    if (watch) watch.own.set(path.slice(path.lastIndexOf("/") + 1), this.signature(path));
+  }
+
+  // Host directories being watched: the entries as the VM last left them, so
+  // that only changes others make reach watchers a second time.
+  private hostWatches = new Map<string, { stop: () => void; refs: number; own: Map<string, string> }>();
+
+  private signature(path: string): string {
+    const r = this.resolve(path);
+    return (r && r[0].signature?.(r[1])) ?? "";
+  }
+
+  // Starts reporting what others do to a directory on a host backend, as
+  // inotify does; the VM's own changes already reach watchers. Returns what stops it.
+  watchDirectory(path: string): () => void {
+    const dir = normalize(path);
+    let watch = this.hostWatches.get(dir);
+    if (!watch) {
+      const r = this.resolve(dir);
+      const stop = r?.[0].watch?.(r[1], (name, event) => this.hostChanged(dir, name, event));
+      if (!stop) return () => {};
+      watch = { stop, refs: 0, own: new Map() };
+      this.hostWatches.set(dir, watch);
+    }
+    const w = watch;
+    w.refs++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      if (--w.refs === 0) {
+        w.stop();
+        if (this.hostWatches.get(dir) === w) this.hostWatches.delete(dir);
+      }
+    };
+  }
+
+  private hostChanged(dir: string, name: string, event: "create" | "modify" | "delete") {
+    const watch = this.hostWatches.get(dir);
+    if (!watch) return;
+    const path = name === "" ? dir : (dir === "/" ? "" : dir) + "/" + name;
+    if (name !== "" && watch.own.get(name) === this.signature(path)) return;
+    for (const watcher of this.watchers) watcher(path, event);
   }
 
   resolvePath(path: string): string {
@@ -289,7 +343,10 @@ export class VFS {
     const s = r ? r[0].stat(r[1]) : null;
     if (s) {
       const set = this.setTimes.get(n);
-      if (set?.ms === s.mtime) return { ...s, mtimeNs: set.ns };
+      if (set?.ms === s.mtime) {
+        const atime = set.atime && set.atime.ms === s.atime ? { atimeNs: set.atime.ns } : {};
+        return { ...s, mtimeNs: set.ns, ...atime };
+      }
       if (set) this.setTimes.delete(n);
       return s;
     }
@@ -474,16 +531,18 @@ export class VFS {
   // ns, when given, is the exact time asked for. Hosts keep times as floating
   // point seconds or milliseconds, which lose nanoseconds, so stat reports ns
   // for as long as the file keeps the time this set.
-  setMtime(path: string, ms: number, ns?: bigint, noFollow = false): boolean {
+  setMtime(path: string, ms: number, ns?: bigint, noFollow = false, atime?: { ms: number; ns: bigint }): boolean {
     const r = this.resolve(path);
-    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms, noFollow)) return false;
+    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms, noFollow, atime?.ms)) return false;
     this.changed(path, "modify");
     if (noFollow) return true;
     const n = normalize(path);
     const st = ns === undefined ? null : r[0].stat(r[1]);
     // only a time the host kept, give or take its rounding; a host can clamp it
-    if (st && Math.abs(st.mtime - ms) < 1) this.setTimes.set(n, { ms: st.mtime, ns: ns! });
-    else this.setTimes.delete(n);
+    if (st && Math.abs(st.mtime - ms) < 1) {
+      const kept = atime && st.atime !== undefined && Math.abs(st.atime - atime.ms) < 1;
+      this.setTimes.set(n, { ms: st.mtime, ns: ns!, ...(kept ? { atime: { ms: st.atime!, ns: atime.ns } } : {}) });
+    } else this.setTimes.delete(n);
     return true;
   }
 
