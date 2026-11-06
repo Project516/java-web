@@ -10,6 +10,7 @@
 
 import { Bridge, messageOf, nativeTable } from "../bridge.ts";
 import type { LibraryReply, LibraryRequest } from "../library.ts";
+import { heapSize } from "../heapsize.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 
 const LM_CLASS = 1, LM_JAR = 2;
@@ -33,6 +34,8 @@ export interface InitOptions {
   warmSnapshot?: boolean;
   // log VM events (snapshots, missing natives) to the console, as --debug does under Node
   debug?: boolean;
+  // what Runtime.maxMemory() reports and the cap on live Java memory: bytes, or "256m" as in -Xmx
+  maxHeap?: number | string;
   // where java-web.js, the worker and jdk/ live; defaults to the script's directory
   runtime?: string;
   // receives output instead of the page console element
@@ -153,6 +156,8 @@ export function cheerpjInit(options: InitOptions = {}): Promise<void> {
   output = options.onOutput ?? null;
   const props = keyValues(options.javaProperties);
   const env = keyValues(options.env);
+  const maxHeap = options.maxHeap === undefined ? 0 : typeof options.maxHeap === "number" ? options.maxHeap : /^\d+[kmg]?$/i.test(options.maxHeap) ? heapSize(options.maxHeap) : NaN;
+  if (!(maxHeap === 0 || maxHeap >= 2 ** 21)) throw new Error(`java-web: invalid maxHeap ${options.maxHeap}`);
   worker = new Worker(new URL("java-web-worker.js", runtime));
   ready = new Promise((resolve, reject) => {
     worker!.onmessage = (e: MessageEvent<FromWorker>) => {
@@ -182,7 +187,7 @@ export function cheerpjInit(options: InitOptions = {}): Promise<void> {
     };
   });
   natives = options.natives ?? {};
-  send({ type: "init", runtime, app: appBase, props, hostName: options.hostName, env, localeData: !!options.localeData, warmSnapshot: !!options.warmSnapshot, debug: !!options.debug, natives: Object.keys(natives), progress: !!options.preloadProgress });
+  send({ type: "init", runtime, app: appBase, props, hostName: options.hostName, env, localeData: !!options.localeData, warmSnapshot: !!options.warmSnapshot, debug: !!options.debug, maxHeap, natives: Object.keys(natives), progress: !!options.preloadProgress });
   initStarted(ready);
   return ready;
 }

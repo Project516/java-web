@@ -37,6 +37,7 @@ and `cjFileBlob(path)` also work.
   `total` is 0 while the server has not sent a length; the last call has `done === total`.
 - `cheerpjInit({ warmSnapshot: true })` saves a library VM once its calls have warmed it up (see below).
 - `cheerpjInit({ debug: true })` logs VM events to the console, such as whether a warm snapshot was saved, skipped as busy (and why) or restored.
+- `cheerpjInit({ maxHeap: "256m" })` sets what `Runtime.maxMemory()` reports and caps live Java memory (see below). It takes bytes or a size with `k`, `m` or `g`, as `-Xmx` does. CheerpJ has no such option.
 - A file Java closes under `/files/downloads/` is downloaded by the browser.
   `/files/uploads/` exists for files the page adds there.
 - The browser console gets whole lines, so two `print` calls and a `println` log one
@@ -123,6 +124,32 @@ Natives run on the page's main thread while Java runs in a Worker, so a typed
 array argument is a copy; what the native writes to it goes back to Java when it
 returns. Output goes to the element with id `console`, or to the display. `/files/`
 is writable storage, kept in IndexedDB.
+
+## Memory limit
+
+Without `maxHeap`, a browser page caps only a single array (at 1 GB). A Java
+program that keeps allocating grows until the tab dies. With `maxHeap`, the VM
+also adds up the live bytes of every array of 4 KB or more, and throws
+`OutOfMemoryError: Java heap space` when the sum stays over the cap. Objects and
+smaller arrays do not count, so a program that only allocates those is not
+capped. The cap is at most 1 GB.
+
+Browsers have no `gc()`, and `performance.memory` does not exist in a Worker, so
+the VM counts arrays itself, from allocation until the engine collects the array
+and runs its finalizer. An array Java dropped keeps counting until then. When
+the sum passes the cap, the VM allocates a throwaway 256 MB buffer, which makes
+Chromium collect, and pauses its threads for a few milliseconds at a time. It
+throws only when finalizers have stopped running for 100 ms with the sum still
+over the cap, or after 1 s over. A program that drops its data is not stopped,
+and one that holds it is stopped slightly past the cap. In headless Chromium, a
+loop that keeps 256 KB arrays held 1.06 times the cap for `maxHeap: "256m"`, 1.1
+times for `"64m"` and 1.3 times for `"32m"`, and the error came after about
+0.1 s.
+
+The check needs `FinalizationRegistry` (Chrome 84, Firefox 79, Safari 14.1).
+Where it is missing, only the per-array cap applies. It has been run in Chromium
+only; other engines may collect later and stop a program further past the cap.
+The snapshot cache is per `maxHeap` value.
 
 After a VM boots, the worker keeps a snapshot of it, in memory and in
 IndexedDB (the 4 most recently used). Later runs with the same class path and

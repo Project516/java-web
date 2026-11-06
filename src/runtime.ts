@@ -178,12 +178,29 @@ export function longToFloat(v: bigint): number {
   return Math.fround(Number(negative ? -rounded : rounded) * 2048);
 }
 
+// Where the engine cannot measure typed-array memory: live bytes of the arrays
+// that have a buffer of their own, counted from allocation to finalization.
+const TRACK_MIN = 4096;
+let tracked = 0;
+let trackingArrays = false;
+export function trackArrays(): () => number {
+  trackingArrays = true;
+  return () => tracked;
+}
+
 export class JArray extends JObject {
   a: ArrayData;
   constructor(cls: JClass, a: ArrayData) {
     super(cls, EMPTY);
     this.a = a;
-    if (allocationCheck?.enabled) allocated(ArrayBuffer.isView(a) ? a.byteLength : a.length * 8);
+    if (allocationCheck?.enabled) {
+      const bytes = ArrayBuffer.isView(a) ? a.byteLength : a.length * 8;
+      allocated(bytes);
+      if (trackingArrays && bytes >= TRACK_MIN) {
+        tracked += bytes;
+        finalizers().register(this, bytes);
+      }
+    }
   }
 }
 
@@ -374,8 +391,9 @@ export function primName(c: string) {
   throw new Error(`not a primitive: ${c}`);
 }
 
-// Reported by Runtime.maxMemory and the per-array limit. Node adds a sampled
-// live-heap check when -Xmx is set; browser allocations keep the per-array cap.
+// Reported by Runtime.maxMemory and the per-array limit. When a maximum is
+// set, a sampled live-heap check also caps the whole heap (Node with -Xmx,
+// browsers that can measure it).
 export let MAX_HEAP = 1 << 30;
 let explicitMaxHeap = false;
 export function setMaxHeap(bytes: number) {
@@ -383,9 +401,15 @@ export function setMaxHeap(bytes: number) {
   explicitMaxHeap = true;
 }
 export function hasMaxHeap() { return explicitMaxHeap; }
-let allocationCheck: { cap: number; step: number; allocated: number; baseline: number; enabled: boolean; over: boolean; usage: () => number; gc?: () => void } | null = null;
-export function setAllocationCheck(cap: number, usage: () => number, gc?: () => void) {
-  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc };
+interface AllocationCheck {
+  cap: number; step: number; allocated: number; baseline: number; enabled: boolean; over: boolean;
+  usage: () => number; gc?: () => void;
+  // no gc(): the engine frees garbage between tasks, see lazyOver
+  lazy: boolean;
+}
+let allocationCheck: AllocationCheck | null = null;
+export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: () => void; lazy?: boolean } = {}) {
+  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
 export function resetAllocationCheck() {
@@ -394,21 +418,75 @@ export function resetAllocationCheck() {
   allocationCheck.allocated = 0;
   allocationCheck.enabled = true;
 }
+
+// Browsers have no gc(). Arrays the program dropped keep counting until the
+// engine collects them and runs their finalizers, which happens between tasks.
+// Over the cap, an allocation of throwaway buffer size nudges the engine to
+// collect, and the VM pauses its threads like a collection would. The error
+// comes when the usage is still over after finalizers have stopped running
+// for QUIET_MS, or after GIVE_UP_MS in any case.
+export const sched: { thread: { slice: number } | null; yieldNow: boolean; pause: boolean } = { thread: null, yieldNow: false, pause: false };
+const NUDGE = 256 << 20, QUIET_MS = 100, GIVE_UP_MS = 1000;
+let overSince = 0, nudgedAt = 0, lastFinalizedAt = 0;
+// the scheduler returned to the event loop
+export function noteYield() {
+  sched.yieldNow = false;
+  sched.pause = false;
+}
+let registry: FinalizationRegistry<number> | null = null;
+function finalizers() {
+  return registry ??= new FinalizationRegistry<number>((bytes) => {
+    tracked -= bytes;
+    lastFinalizedAt = performance.now();
+  });
+}
+
+function nudge(now: number) {
+  nudgedAt = now;
+  try {
+    new ArrayBuffer(NUDGE);
+  } catch {}
+}
+
+function lazyOver(check: AllocationCheck) {
+  const now = performance.now();
+  if (!check.over) {
+    check.over = true;
+    overSince = lastFinalizedAt = now;
+    nudge(now);
+  } else {
+    const quiet = now - Math.max(lastFinalizedAt, nudgedAt) >= QUIET_MS;
+    if (quiet || now - overSince >= GIVE_UP_MS) {
+      check.over = false;
+      throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+    }
+    if (now - nudgedAt >= QUIET_MS) nudge(now);
+  }
+  sched.yieldNow = sched.pause = true;
+  if (sched.thread) sched.thread.slice = 0;
+  check.allocated = check.step - 1;
+}
+
 function allocated(bytes: number) {
   const check = allocationCheck;
   if (!check?.enabled || bytes <= 0) return;
   check.allocated += bytes;
-  if (check.gc ? check.allocated < check.step : check.allocated <= check.cap) return;
+  if (check.allocated < (check.gc || check.lazy ? check.step : check.cap)) return;
   check.allocated = 0;
   if (check.usage() - check.baseline > check.cap) check.gc?.();
+  const over = check.usage() - check.baseline > check.cap;
+  if (!over) {
+    check.over = false;
+    return;
+  }
+  if (check.lazy) return lazyOver(check);
   // node frees array buffers after a collection, not during it, so one reading
   // over the cap can still count garbage: throw on the second in a row
-  const over = check.usage() - check.baseline > check.cap;
-  if (over && check.over) {
+  if (check.over) {
     check.over = false;
     throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
   }
-  check.over = over;
+  check.over = true;
 }
 const ELEM_SIZE: Record<string, number> = { Z: 1, B: 1, C: 2, S: 2, I: 4, F: 4, J: 8, D: 8, L: 4 };
 

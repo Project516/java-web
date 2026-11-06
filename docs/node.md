@@ -19,7 +19,7 @@ npx @project516/java-web [options] -jar app.jar [args]
 | `--enable-preview` | preview features |
 | `--add-exports`, `--add-opens`, `--add-reads`, `--add-modules`, `--module-path`, `-p` | module options, as with `java` |
 | `--locale-data` | locales other than English (see [support.md](support.md#locales)) |
-| `-Xmx` | the maximum heap reported by `Runtime.maxMemory()` (at most 1g, rounded up to 2 MB steps, below 2m an error). Under Node, java-web checks measured heap use periodically during allocation and throws `OutOfMemoryError: Java heap space` when live use stays over the cap after collection. Without an exposed garbage collector, it checks after estimated allocations exceed the cap. The browser still checks only individual array sizes. |
+| `-Xmx` | the maximum heap reported by `Runtime.maxMemory()` (at most 1g, rounded up to 2 MB steps, below 2m an error). Under Node, java-web checks measured heap use periodically during allocation and throws `OutOfMemoryError: Java heap space` when live use stays over the cap after collection. Without an exposed garbage collector, it checks after estimated allocations exceed the cap. Pages set the cap with `maxHeap` ([browser.md](browser.md)). |
 | `--max-rss MB` | exit when resident memory passes this (default 2048) |
 | `--jdk DIR` | a java-web JDK image instead of the packaged one |
 | `--debug` | log VM events |

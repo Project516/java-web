@@ -14,6 +14,8 @@ export interface InitMessage {
   localeData: boolean;
   warmSnapshot: boolean;
   debug: boolean;
+  // bytes; 0 for the default
+  maxHeap: number;
   // JNI names of natives the page implements
   natives: string[];
   // report the download of the runtime
