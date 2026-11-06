@@ -223,7 +223,10 @@ export class VFS {
   }
 
   private changed(path: string, event: "create" | "modify" | "delete") {
-    path = normalize(path);
+    this.changedNormalized(normalize(path), event);
+  }
+
+  private changedNormalized(path: string, event: "create" | "modify" | "delete") {
     for (const watcher of this.watchers) watcher(path, event);
     this.warmChanged?.add(path);
   }
@@ -320,13 +323,14 @@ export class VFS {
     if (!r || ((write || truncate) && !r[0].writable) || !r[0].openFile) return undefined;
     const h = r[0].openFile(r[1], write, truncate, readable);
     // writes through the handle are changes watchers see, as writes through VFS.write are
+    const changed = normalize(path);
     return {
       size: () => h.size(),
       ino: () => h.ino(),
       read: (dst, off, len, pos) => h.read(dst, off, len, pos),
       close: () => h.close(),
-      write: (src, pos) => { h.write(src, pos); this.changed(path, "modify"); },
-      truncate: (size) => { h.truncate(size); this.changed(path, "modify"); },
+      write: (src, pos) => { h.write(src, pos); this.changedNormalized(changed, "modify"); },
+      truncate: (size) => { h.truncate(size); this.changedNormalized(changed, "modify"); },
     };
   }
 

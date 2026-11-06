@@ -101,7 +101,7 @@ function cas(t: JThread, o: JObject | null, off: bigint, k: string, expect: any,
 }
 
 // A byte view of base+offset for bulk memory operations.
-function bytesAt(t: JThread, base: JObject | null, offset: bigint): [Uint8Array, number] {
+export function bytesAt(t: JThread, base: JObject | null, offset: bigint): [Uint8Array, number] {
   if (base === null) return [t.vm.mem.u8, Number(offset)];
   const ta = (base as JArray).a as Int8Array;
   return [new Uint8Array(ta.buffer, ta.byteOffset, ta.byteLength), Number(offset) - ARRAY_BASE_OFFSET];

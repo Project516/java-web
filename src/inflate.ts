@@ -25,7 +25,7 @@ function adler(d: Uint8Array): number {
 
 // Lookup table indexed by the next maxBits bits: entry = symbol << 4 | length.
 interface Table {
-  t: Int32Array;
+  t: Uint16Array;
   bits: number;
 }
 
@@ -33,7 +33,7 @@ function buildTable(lengths: ArrayLike<number>, n: number): Table {
   let max = 0;
   for (let i = 0; i < n; i++) if (lengths[i] > max) max = lengths[i];
   const bits = Math.max(max, 1);
-  const t = new Int32Array(1 << bits);
+  const t = new Uint16Array(1 << bits);
   const count = new Array(16).fill(0);
   for (let i = 0; i < n; i++) count[lengths[i]]++;
   count[0] = 0;
@@ -90,6 +90,9 @@ export class Inflate {
   private out!: Uint8Array;
   private op = 0;
   private oe = 0;
+  private start = 0;
+  // output before this has been added to the checksum
+  private summed = 0;
 
   constructor(nowrap: boolean) {
     this.wrap = !nowrap;
@@ -150,6 +153,8 @@ export class Inflate {
     this.ip = 0;
     this.out = output;
     this.op = off;
+    this.start = off;
+    this.summed = off;
     this.oe = off + len;
     let ip = 0, buf = 0, cnt = 0;
     try {
@@ -168,7 +173,38 @@ export class Inflate {
       this.ip -= this.bitcnt >> 3;
       this.bitbuf = this.bitcnt = 0;
     }
+    this.finishCall();
     return [this.ip, this.op - off];
+  }
+
+  private sum() {
+    const out = this.out, op = this.op;
+    if (!this.wrap) return;
+    let s1 = this.s1, s2 = this.s2;
+    for (let i = this.summed; i < op;) {
+      const end = Math.min(op, i + 3800);
+      for (; i < end; i++) { s1 += out[i]; s2 += s1; }
+      s1 %= 65521;
+      s2 %= 65521;
+    }
+    this.s1 = s1;
+    this.s2 = s2;
+    this.summed = op;
+  }
+
+  // The window and checksum take the call's output in one pass, not per byte.
+  private finishCall() {
+    const out = this.out, op = this.op, win = this.win;
+    this.sum();
+    let from = Math.max(this.start, op - 32768);
+    let abs = this.wpos + (from - this.start);
+    this.wpos += op - this.start;
+    while (from < op) {
+      const at = abs & 32767, n = Math.min(op - from, 32768 - at);
+      win.set(out.subarray(from, from + n), at);
+      from += n;
+      abs += n;
+    }
   }
 
   private need(n: number) {
@@ -203,17 +239,6 @@ export class Inflate {
     this.bitbuf >>>= len;
     this.bitcnt -= len;
     return e >> 4;
-  }
-
-  private adlerByte(b: number) {
-    this.s1 = (this.s1 + b) % 65521;
-    this.s2 = (this.s2 + this.s1) % 65521;
-  }
-
-  private emit(b: number) {
-    this.out[this.op++] = b;
-    this.win[this.wpos++ & 32767] = b;
-    if (this.wrap) this.adlerByte(b);
   }
 
   private align() {
@@ -262,9 +287,16 @@ export class Inflate {
       case Stage.Stored: {
         while (this.stored > 0) {
           if (this.op >= this.oe) return false;
-          if (this.bitcnt >= 8) this.emit(this.bits(8));
-          else if (this.ip < this.in.length) this.emit(this.in[this.ip++]);
-          else return false;
+          if (this.bitcnt >= 8) this.out[this.op++] = this.bits(8);
+          else {
+            const n = Math.min(this.stored, this.in.length - this.ip, this.oe - this.op);
+            if (n === 0) return false;
+            this.out.set(this.in.subarray(this.ip, this.ip + n), this.op);
+            this.ip += n;
+            this.op += n;
+            this.stored -= n;
+            continue;
+          }
           this.stored--;
         }
         this.stage = Stage.Block;
@@ -272,6 +304,7 @@ export class Inflate {
       }
       case Stage.Trailer: {
         this.align();
+        this.sum();
         if (this.u32be() !== this.adler) throw new DataFormatError("incorrect data check");
         this.stage = Stage.Done;
         return false;
@@ -313,45 +346,87 @@ export class Inflate {
     this.dist = buildTable(lens.subarray(hlit), hdist);
   }
 
+  // The hot loop, on locals. A symbol that the input cannot finish is backed
+  // out, so the next call decodes it again from its first bit. The window is
+  // behind the call's own output, which a match reads directly.
   private huffman(): boolean {
-    const win = this.win;
-    while (this.copyLen > 0) {
-      if (this.op >= this.oe) return false;
-      this.emit(win[(this.wpos - this.copyDist) & 32767]);
-      this.copyLen--;
-    }
+    const input = this.in, out = this.out, win = this.win, oe = this.oe, start = this.start;
+    const lit = this.lit!, dist = this.dist!;
+    const lt = lit.t, lbits = lit.bits, lmask = (1 << lbits) - 1;
+    const dt = dist.t, dbits = dist.bits, dmask = (1 << dbits) - 1;
+    const end = input.length;
+    // absolute position of out[i] is base + i
+    const base = this.wpos - start;
+    let ip = this.ip, buf = this.bitbuf, cnt = this.bitcnt, op = this.op;
+    let copyLen = this.copyLen;
+    const copyDist = this.copyDist;
+    let dd = copyDist;
     for (;;) {
-      if (this.op >= this.oe) return false;
-      const ip = this.ip, buf = this.bitbuf, cnt = this.bitcnt;
-      try {
-        const sym = this.decode(this.lit!);
-        if (sym < 256) {
-          this.emit(sym);
-          continue;
-        }
-        if (sym === 256) {
-          this.stage = Stage.Block;
-          return true;
-        }
-        const li = sym - 257;
-        if (li >= 29) throw new DataFormatError("invalid literal/length code");
-        const len = LEN_BASE[li] + this.bits(LEN_EXTRA[li]);
-        const ds = this.decode(this.dist!);
-        if (ds >= 30) throw new DataFormatError("invalid distance code");
-        const dist = DIST_BASE[ds] + this.bits(DIST_EXTRA[ds]);
-        if (dist > this.wpos) throw new DataFormatError("invalid distance too far back");
-        this.copyLen = len;
-        this.copyDist = dist;
-      } catch (e) {
-        if (e !== UNDERFLOW) throw e;
-        this.ip = ip; this.bitbuf = buf; this.bitcnt = cnt;
-        return false;
+      if (copyLen > 0) {
+        let n = Math.min(copyLen, oe - op);
+        copyLen -= n;
+        let s = op - dd;
+        for (; n > 0 && s < start; n--) out[op++] = win[(base + s++) & 32767];
+        if (n > 32 && dd >= n) {
+          out.copyWithin(op, s, s + n);
+          op += n;
+        } else for (; n > 0; n--) out[op++] = out[s++];
+        if (copyLen > 0) break;
       }
-      while (this.copyLen > 0) {
-        if (this.op >= this.oe) return false;
-        this.emit(win[(this.wpos - this.copyDist) & 32767]);
-        this.copyLen--;
+      const sip = ip, sbuf = buf, scnt = cnt;
+      while (cnt <= 23 && ip < end) { buf |= input[ip++] << cnt; cnt += 8; }
+      let e = lt[buf & lmask];
+      let len = e & 15;
+      if (len === 0) {
+        if (cnt < lbits) { ip = sip; buf = sbuf; cnt = scnt; break; }
+        this.ip = ip; this.bitbuf = buf; this.bitcnt = cnt; this.op = op;
+        throw new DataFormatError("invalid code");
       }
+      if (len > cnt) { ip = sip; buf = sbuf; cnt = scnt; break; }
+      buf >>= len;
+      cnt -= len;
+      const sym = e >> 4;
+      if (sym < 256) {
+        // a full output stops before the next literal but still sees the end of block, as zlib does
+        if (op >= oe) { ip = sip; buf = sbuf; cnt = scnt; break; }
+        out[op++] = sym;
+        continue;
+      }
+      if (sym === 256) {
+        this.stage = Stage.Block;
+        this.ip = ip; this.bitbuf = buf; this.bitcnt = cnt; this.op = op; this.copyLen = 0;
+        return true;
+      }
+      const li = sym - 257;
+      if (li >= 29) throw new DataFormatError("invalid literal/length code");
+      const eb = LEN_EXTRA[li];
+      if (cnt < eb) { ip = sip; buf = sbuf; cnt = scnt; break; }
+      const mlen = LEN_BASE[li] + (buf & ((1 << eb) - 1));
+      buf >>= eb;
+      cnt -= eb;
+      while (cnt <= 23 && ip < end) { buf |= input[ip++] << cnt; cnt += 8; }
+      e = dt[buf & dmask];
+      len = e & 15;
+      if (len === 0) {
+        if (cnt < dbits) { ip = sip; buf = sbuf; cnt = scnt; break; }
+        throw new DataFormatError("invalid code");
+      }
+      if (len > cnt) { ip = sip; buf = sbuf; cnt = scnt; break; }
+      buf >>= len;
+      cnt -= len;
+      const ds = e >> 4;
+      if (ds >= 30) throw new DataFormatError("invalid distance code");
+      const deb = DIST_EXTRA[ds];
+      while (cnt <= 23 && ip < end) { buf |= input[ip++] << cnt; cnt += 8; }
+      if (cnt < deb) { ip = sip; buf = sbuf; cnt = scnt; break; }
+      dd = DIST_BASE[ds] + (buf & ((1 << deb) - 1));
+      buf >>= deb;
+      cnt -= deb;
+      if (dd > base + op) throw new DataFormatError("invalid distance too far back");
+      copyLen = mlen;
+      this.copyDist = dd;
     }
+    this.ip = ip; this.bitbuf = buf; this.bitcnt = cnt; this.op = op; this.copyLen = copyLen;
+    return false;
   }
 }
