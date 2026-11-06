@@ -498,9 +498,11 @@ function snapshotFds(value: unknown): unknown {
 // A waiter woken as if spuriously: takes its monitor back with the count it gave up.
 function* rewait(t: JThread, o: JObject, count: number): NativeGen {
   const mon = o.mon!;
+  t.waitingOn = o;
   while (mon.owner !== null) yield t.block(new Promise<void>((r) => mon.entry.push(r)));
   mon.owner = t;
   mon.count = count;
+  t.waitingOn = null;
   t.vm.setThreadStatus(t, STATUS_RUNNABLE);
 }
 

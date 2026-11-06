@@ -520,6 +520,7 @@
 9610	java/lang/IntegralPrimitiveToString.java
 9603	java/text/Collator/RuleBasedCollatorTest.java
 9602	java/util/jar/JarFile/VerifySignedJar.java
+9600	java/lang/Thread/virtual/CarrierThreadInfo.java#4
 9599	java/util/Locale/PreserveTagCase.java
 9592	java/nio/channels/Selector/SelectorLimit.java
 9578	java/util/ArrayList/AddAll.java
@@ -792,6 +793,7 @@
 7295	java/beans/XMLEncoder/javax_swing_plaf_BorderUIResource_TitledBorderUIResource.java
 7293	java/util/Calendar/bug4514831.java
 7292	java/util/Properties/InitialCapacity.java
+7284	java/lang/management/ThreadMXBean/ThreadInfoArray.java
 7278	java/beans/PropertyEditor/TestEnumClassJava.java
 7277	javax/crypto/NullCipher/TestNPE.java
 7276	java/beans/PropertyEditor/TestShortTypeJava.java
@@ -910,6 +912,7 @@
 6693	java/lang/management/CompositeData/ThreadInfoCompositeData.java
 6688	java/beans/XMLEncoder/java_util_Collections_UnmodifiableSet.java
 6685	java/io/PrintStream/InheritEncodingTest.java
+6667	java/lang/Thread/virtual/CarrierThreadInfo.java#3
 6663	java/util/Hashtable/DeserializedLength.java
 6656	java/lang/String/concat/ImplicitStringConcatArgCount.java
 6649	java/time/tck/java/time/chrono/TCKHijrahEra.java
@@ -1035,6 +1038,7 @@
 6114	java/util/logging/Logger/getLogger/TestInferCaller.java
 6108	java/text/Format/NumberFormat/Bug4990596.java
 6100	java/lang/module/ModuleReferenceTest.java
+6092	java/lang/Thread/virtual/CarrierThreadInfo.java
 6080	java/net/httpclient/HeadersTest.java
 6080	java/io/Serializable/records/StreamRefTest.java
 6076	java/lang/module/ClassFileVersionsTest.java
@@ -1064,6 +1068,7 @@
 5981	java/text/Format/DecimalFormat/ToLocalizedPatternTest.java
 5979	java/time/tck/java/time/format/TCKInstantPrinterParser.java
 5972	java/util/concurrent/LinkedTransferQueue/SpliteratorTraverseAddRemoveTest.java
+5969	java/lang/Thread/virtual/CarrierThreadInfo.java#2
 5958	java/io/Serializable/sanityCheck/SanityCheck.java
 5953	java/io/OutputStream/NullOutputStream.java
 5935	java/nio/Buffer/CopyDirectMemory.java
@@ -1971,6 +1976,7 @@
 3454	java/math/BigDecimal/EqualsTests.java
 3453	java/security/cert/PKIXRevocationChecker/OcspUnauthorized.java
 3451	java/lang/ref/ReferenceEnqueue.java
+3451	java/lang/management/ThreadMXBean/FindDeadlocks.java
 3449	java/io/InputStreamReader/One.java
 3447	java/util/TimeZone/IDTest.java
 3446	java/io/FileWriter/ConstructorTest.java
@@ -2669,6 +2675,7 @@
 2587	java/io/RandomAccessFile/Close.java
 2586	java/util/Deque/ChorusLine.java
 2585	java/net/CookieHandler/TestHttpCookie.java
+2584	java/lang/management/ThreadMXBean/Locks.java
 2580	java/util/concurrent/BlockingQueue/DrainToFails.java
 2580	java/lang/StackTraceElement/PublicConstructor.java
 2580	java/beans/PropertyEditor/Test7087876.java
@@ -2708,6 +2715,7 @@
 2548	java/beans/XMLDecoder/spec/TestJava.java
 2546	java/util/concurrent/ConcurrentQueues/GCRetention.java
 2545	java/util/zip/ZipEntry/Constructor.java
+2544	java/lang/management/ThreadMXBean/ThreadDaemonTest.java
 2543	java/security/cert/pkix/nameConstraintsMinMax/VerifyNameConstraints.java
 2543	java/beans/PropertyEditor/TestFloatClassValue.java
 2541	javax/xml/jaxp/transform/8004476/XSLTExFuncTest.java
@@ -3130,6 +3138,7 @@
 2050	java/lang/invoke/lambda/LambdaClassSynthetic.java
 2049	java/nio/channels/AsynchronousChannelGroup/Identity.java
 2048	java/lang/ClassLoader/LibraryPathProperty.java
+2048	java/lang/management/ThreadMXBean/ThreadBlockedCount.java
 2047	java/lang/RuntimeTests/Version/Basic.java
 2047	java/lang/reflect/Parameter/NoName.java
 2046	javax/crypto/spec/IvParameterSpec/NullIV.java
@@ -3162,6 +3171,7 @@
 2020	java/lang/StrictMath/Expm1Tests.java
 2018	java/lang/invoke/accessProtectedSuper/Test.java
 2016	java/lang/Long/GetLong.java
+2015	java/lang/management/ThreadMXBean/FindMonitorDeadlock.java
 2014	java/util/Properties/LoadSeparators.java
 2014	java/io/File/DeleteOnExitLong.java
 2013	java/io/Serializable/readPastObject/ReadPastObject.java
@@ -3283,6 +3293,7 @@
 1873	java/lang/StrictMath/Log10Tests.java
 1869	java/net/URL/Protocol.java
 1867	java/lang/Math/InverseTrigTests.java
+1867	java/lang/management/ThreadMXBean/MaxDepthForThreadInfoTest.java
 1866	java/util/concurrent/ThreadPoolExecutor/ThrowingTasks.java
 1866	java/util/concurrent/Phaser/PhaseOverflow.java
 1866	java/lang/reflect/Field/Set.java

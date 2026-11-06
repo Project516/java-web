@@ -5,13 +5,18 @@
 // heap's; collections are the explicit System.gc() calls, which HotSpot counts
 // as full collections.
 
-import { MAX_HEAP } from "../runtime.ts";
-import type { JMethod, JObject } from "../runtime.ts";
-import { TERMINATED } from "../thread.ts";
-import type { JThread, NativeGen } from "../thread.ts";
+import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP } from "../runtime.ts";
+import type { JMethod } from "../runtime.ts";
+import {
+  Frame, JThread, NativeFrame, PendingThrow, STATUS_BLOCKED, STATUS_NEW, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE,
+  STATUS_TERMINATED, STATUS_TIMED_WAITING, STATUS_WAITING, TERMINATED,
+} from "../thread.ts";
+import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import { openFdCount } from "./io.ts";
 import { box, initialized } from "./reflect.ts";
+import { continuationEntry } from "./continuation.ts";
+import { fillElement } from "./lang.ts";
 import type { Natives } from "./util.ts";
 
 const MANAGERS = [
@@ -143,6 +148,341 @@ const FLAGS: { name: string; value: boolean | number; writeable: boolean }[] = [
   { name: "UseSerialGC", value: true, writeable: false },
 ];
 
+const TH = "java/lang/Thread";
+const AOS = "java/util/concurrent/locks/AbstractOwnableSynchronizer";
+const THREAD_INFO = "java/lang/management/ThreadInfo";
+const THREAD_INFO_INIT = "<init>(Ljava/lang/Thread;ILjava/lang/Object;Ljava/lang/Thread;JJJJ[Ljava/lang/StackTraceElement;)V";
+const THREAD_INFO_LOCKS_INIT =
+  "<init>(Ljava/lang/Thread;ILjava/lang/Object;Ljava/lang/Thread;JJJJ[Ljava/lang/StackTraceElement;[Ljava/lang/Object;[I[Ljava/lang/Object;)V";
+
+function threadStatus(vm: JVM, t: JThread): number {
+  const holder = vm.getField(t.obj!, TH, "holder");
+  return holder ? vm.getField(holder, "java/lang/Thread$FieldHolder", "threadStatus") : STATUS_NEW;
+}
+
+// The live platform thread with this id, as HotSpot's thread list has it.
+function threadById(vm: JVM, tid: bigint): JThread | null {
+  for (const t of liveThreads(vm)) {
+    if (vm.getField(t.obj!, TH, "tid") === tid && threadStatus(vm, t) !== STATUS_TERMINATED) return t;
+  }
+  return null;
+}
+
+// A carrier thread with a virtual thread mounted
+function isCarrier(t: JThread): boolean {
+  return t.mounted !== null && t.mounted !== t.obj;
+}
+
+function isSynchronizer(vm: JVM, o: JObject | null): boolean {
+  return o !== null && o.cls.isAssignableTo(vm.loadBoot(AOS)!);
+}
+
+function synchronizerOwner(vm: JVM, o: JObject): JObject | null {
+  return vm.getField(o, AOS, "exclusiveOwnerThread");
+}
+
+function platformThread(o: JObject | null): JThread | null {
+  const x = o?.x;
+  return x instanceof JThread && x.state !== TERMINATED ? x : null;
+}
+
+function parkBlocker(vm: JVM, t: JThread): JObject | null {
+  return vm.getField(t.obj!, TH, "parkBlocker");
+}
+
+interface Shown {
+  m: JMethod;
+  pc: number;
+  // index in the thread's frame stack
+  at: number;
+}
+
+// The Java frames HotSpot shows for a thread, top first: all of them, hidden
+// ones too. A carrier thread shows its own frames, below its virtual thread's.
+function threadFrames(t: JThread, maxDepth: number): Shown[] {
+  const out: Shown[] = [];
+  let i = t.frames.length - 1;
+  if (isCarrier(t)) {
+    while (i >= 0) {
+      const f = t.frames[i--];
+      if (f instanceof NativeFrame && continuationEntry(t.vm, f)?.virtual) break;
+    }
+  }
+  for (; i >= 0 && (maxDepth < 0 || out.length < maxDepth); i--) {
+    const f = t.frames[i];
+    if (f instanceof NativeFrame) {
+      if (continuationEntry(t.vm, f)) continue;
+      if (f.m) out.push({ m: f.m, pc: -2, at: i });
+    } else out.push({ m: f.m, pc: f.pc, at: i });
+  }
+  return out;
+}
+
+interface Block {
+  start: number;
+  end: number;
+  slot: number;
+}
+
+const blockCache = new WeakMap<JMethod, Block[]>();
+
+// The synchronized blocks of a method, as compilers emit them: a catch-any
+// handler that starts with "astore; aload slot; monitorexit", where slot holds
+// the lock object from the monitorenter until the monitorexit.
+function syncBlocks(m: JMethod): Block[] {
+  let blocks = blockCache.get(m);
+  if (blocks) return blocks;
+  blocks = [];
+  const code = m.code!.code;
+  const slotAt = (pc: number, base: number, op: number): [number, number] | null =>
+    code[pc] >= base && code[pc] <= base + 3 ? [code[pc] - base, 1] : code[pc] === op ? [code[pc + 1], 2] : null;
+  for (const h of m.code!.handlers) {
+    if (h.catchType !== 0) continue;
+    const store = slotAt(h.handler, 0x4b, 0x3a);
+    const load = store && slotAt(h.handler + store[1], 0x2a, 0x19);
+    if (!load || code[h.handler + store![1] + load[1]] !== 0xc3) continue;
+    blocks.push({ start: h.start, end: h.end, slot: load[0] });
+  }
+  blockCache.set(m, blocks);
+  return blocks;
+}
+
+// Monitors each frame locked, newest first as javaVFrame::locked_monitors
+// lists them, found from the frame's pc and the locals that hold the objects.
+// A monitor the thread owns that no frame accounts for is listed with depth -1.
+function lockedMonitors(t: JThread, frames: Shown[]): { o: JObject; depth: number }[] {
+  const byFrame = new Map<number, JObject[]>();
+  const accounted = new Map<JObject, number>();
+  const owned = new Set<JObject>();
+  t.frames.forEach((f, at) => {
+    if (!(f instanceof Frame)) return;
+    const held: JObject[] = [];
+    const locals: any[] = f.locals ?? [];
+    for (const v of locals) if (v instanceof JObject && v.mon?.owner === t) owned.add(v);
+    if (locals.length) {
+      const active = syncBlocks(f.m).filter((b) => b.start <= f.pc && f.pc < b.end);
+      // a handler's own range is listed too, so one lock can appear twice
+      const slots = [...new Set(active.sort((x, y) => y.start - x.start).map((b) => b.slot))];
+      for (const slot of slots) {
+        const v = locals[slot];
+        if (v instanceof JObject && v.mon?.owner === t) held.push(v);
+      }
+    }
+    if (f.lock && !f.needLock && f.lock.mon?.owner === t) held.push(f.lock);
+    for (const o of held) accounted.set(o, (accounted.get(o) ?? 0) + 1);
+    byFrame.set(at, held);
+  });
+  const out: { o: JObject; depth: number }[] = [];
+  frames.forEach((fr, depth) => {
+    for (const o of byFrame.get(fr.at) ?? []) out.push({ o, depth });
+  });
+  for (const o of owned) {
+    for (let n = o.mon!.count - (accounted.get(o) ?? 0); n > 0; n--) out.push({ o, depth: -1 });
+  }
+  return out;
+}
+
+interface Snapshot {
+  thread: JThread;
+  status: number;
+  blocker: JObject | null;
+  owner: JObject | null;
+  frames: Shown[];
+}
+
+// ThreadSnapshot::initialize
+function snapshot(vm: JVM, t: JThread, maxDepth: number): Snapshot {
+  let status = threadStatus(vm, t);
+  let blocker: JObject | null = null;
+  let owner: JObject | null = null;
+  if (isCarrier(t)) {
+    status = STATUS_WAITING;
+    blocker = owner = t.mounted;
+  } else if (status === STATUS_BLOCKED || status === STATUS_WAITING || status === STATUS_TIMED_WAITING) {
+    const o = t.waitingOn ?? t.pendingOn;
+    if (o === null) status = STATUS_RUNNABLE;
+    else {
+      const holder = o.mon?.owner ?? null;
+      if (holder === null && status === STATUS_BLOCKED) status = STATUS_RUNNABLE;
+      else {
+        blocker = o;
+        owner = holder?.obj ?? null;
+      }
+    }
+  } else if (status === STATUS_PARKED || status === STATUS_PARKED_TIMED) {
+    blocker = parkBlocker(vm, t);
+    if (isSynchronizer(vm, blocker)) owner = synchronizerOwner(vm, blocker!);
+  }
+  return { thread: t, status, blocker, owner, frames: threadFrames(t, maxDepth) };
+}
+
+function stackTraceOf(t: JThread, frames: Shown[]): JObject {
+  const vm = t.vm;
+  const ste = vm.loadBoot("java/lang/StackTraceElement")!;
+  return vm.newObjectArray("java/lang/StackTraceElement", frames.map(({ m, pc }) => {
+    const e = vm.newObject(ste);
+    fillElement(t, e, m.cls, m.name, pc, m);
+    return e;
+  }));
+}
+
+interface Locks {
+  monitors: { o: JObject; depth: number }[];
+  syncs: JObject[];
+}
+
+function* threadInfo(t: JThread, s: Snapshot, withStack: boolean, locks: Locks | null): NativeGen {
+  const vm = t.vm;
+  const c = vm.loadBoot(THREAD_INFO)!;
+  if (c.state !== INITIALIZED) yield* vm.initGen(t, c);
+  const o = vm.newObject(c);
+  // contention monitoring is off, so there are counts but no times
+  const args = [o, s.thread.obj, s.status, s.blocker, s.owner, BigInt(s.thread.blockedCount), -1n, BigInt(s.thread.waitedCount), -1n,
+    withStack ? stackTraceOf(t, s.frames) : null];
+  if (locks === null) yield t.call(c.methodMap.get(THREAD_INFO_INIT)!, ...args);
+  else {
+    const ints = vm.newArray(vm.primClass("I"), locks.monitors.length);
+    locks.monitors.forEach((x, i) => ((ints.a as Int32Array)[i] = x.depth));
+    args.push(
+      vm.newObjectArray("java/lang/Object", locks.monitors.map((x) => x.o)),
+      ints,
+      vm.newObjectArray("java/lang/Object", locks.syncs),
+    );
+    yield t.call(c.methodMap.get(THREAD_INFO_LOCKS_INIT)!, ...args);
+  }
+  return o;
+}
+
+// The ownable synchronizers each thread owns, by owner. HotSpot finds them by
+// inspecting the heap; so does this, from the class statics and thread stacks,
+// which keeps the lock and unlock paths as they are.
+function ownedSynchronizers(vm: JVM): Map<JObject, JObject[]> {
+  const aos = vm.loadBoot(AOS)!;
+  const slot = aos.findField("exclusiveOwnerThread")!.slot;
+  const isSync = new Map<JClass, boolean>();
+  const seen = new Set<JObject>();
+  const classes = new Set<JClass>();
+  const stack: JObject[] = [];
+  const out = new Map<JObject, JObject[]>();
+  const visit = (v: unknown) => {
+    if (v instanceof JObject && !seen.has(v)) {
+      seen.add(v);
+      stack.push(v);
+    }
+  };
+  const visitClass = (c: JClass) => {
+    if (classes.has(c)) return;
+    classes.add(c);
+    if (c.mirror) visit(c.mirror);
+    for (const v of c.statics) visit(v);
+  };
+  for (const c of vm.boot.values()) visitClass(c);
+  for (const t of vm.threads) {
+    visit(t.obj);
+    visit(t.mounted);
+    for (const f of t.frames) {
+      if (!(f instanceof Frame)) continue;
+      visitClass(f.m.cls);
+      for (const v of f.locals ?? []) visit(v);
+      for (let i = 0; i < f.sp; i++) visit(f.stack?.[i]);
+      visit(f.lock);
+    }
+  }
+  while (stack.length > 0) {
+    const o = stack.pop()!;
+    let sync = isSync.get(o.cls);
+    if (sync === undefined) isSync.set(o.cls, (sync = o.cls.isAssignableTo(aos)));
+    if (sync) {
+      const owner = o.f[slot];
+      if (owner) {
+        const list = out.get(owner);
+        if (list) list.push(o);
+        else out.set(owner, [o]);
+      }
+    }
+    visitClass(o.cls);
+    if (o instanceof JArray) {
+      if (Array.isArray(o.a)) for (const v of o.a) visit(v);
+    } else for (const v of o.f) visit(v);
+    // a class loader keeps the classes it defined
+    const x = o.x;
+    if (x instanceof JClass) visitClass(x);
+    else if (x?.classes instanceof Map) for (const c of x.classes.values()) visitClass(c);
+  }
+  return out;
+}
+
+function checkIds(ids: JArray) {
+  for (const id of ids.a as BigInt64Array) {
+    if (id <= 0n) throw new PendingThrow("java/lang/IllegalArgumentException", "Invalid thread ID entry");
+  }
+}
+
+function* dumpThreads(t: JThread, ids: JArray | null, monitors: boolean, syncs: boolean, maxDepth: number): NativeGen {
+  const vm = t.vm;
+  if (ids) checkIds(ids);
+  const threads = ids
+    ? [...(ids.a as BigInt64Array)].map((id) => threadById(vm, id))
+    : liveThreads(vm).filter((x) => threadStatus(vm, x) !== STATUS_TERMINATED);
+  const owned = syncs ? ownedSynchronizers(vm) : null;
+  // all snapshots are taken before any Java code runs
+  const dumps = threads.map((x) => {
+    if (!x) return null;
+    const s = snapshot(vm, x, maxDepth);
+    const locks: Locks = {
+      monitors: monitors ? lockedMonitors(x, s.frames) : [],
+      syncs: syncs ? owned!.get(x.obj!) ?? [] : [],
+    };
+    return { s, locks };
+  });
+  const out: (JObject | null)[] = [];
+  for (const d of dumps) {
+    out.push(d ? yield* threadInfo(t, d.s, true, d.locks) : null);
+  }
+  return vm.newObjectArray(THREAD_INFO, out);
+}
+
+// Cycles of threads waiting on each other, as ThreadService::find_deadlocks_at_safepoint
+// finds them. Only monitors, or ownable synchronizers too when asked.
+function findDeadlocks(vm: JVM, synchronizers: boolean): JObject | null {
+  const pending = (x: JThread) => x.pendingOn;
+  const blocker = (x: JThread) => (synchronizers ? parkBlocker(vm, x) : null);
+  const dfn = new Map<JThread, number>();
+  const cycles: JThread[] = [];
+  let next = 0;
+  for (const start of liveThreads(vm)) {
+    if (isCarrier(start) || dfn.has(start)) continue;
+    const first = next;
+    dfn.set(start, next++);
+    let prev = start;
+    let cur: JThread | null = start;
+    const path: JThread[] = [];
+    let mon = pending(start);
+    let park = blocker(start);
+    while (cur && (mon || park)) {
+      path.push(cur);
+      if (mon) {
+        const owner = mon.mon?.owner ?? null;
+        if (owner !== null) cur = owner.state === TERMINATED ? null : owner;
+      } else if (isSynchronizer(vm, park)) {
+        cur = platformThread(synchronizerOwner(vm, park!));
+      } else cur = null;
+      if (cur === null || isCarrier(cur)) break;
+      const d = dfn.get(cur);
+      if (d === undefined) dfn.set(cur, next++);
+      else if (d < first || cur === prev) break;
+      else {
+        cycles.push(...path);
+        break;
+      }
+      prev = cur;
+      mon = pending(cur);
+      park = blocker(cur);
+    }
+  }
+  return cycles.length === 0 ? null : vm.newObjectArray(TH, cycles.map((x) => x.obj!));
+}
+
 const V = "sun/management/VMManagementImpl.";
 const OS = "com/sun/management/internal/OperatingSystemImpl.";
 const P = "sun/management/MemoryPoolImpl.";
@@ -150,7 +490,11 @@ const T = "sun/management/ThreadImpl.";
 
 export const natives: Natives = {
   [`${V}getVersion0()Ljava/lang/String;`]: (t) => t.vm.str("4.0"),
-  [`${V}initOptionalSupportFields()V`]: () => undefined,
+  [`${V}initOptionalSupportFields()V`]: (t) => {
+    const c = t.vm.loadBoot("sun/management/VMManagementImpl")!;
+    t.vm.setStatic(c, "objectMonitorUsageSupport", 1);
+    t.vm.setStatic(c, "synchronizerUsageSupport", 1);
+  },
   [`${V}isThreadContentionMonitoringEnabled()Z`]: () => 0,
   [`${V}isThreadCpuTimeEnabled()Z`]: () => 0,
   [`${V}isThreadAllocatedMemoryEnabled()Z`]: () => 0,
@@ -234,8 +578,25 @@ export const natives: Natives = {
   [`${T}setThreadCpuTimeEnabled0(Z)V`]: () => undefined,
   [`${T}setThreadAllocatedMemoryEnabled0(Z)V`]: () => undefined,
   [`${T}setThreadContentionMonitoringEnabled0(Z)V`]: () => undefined,
-  [`${T}findMonitorDeadlockedThreads0()[Ljava/lang/Thread;`]: () => null,
-  [`${T}findDeadlockedThreads0()[Ljava/lang/Thread;`]: () => null,
+  [`${T}findMonitorDeadlockedThreads0()[Ljava/lang/Thread;`]: (t) => findDeadlocks(t.vm, false),
+  [`${T}findDeadlockedThreads0()[Ljava/lang/Thread;`]: (t) => findDeadlocks(t.vm, true),
+  [`${T}getThreadInfo1([JI[Ljava/lang/management/ThreadInfo;)V`]: function* (t, [ids, maxDepth, result]): NativeGen {
+    if (!ids || !result) throw new PendingThrow("java/lang/NullPointerException");
+    if (maxDepth < -1) throw new PendingThrow("java/lang/IllegalArgumentException", "Invalid maxDepth");
+    checkIds(ids);
+    if (ids.a.length !== result.a.length) {
+      throw new PendingThrow("java/lang/IllegalArgumentException",
+        "The length of the given ThreadInfo array does not match the length of the given array of thread IDs");
+    }
+    const vm = t.vm;
+    const snaps = [...(ids.a as BigInt64Array)].map((id) => {
+      const x = threadById(vm, id);
+      return x && snapshot(vm, x, maxDepth);
+    });
+    for (const [i, s] of snaps.entries()) if (s) result.a[i] = yield* threadInfo(t, s, maxDepth !== 0, null);
+  },
+  [`${T}dumpThreads0([JZZI)[Ljava/lang/management/ThreadInfo;`]: (t, [ids, monitors, syncs, maxDepth]) =>
+    dumpThreads(t, ids, monitors === 1, syncs === 1, maxDepth),
   [`${T}resetPeakThreadCount0()V`]: (t) => void (t.vm.peakThreads = liveThreads(t.vm).length),
   [`${T}resetContentionTimes0(J)V`]: () => undefined,
   "sun/management/HotspotThread.getInternalThreadCount()I": () => 0,

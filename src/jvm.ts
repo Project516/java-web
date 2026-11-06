@@ -902,6 +902,7 @@ export class JVM {
     if (this.tryMonitorEnter(t, o)) {
       if (t.blockedOnMonitor) {
         t.blockedOnMonitor = false;
+        t.pendingOn = null;
         this.setThreadStatus(t, STATUS_RUNNABLE);
       }
       return true;
@@ -909,6 +910,8 @@ export class JVM {
     // Thread.getState() says BLOCKED while it waits, as on HotSpot
     if (!t.blockedOnMonitor) {
       t.blockedOnMonitor = true;
+      t.blockedCount++;
+      t.pendingOn = o;
       this.setThreadStatus(t, STATUS_BLOCKED);
     }
     t.state = WAITING;

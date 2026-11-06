@@ -113,6 +113,12 @@ export class JThread {
   frames: AnyFrame[] = [];
   // waiting to enter a monitor
   blockedOnMonitor = false;
+  // the monitor it is blocked entering, and the one it is in wait() on
+  pendingOn: JObject | null = null;
+  waitingOn: JObject | null = null;
+  // contended monitor entries, and waits and sleeps, for ThreadInfo
+  blockedCount = 0;
+  waitedCount = 0;
   // monitor entries not yet exited, and Continuation.pin() depth
   held = 0;
   pins = 0;
