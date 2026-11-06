@@ -71,6 +71,11 @@ function chmod(t: JThread, p: string, mode: number) {
   unixError(HOST_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
 }
 
+function accountId(t: JThread, name: string): number {
+  if (name === "root") return 0;
+  return name === (t.vm.props.get("user.name") ?? "user") ? 1000 : -1;
+}
+
 let processUmask: number | undefined;
 
 // open(2) and mkdir(2) give a new file the requested mode less the umask
@@ -255,10 +260,11 @@ export const natives: Natives = {
     return d.pos < d.names.length ? bytes(t, d.names[d.pos++]) : null;
   },
   [`${N}closedir(J)V`]: (t, [id]) => void dirs(t).delete(id),
-  [`${N}getpwuid(I)[B`]: (t) => bytes(t, t.vm.props.get("user.name") ?? "user"),
-  [`${N}getgrgid(I)[B`]: (t) => bytes(t, t.vm.props.get("user.name") ?? "user"),
-  [`${N}getpwnam0(J)I`]: () => 1000,
-  [`${N}getgrnam0(J)I`]: () => 1000,
+  [`${N}getpwuid(I)[B`]: (t, [id]) => bytes(t, id === 0 ? "root" : t.vm.props.get("user.name") ?? "user"),
+  [`${N}getgrgid(I)[B`]: (t, [id]) => bytes(t, id === 0 ? "root" : t.vm.props.get("user.name") ?? "user"),
+  // the user and root are the only accounts; -1 for any other name
+  [`${N}getpwnam0(J)I`]: (t, [p]) => accountId(t, cstring(t, p)),
+  [`${N}getgrnam0(J)I`]: (t, [p]) => accountId(t, cstring(t, p)),
   [`${N}fchmodatNoFollowSupported0()Z`]: () => 0,
   [`${N}statvfs0(JLsun/nio/fs/UnixFileStoreAttributes;)V`]: (t, [p, attrs]) => {
     const abs = path(t, p);

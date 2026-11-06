@@ -4,7 +4,8 @@ java-web targets headless Java: console apps, libraries and javac.
 
 - The image has every Java SE module (`java.se`) plus `jdk.compiler`,
   `jdk.httpserver`, `jdk.jartool` (the `jar` tool), `jdk.security.jgss`,
-  `jdk.unsupported`, `jdk.zipfs`, `jdk.internal.md` (Markdown in doc comments,
+  `jdk.management` (`UnixOperatingSystemMXBean`), `jdk.unsupported`,
+  `jdk.zipfs`, `jdk.internal.md` (Markdown in doc comments,
   for javac's doc comment API) and `jdk.localedata` (see Locales).
 - `java.desktop`'s headless parts work: 2D geometry, image pixels, `Graphics2D`
   drawing on a `BufferedImage`, and JavaBeans. So does `java.xml`, including
