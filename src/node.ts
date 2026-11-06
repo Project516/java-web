@@ -141,7 +141,19 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.statSync(this.host(p));
       if (!s.isFile() || s.size > MAX_FILE) return null;
-      return new Uint8Array(fs.readFileSync(this.host(p)));
+      // opening a file does not read it on the host, so it must not touch the access time
+      let fd: number;
+      try {
+        fd = fs.openSync(this.host(p), fs.constants.O_RDONLY | (fs.constants.O_NOATIME ?? 0));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EPERM") throw e;
+        fd = fs.openSync(this.host(p), fs.constants.O_RDONLY);
+      }
+      try {
+        return new Uint8Array(fs.readFileSync(fd));
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {
       return null;
     }
