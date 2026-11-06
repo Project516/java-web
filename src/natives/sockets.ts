@@ -595,6 +595,15 @@ export const natives: Natives = {
   "sun/nio/fs/UnixNativeDispatcher.read0(IJI)I": function* (t, [fd, address, len]): NativeGen {
     const s = socksOf(t.vm.state).get(fd);
     if (!s) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [EBADF] });
+    // an inotify read returns whole events only
+    if (inotify(t, fd)) {
+      let whole = 0;
+      for (const event of s.rx) {
+        if (whole + event.length > len) break;
+        whole += event.length;
+      }
+      if (whole > 0) len = whole;
+    }
     const n = yield* recv(t, s, len, (count) => s.take(t.vm.mem.u8, Number(address), count));
     if (n === IOS_UNAVAILABLE) throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [11] });
     return n;
