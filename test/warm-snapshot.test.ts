@@ -24,12 +24,20 @@ function scratch() {
 async function compile(cache: string, source: string, missing: string) {
   const out = join(cache, "out");
   let log = "";
+  let settled: () => void = () => {};
+  const done = new Promise<void>((resolve) => (settled = resolve));
   const error = console.error;
-  console.error = (...args: unknown[]) => { log += `${args.join(" ")}\n`; };
+  console.error = (...args: unknown[]) => {
+    log += `${args.join(" ")}\n`;
+    if (/warm snapshot (saved|busy|restored)/.test(log)) settled();
+  };
   let vm: Awaited<ReturnType<typeof startLibrary>> | undefined;
   try {
     vm = await startLibrary({ classpath: [classes], snapshotDir: cache, warmSnapshot: true, debug: true });
-    return { result: await vm.callStatic("WarmJavac", "compile", [source, missing, out]), log };
+    const result = await vm.callStatic("WarmJavac", "compile", [source, missing, out]);
+    // the VM saves after the call has returned, when it goes idle
+    await done;
+    return { result, log };
   } finally {
     vm?.halt(0);
     console.error = error;
