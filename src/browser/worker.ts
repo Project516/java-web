@@ -4,6 +4,7 @@
 
 import { MemoryBackend, VFS } from "../fs.ts";
 import { JVM, SnapshotError } from "../jvm.ts";
+import { MAX_HEAP, resetAllocationCheck, setAllocationCheck, setMaxHeap, trackArrays } from "../runtime.ts";
 import { HttpBackend, parsePack } from "./http.ts";
 import { dropSnapshot, dropWarmSnapshot, loadSnapshot, loadWarmSnapshot, persist, saveSnapshot, saveWarmSnapshot } from "./idb.ts";
 import type { SnapshotImage, WarmSnapshotImage } from "../snapshot.ts";
@@ -68,6 +69,10 @@ async function readBody(res: Response, report: boolean): Promise<ArrayBuffer> {
 
 async function init(m: InitMessage) {
   config = m;
+  if (m.maxHeap) {
+    setMaxHeap(m.maxHeap);
+    if (typeof FinalizationRegistry !== "undefined") setAllocationCheck(MAX_HEAP, trackArrays(), { lazy: true });
+  }
   const res = await fetch(new URL("boot.pack", m.runtime));
   if (!res.ok) throw new Error(`cannot load ${res.url}: ${res.status}`);
   const [pack] = await Promise.all([readBody(res, m.progress).then(parsePack), persist(userFiles)]);
@@ -194,6 +199,7 @@ function newVm(classpath: string[], vmId: number, library = false): JVM {
     stdin: readStdin,
     hostName: config!.hostName,
     debug: config!.debug,
+    afterBoot: resetAllocationCheck,
     env: config!.env,
     loadNativeLibrary,
     fileClosed,
