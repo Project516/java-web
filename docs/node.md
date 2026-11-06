@@ -75,7 +75,9 @@ compile loads over a thousand) and no library handles are live. A later library
 start with the same class path and working directory restores it, after
 checking that the files, missing paths and directory listings those calls used
 are unchanged; a javac compile from it takes about 1 s instead of 6 s on a
-Raspberry Pi 5. An image is about 18 MB; warm snapshots share the snapshot
+Raspberry Pi 5. An image is about 21 MB, as it also holds the JS the JIT generated for the
+methods compiled so far; a restored method compiles that code on its first
+call instead of generating it again. Warm snapshots share the snapshot
 directory and keep the 2 most recent. They build on boot snapshots, so with
 `snapshotDir: null` there are none.
 
