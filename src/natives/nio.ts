@@ -103,10 +103,11 @@ function renameAbs(t: JThread, from: string, to: string) {
 }
 
 function openAbs(t: JThread, abs: string, flags: number, mode: number): number {
+  // before any stat that follows the link, which would touch its access time
+  if (flags & O_NOFOLLOW && !(flags & O_CREAT && flags & O_EXCL) && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
   const st = t.vm.fs.stat(abs);
   if ((flags & O_CREAT) && (flags & O_EXCL) && (st || t.vm.fs.lstat(abs))) unixError(EEXIST);
   if (!st && !(flags & O_CREAT)) unixError(ENOENT);
-  if (flags & O_NOFOLLOW && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
   if (flags & O_DIRECTORY && st && !st.dir) unixError(ENOTDIR);
   const write = (flags & O_ACCMODE) !== 0;
   if (st?.dir && write) unixError(EISDIR);
@@ -162,16 +163,18 @@ function fillAttrs(t: JThread, attrs: JObject, p: string, follow = true): number
   return 0;
 }
 
+// seconds and nanoseconds of a time kept as milliseconds, or exactly as nanoseconds
+function splitTime(ms: number, ns?: bigint): [bigint, bigint] {
+  if (ns === undefined) return [BigInt(Math.floor(ms / 1000)), BigInt(Math.floor((ms % 1000) * 1e6))];
+  const sec = ns / 1_000_000_000n, nsec = ns % 1_000_000_000n;
+  // before 1970: whole seconds round down, nanoseconds stay positive
+  return nsec < 0n ? [sec - 1n, nsec + 1_000_000_000n] : [sec, nsec];
+}
+
 function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: number, size = st.size, nlink = 1) {
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
   const mode = st.device ? S_IFCHR | 0o666 : (st.link !== undefined ? S_IFLNK : st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
-  let sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
-  if (st.mtimeNs !== undefined) {
-    sec = st.mtimeNs / 1_000_000_000n;
-    nsec = st.mtimeNs % 1_000_000_000n;
-    // before 1970: whole seconds round down, nanoseconds stay positive
-    if (nsec < 0n) [sec, nsec] = [sec - 1n, nsec + 1_000_000_000n];
-  }
+  const [sec, nsec] = splitTime(st.mtime, st.mtimeNs);
   vm.setField(attrs, A, "st_mode", mode);
   vm.setField(attrs, A, "st_ino", BigInt(ino));
   vm.setField(attrs, A, "st_dev", 1n);
@@ -179,8 +182,11 @@ function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: 
   vm.setField(attrs, A, "st_uid", 1000);
   vm.setField(attrs, A, "st_gid", 1000);
   vm.setField(attrs, A, "st_size", BigInt(size));
-  for (const k of ["st_atime_sec", "st_mtime_sec", "st_ctime_sec"]) vm.setField(attrs, A, k, sec);
-  for (const k of ["st_atime_nsec", "st_mtime_nsec", "st_ctime_nsec"]) vm.setField(attrs, A, k, nsec);
+  for (const k of ["st_mtime_sec", "st_ctime_sec"]) vm.setField(attrs, A, k, sec);
+  for (const k of ["st_mtime_nsec", "st_ctime_nsec"]) vm.setField(attrs, A, k, nsec);
+  const [asec, ansec] = splitTime(st.atime ?? st.mtime, st.atimeNs);
+  vm.setField(attrs, A, "st_atime_sec", asec);
+  vm.setField(attrs, A, "st_atime_nsec", ansec);
 }
 
 // open mount table handles: whether the one entry has been read
@@ -310,15 +316,15 @@ export const natives: Natives = {
   [`${N}chown0(JII)V`]: () => undefined,
   [`${N}lchown0(JII)V`]: () => undefined,
   [`${N}fchown0(III)V`]: () => undefined,
-  // times in nanoseconds; only the modification time is kept
-  [`${N}utimensat0(IJJJI)V`]: (t, [dfd, p, , mtime, flags]) => {
+  // times in nanoseconds; in-memory files keep only the modification time
+  [`${N}utimensat0(IJJJI)V`]: (t, [dfd, p, atime, mtime, flags]) => {
     const abs = pathAt(t, dfd, p);
     if (!t.vm.fs.lstat(abs)) unixError(ENOENT);
-    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime), (flags & AT_SYMLINK_NOFOLLOW) !== 0)) unixError(EROFS);
+    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime), (flags & AT_SYMLINK_NOFOLLOW) !== 0, { ms: Number(atime) / 1e6, ns: BigInt(atime) })) unixError(EROFS);
   },
-  [`${N}futimens0(IJJ)V`]: (t, [fd, , mtime]) => {
+  [`${N}futimens0(IJJ)V`]: (t, [fd, atime, mtime]) => {
     const f = fileOf(t, fd);
-    if (!setMtime(t, f.path, Number(mtime) / 1e6, BigInt(mtime))) unixError(EROFS);
+    if (!setMtime(t, f.path, Number(mtime) / 1e6, BigInt(mtime), false, { ms: Number(atime) / 1e6, ns: BigInt(atime) })) unixError(EROFS);
   },
   [`${N}opendir0(J)J`]: (t, [p]) => {
     const abs = path(t, p);

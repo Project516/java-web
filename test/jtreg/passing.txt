@@ -2204,6 +2204,7 @@ java/nio/file/Files/NotADirectory.java
 java/nio/file/Files/ReadWriteString.java
 java/nio/file/Files/SetLastModifiedTime.java
 java/nio/file/Files/StreamTest.java
+java/nio/file/Files/SymlinkTime.java
 java/nio/file/Files/TemporaryFiles.java
 java/nio/file/Files/probeContentType/ForceLoad.java
 java/nio/file/Files/probeContentType/ParallelProbes.java

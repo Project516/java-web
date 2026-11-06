@@ -84,7 +84,7 @@ export class NodeBackend implements Backend {
     let st: Stat | null = null;
     try {
       const s = fs.statSync(this.host(p));
-      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
+      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, atime: s.atimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
     } catch {
       st = null;
     }
@@ -95,7 +95,7 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.lstatSync(this.host(p));
       if (!s.isSymbolicLink()) return null;
-      return { dir: false, size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, link: s.size, ino: s.ino, nlink: s.nlink };
+      return { dir: false, size: s.size, mtime: s.mtimeMs, atime: s.atimeMs, mode: s.mode & 0o7777, link: s.size, ino: s.ino, nlink: s.nlink };
     } catch {
       return null;
     }
@@ -233,10 +233,12 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
-  setMtime(p: string, ms: number, noFollow = false) {
+  setMtime(p: string, ms: number, noFollow = false, atimeMs?: number) {
     try {
-      if (noFollow) fs.lutimesSync(this.host(p), fs.lstatSync(this.host(p)).atime, ms / 1000);
-      else fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);
+      const host = this.host(p);
+      const atime = atimeMs === undefined ? (noFollow ? fs.lstatSync(host) : fs.statSync(host)).atimeMs : atimeMs;
+      if (noFollow) fs.lutimesSync(host, atime / 1000, ms / 1000);
+      else fs.utimesSync(host, atime / 1000, ms / 1000);
       return true;
     } catch {
       return false;
