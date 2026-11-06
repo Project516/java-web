@@ -2,7 +2,7 @@
 // pool resolution, strings, monitors and the thread scheduler.
 
 import type { Assertions } from "./assertions.ts";
-import { cpEntry, BadMagic, ClassFormatError, MAX_MAJOR, Tag, UnsupportedVersion, className, parseClass, utf8 } from "./classfile.ts";
+import { cpA, cpB, cpTag, cpValue, BadMagic, ClassFormatError, MAX_MAJOR, Tag, UnsupportedVersion, className, parseClass, utf8 } from "./classfile.ts";
 import type { ClassFile } from "./classfile.ts";
 import { deliver, raise, runThread } from "./interp.ts";
 import { NativeMemory } from "./memory.ts";
@@ -438,12 +438,11 @@ export class JVM {
 
   fieldRef(t: JThread, cls: JClass, idx: number): JField | undefined {
     const cp = cls.cf!.cp;
-    const e = cpEntry(cp, idx)!;
-    const owner = cls.rcp[e.a] ?? this.classRef(t, cls, e.a);
+    const ownerIndex = cpA(cp, idx), natIndex = cpB(cp, idx);
+    const owner = cls.rcp[ownerIndex] ?? this.classRef(t, cls, ownerIndex);
     if (!owner) return undefined;
-    const nat = cpEntry(cp, e.b)!;
-    const name = utf8(cp, nat.a);
-    const f = owner.findField(name, utf8(cp, nat.b));
+    const name = utf8(cp, cpA(cp, natIndex));
+    const f = owner.findField(name, utf8(cp, cpB(cp, natIndex)));
     if (!f) throw new PendingThrow("java/lang/NoSuchFieldError", name);
     cls.rcp[idx] = f;
     return f;
@@ -451,11 +450,10 @@ export class JVM {
 
   methodRef(t: JThread, cls: JClass, idx: number): JMethod | undefined {
     const cp = cls.cf!.cp;
-    const e = cpEntry(cp, idx)!;
-    const owner = cls.rcp[e.a] ?? this.classRef(t, cls, e.a);
+    const ownerIndex = cpA(cp, idx), natIndex = cpB(cp, idx);
+    const owner = cls.rcp[ownerIndex] ?? this.classRef(t, cls, ownerIndex);
     if (!owner) return undefined;
-    const nat = cpEntry(cp, e.b)!;
-    const name = utf8(cp, nat.a), desc = utf8(cp, nat.b);
+    const name = utf8(cp, cpA(cp, natIndex)), desc = utf8(cp, cpB(cp, natIndex));
     const m = this.resolveMethod(owner, name, desc);
     cls.rcp[idx] = m;
     return m;
@@ -491,11 +489,11 @@ export class JVM {
   // ldc / ldc_w / ldc2_w
   constant(t: JThread, cls: JClass, idx: number): any {
     const cp = cls.cf!.cp;
-    const e = cpEntry(cp, idx)!;
+    const tag = cpTag(cp, idx), a = cpA(cp, idx);
     let v: any;
-    switch (e.tag) {
-      case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: v = e.value; break;
-      case Tag.String: v = this.intern(utf8(cp, e.a)); break;
+    switch (tag) {
+      case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: v = cpValue(cp, idx); break;
+      case Tag.String: v = this.intern(utf8(cp, a)); break;
       case Tag.Class: {
         const c = this.classRef(t, cls, idx);
         if (!c) return undefined;
@@ -506,7 +504,7 @@ export class JVM {
         t.pushNative(this.resolveConstantGen(t, cls, idx), null, "V", true);
         return undefined;
       default:
-        throw new PendingThrow("java/lang/InternalError", `bad ldc constant tag ${e.tag}`);
+        throw new PendingThrow("java/lang/InternalError", `bad ldc constant tag ${tag}`);
     }
     cls.ldc[idx] = v;
     return v;
@@ -630,8 +628,8 @@ export class JVM {
       if (!f.isStatic) continue;
       const raw = f.attrs.get("ConstantValue");
       if (!raw) continue;
-      const e = cpEntry(cp, (raw[0] << 8) | raw[1])!;
-      c.statics[f.slot] = e.tag === Tag.String ? this.intern(utf8(cp, e.a)) : e.value;
+      const i = (raw[0] << 8) | raw[1], tag = cpTag(cp, i);
+      c.statics[f.slot] = tag === Tag.String ? this.intern(utf8(cp, cpA(cp, i))) : cpValue(cp, i);
     }
   }
 

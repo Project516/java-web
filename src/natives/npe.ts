@@ -3,7 +3,7 @@
 // operand stack slot, then the message is built by walking back from the
 // bytecode that hit null.
 
-import { cpEntry, Tag, className, utf8 } from "../classfile.ts";
+import { cpA, cpB, cpEntry, Tag, className, utf8 } from "../classfile.ts";
 import type { ClassFile } from "../classfile.ts";
 import type { JMethod } from "../runtime.ts";
 import type { Natives } from "./util.ts";
@@ -248,10 +248,10 @@ class Builder {
   }
 
   private refDesc(i: number): string {
-    return utf8(this.cp, cpEntry(this.cp, cpEntry(this.cp, i)!.b)!.b);
+    return utf8(this.cp, cpB(this.cp, cpB(this.cp, i)));
   }
   private refName(i: number): string {
-    return utf8(this.cp, cpEntry(this.cp, cpEntry(this.cp, i)!.b)!.a);
+    return utf8(this.cp, cpA(this.cp, cpB(this.cp, i)));
   }
 
   private step(bci: number): number {

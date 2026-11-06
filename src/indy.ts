@@ -5,7 +5,7 @@
 // the same thing the JDK bootstraps do with the ClassFile API, minus the
 // cost of running that machinery in the interpreter.
 
-import { cpEntry, Tag, className, utf8 } from "./classfile.ts";
+import { cpA, cpB, cpTag, cpValue, Tag, className, utf8 } from "./classfile.ts";
 import { ClassWriter } from "./classwriter.ts";
 import type { Code } from "./classwriter.ts";
 import {
@@ -42,22 +42,22 @@ export type BsmArg =
 
 export function cpArg(cls: JClass, idx: number): BsmArg {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
-  switch (e.tag) {
-    case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: return { kind: "value", tag: e.tag, value: e.value };
-    case Tag.String: return { kind: "value", tag: e.tag, value: utf8(cp, e.a) };
+  const tag = cpTag(cp, idx), a = cpA(cp, idx), b = cpB(cp, idx);
+  switch (tag) {
+    case Tag.Integer: case Tag.Float: case Tag.Long: case Tag.Double: return { kind: "value", tag, value: cpValue(cp, idx) };
+    case Tag.String: return { kind: "value", tag, value: utf8(cp, a) };
     case Tag.Class: return { kind: "class", name: className(cp, idx) };
-    case Tag.MethodType: return { kind: "mt", desc: utf8(cp, e.a) };
+    case Tag.MethodType: return { kind: "mt", desc: utf8(cp, a) };
     case Tag.MethodHandle: {
-      const ref = cpEntry(cp, e.b)!, nat = cpEntry(cp, ref.b)!;
+      const ref = b, nat = cpB(cp, ref);
       return {
-        kind: "mh", refKind: e.a, owner: className(cp, ref.a), name: utf8(cp, nat.a), desc: utf8(cp, nat.b),
-        iface: ref.tag === Tag.InterfaceMethodref,
+        kind: "mh", refKind: a, owner: className(cp, cpA(cp, ref)), name: utf8(cp, cpA(cp, nat)), desc: utf8(cp, cpB(cp, nat)),
+        iface: cpTag(cp, ref) === Tag.InterfaceMethodref,
       };
     }
     case Tag.Dynamic: return { kind: "condy", index: idx };
   }
-  throw new PendingThrow("java/lang/InternalError", `bad bootstrap argument tag ${e.tag}`);
+  throw new PendingThrow("java/lang/InternalError", `bad bootstrap argument tag ${tag}`);
 }
 
 function wordSize(descs: string[]) {
@@ -434,15 +434,14 @@ function* methodHandleConstant(vm: JVM, t: JThread, cls: JClass, mh: MethodHandl
 
 function* dynamicConstant(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
-  const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cpEntry(cp, e.b)!;
+  const bsm = cls.cf!.bootstrap[cpA(cp, idx)];
+  const nat = cpB(cp, idx);
   const bsmHandle = yield* constantObject(vm, t, cls, bsm.ref);
-  const type: JClass = yield* typeOf(t, cls, utf8(cp, nat.b));
+  const type: JClass = yield* typeOf(t, cls, utf8(cp, cpB(cp, nat)));
   const args = yield* staticArgs(vm, t, cls, bsm.args);
   return yield* upcall(vm, t,
     "linkDynamicConstant(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-    vm.mirror(cls), bsmHandle, vm.intern(utf8(cp, nat.a)), vm.mirror(type), args);
+    vm.mirror(cls), bsmHandle, vm.intern(utf8(cp, cpA(cp, nat))), vm.mirror(type), args);
 }
 
 function* staticArgs(vm: JVM, t: JThread, cls: JClass, idxs: number[]): NativeGen {
@@ -455,31 +454,31 @@ function* staticArgs(vm: JVM, t: JThread, cls: JClass, idxs: number[]): NativeGe
 // The Java object for a loadable constant, boxing primitives.
 export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
-  switch (e.tag) {
-    case Tag.Integer: return yield* box(t, "I", e.value);
-    case Tag.Float: return yield* box(t, "F", e.value);
-    case Tag.Long: return yield* box(t, "J", e.value);
-    case Tag.Double: return yield* box(t, "D", e.value);
-    case Tag.String: return vm.intern(utf8(cp, e.a));
+  const tag = cpTag(cp, idx), a = cpA(cp, idx), b = cpB(cp, idx), value = cpValue(cp, idx);
+  switch (tag) {
+    case Tag.Integer: return yield* box(t, "I", value);
+    case Tag.Float: return yield* box(t, "F", value);
+    case Tag.Long: return yield* box(t, "J", value);
+    case Tag.Double: return yield* box(t, "D", value);
+    case Tag.String: return vm.intern(utf8(cp, a));
     case Tag.Class: return vm.mirror(yield* vm.loadClassGen(t, cls.loader, className(cp, idx)));
   }
   const cached = cls.ldc[idx];
   if (cached !== undefined) {
-    if (e.tag !== Tag.Dynamic) return cached;
-    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
+    if (tag !== Tag.Dynamic) return cached;
+    const desc = utf8(cp, cpB(cp, b));
     return isPrim(desc) ? yield* box(t, desc, cached) : cached;
   }
   let v: any;
-  if (e.tag === Tag.MethodType) v = yield* methodType(vm, t, cls.loader, utf8(cp, e.a));
-  else if (e.tag === Tag.MethodHandle) v = yield* methodHandleConstant(vm, t, cls, cpArg(cls, idx) as MethodHandleRef);
-  else if (e.tag === Tag.Dynamic) {
+  if (tag === Tag.MethodType) v = yield* methodType(vm, t, cls.loader, utf8(cp, a));
+  else if (tag === Tag.MethodHandle) v = yield* methodHandleConstant(vm, t, cls, cpArg(cls, idx) as MethodHandleRef);
+  else if (tag === Tag.Dynamic) {
     v = yield* dynamicConstant(vm, t, cls, idx);
-    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
+    const desc = utf8(cp, cpB(cp, b));
     cls.ldc[idx] = isPrim(desc) && v !== null ? vm.getField(v, v.cls.name, "value") : v;
     return v;
   }
-  else throw new PendingThrow("java/lang/InternalError", `bad constant tag ${e.tag}`);
+  else throw new PendingThrow("java/lang/InternalError", `bad constant tag ${tag}`);
   cls.ldc[idx] = v;
   return v;
 }
@@ -487,10 +486,10 @@ export function* constantObject(vm: JVM, t: JThread, cls: JClass, idx: number): 
 // ldc of a MethodType, MethodHandle or dynamic constant.
 export function* resolveConstant(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
+  const tag = cpTag(cp, idx), b = cpB(cp, idx);
   const v = yield* constantObject(vm, t, cls, idx);
-  if (e.tag === Tag.Dynamic) {
-    const desc = utf8(cp, cpEntry(cp, e.b)!.b);
+  if (tag === Tag.Dynamic) {
+    const desc = utf8(cp, cpB(cp, b));
     if (isPrim(desc)) return v === null ? null : vm.getField(v, v.cls.name, "value");
   }
   return v;
@@ -498,16 +497,15 @@ export function* resolveConstant(vm: JVM, t: JThread, cls: JClass, idx: number):
 
 function* linkGeneral(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
-  const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cpEntry(cp, e.b)!;
+  const bsm = cls.cf!.bootstrap[cpA(cp, idx)];
+  const nat = cpB(cp, idx);
   const bsmHandle = yield* constantObject(vm, t, cls, bsm.ref);
-  const type = yield* methodType(vm, t, cls.loader, utf8(cp, nat.b));
+  const type = yield* methodType(vm, t, cls.loader, utf8(cp, cpB(cp, nat)));
   const args = yield* staticArgs(vm, t, cls, bsm.args);
   const appendix = vm.newObjectArray("java/lang/Object", [null]);
   const mn: JObject = yield* upcall(vm, t,
     "linkCallSite(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/invoke/MemberName;",
-    vm.mirror(cls), bsmHandle, vm.intern(utf8(cp, nat.a)), type, args, appendix);
+    vm.mirror(cls), bsmHandle, vm.intern(utf8(cp, cpA(cp, nat))), type, args, appendix);
   return { m: memberTarget(t, mn), appendix: appendix.a[0] as JObject | null };
 }
 
@@ -515,10 +513,9 @@ function* linkGeneral(vm: JVM, t: JThread, cls: JClass, idx: number): NativeGen 
 
 export function* linkCallSite(vm: JVM, t: JThread, cls: JClass, idx: number): Generator<any, CallSite, any> {
   const cp = cls.cf!.cp;
-  const e = cpEntry(cp, idx)!;
-  const bsm = cls.cf!.bootstrap[e.a];
-  const nat = cpEntry(cp, e.b)!;
-  const name = utf8(cp, nat.a), desc = utf8(cp, nat.b);
+  const bsm = cls.cf!.bootstrap[cpA(cp, idx)];
+  const nat = cpB(cp, idx);
+  const name = utf8(cp, cpA(cp, nat)), desc = utf8(cp, cpB(cp, nat));
   const ref = cpArg(cls, bsm.ref) as MethodHandleRef;
   const args = bsm.args.map((a) => cpArg(cls, a));
   let m: JMethod | null = null;
