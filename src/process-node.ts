@@ -16,6 +16,27 @@ const drained = (output: Writable) => output.writableNeedDrain
   ? new Promise<void>((resolve) => { output.once("drain", resolve); output.once("close", resolve); })
   : undefined;
 
+// execvp as the JDK's launcher does it: the parent's PATH, ":/bin:/usr/bin" when it has none,
+// and EACCES in place of ENOENT when a match was not executable.
+function findProgram(command: string, cwd: string, parentPath: string | undefined): string | NodeJS.ErrnoException {
+  if (command === "" || command.includes("/")) return command;
+  let denied = false;
+  for (const dir of (parentPath ?? ":/bin:/usr/bin").split(":")) {
+    const candidate = dir ? `${dir}/${command}` : `./${command}`;
+    const full = path.resolve(cwd, candidate);
+    try {
+      if (fs.statSync(full).isDirectory()) denied = true;
+      else {
+        fs.accessSync(full, fs.constants.X_OK);
+        return candidate;
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EACCES") denied = true;
+    }
+  }
+  return Object.assign(new Error(denied ? "EACCES" : "ENOENT"), { code: denied ? "EACCES" : "ENOENT", errno: denied ? -13 : -2 });
+}
+
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];
   private length = 0;
@@ -207,7 +228,12 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
           merged = result;
           stdio[1] = stdio[2] = merged.writer;
         } else if (redirectError) stdio[2] = stdio[1];
-        const child = spawn(command, args, { cwd: dir ? decode(dir) : t.vm.opts.cwd, env, stdio: stdio as [any, any, any] });
+        const cwd = dir ? decode(dir) : t.vm.opts.cwd;
+        const program = java ? command : findProgram(command, cwd ?? process.cwd(), (t.vm.opts.env ?? process.env).PATH);
+        if (typeof program !== "string") {
+          throw new PendingThrow("java/io/IOException", program.code === "EACCES" ? "error=13, Permission denied" : "error=2, No such file or directory");
+        }
+        const child = spawn(program, args, { cwd, env, stdio: stdio as [any, any, any] });
         merged?.writer.destroy();
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
