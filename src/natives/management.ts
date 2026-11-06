@@ -11,6 +11,7 @@ import { TERMINATED } from "../thread.ts";
 import type { JThread, NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import { openFdCount } from "./io.ts";
+import { box, initialized } from "./reflect.ts";
 import type { Natives } from "./util.ts";
 
 const MANAGERS = [
@@ -131,6 +132,17 @@ function procValue(file: string, label: string, field = 1): number {
 const orElse = (x: number, fallback: number) => (Number.isFinite(x) ? x : fallback);
 const KB = 1024;
 
+// The VM options java-web can state, as HotSpot reports them with the Serial collector
+const FLAGS: { name: string; value: boolean | number; writeable: boolean }[] = [
+  { name: "HeapDumpOnOutOfMemoryError", value: false, writeable: true },
+  { name: "LockingMode", value: 2, writeable: false },
+  { name: "MaxHeapSize", value: MAX_HEAP, writeable: false },
+  { name: "PrintConcurrentLocks", value: false, writeable: true },
+  { name: "UseCompressedOops", value: true, writeable: false },
+  { name: "UseParallelGC", value: false, writeable: false },
+  { name: "UseSerialGC", value: true, writeable: false },
+];
+
 const V = "sun/management/VMManagementImpl.";
 const OS = "com/sun/management/internal/OperatingSystemImpl.";
 const P = "sun/management/MemoryPoolImpl.";
@@ -235,6 +247,28 @@ export const natives: Natives = {
   "jdk/internal/platform/CgroupMetrics.isContainerized0()Z": () => 0,
   "jdk/internal/platform/CgroupMetrics.getTotalMemorySize0()J": () => BigInt(host("node:os")?.totalmem() ?? MAX_HEAP),
   "jdk/internal/platform/CgroupMetrics.getTotalSwapSize0()J": () => BigInt(orElse(procValue("/proc/meminfo", "SwapTotal:") * KB, 0)),
+
+  "com/sun/management/internal/Flag.initialize()V": () => undefined,
+  "com/sun/management/internal/Flag.getInternalFlagCount()I": () => FLAGS.length,
+  "com/sun/management/internal/Flag.getAllFlagNames()[Ljava/lang/String;": (t) => t.vm.newObjectArray("java/lang/String", FLAGS.map((f) => t.vm.str(f.name))),
+  "com/sun/management/internal/Flag.getFlags([Ljava/lang/String;[Lcom/sun/management/internal/Flag;I)I": function* (t, [names, out, count]): NativeGen {
+    const vm = t.vm;
+    const cls = vm.loadBoot("com/sun/management/internal/Flag")!;
+    const origin = yield* initialized(t, "com/sun/management/VMOption$Origin");
+    const defaultOrigin = yield t.call(origin.methodMap.get("valueOf(Ljava/lang/String;)Lcom/sun/management/VMOption$Origin;")!, vm.str("DEFAULT"));
+    const wanted = names ? (names.a as (JObject | null)[]).map((n) => (n ? vm.jsString(n) : null)) : FLAGS.map((f) => f.name);
+    let filled = 0;
+    for (let i = 0; i < Math.min(count, wanted.length); i++) {
+      const f = FLAGS.find((x) => x.name === wanted[i]);
+      if (!f) continue;
+      const value = typeof f.value === "boolean" ? yield* box(t, "Z", f.value ? 1 : 0) : yield* box(t, "J", BigInt(f.value));
+      const flag = vm.newObject(cls);
+      yield t.call(cls.methodMap.get("<init>(Ljava/lang/String;Ljava/lang/Object;ZZLcom/sun/management/VMOption$Origin;)V")!, flag, vm.str(f.name), value, f.writeable ? 1 : 0, 1, defaultOrigin);
+      (out.a as (JObject | null)[])[i] = flag;
+      filled++;
+    }
+    return filled;
+  },
 
   [`${OS}initialize0()V`]: () => undefined,
   [`${OS}getOpenFileDescriptorCount0()J`]: (t) => BigInt(openFdCount(t.vm)),
