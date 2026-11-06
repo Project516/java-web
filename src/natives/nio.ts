@@ -294,10 +294,10 @@ export const natives: Natives = {
   [`${N}lchown0(JII)V`]: () => undefined,
   [`${N}fchown0(III)V`]: () => undefined,
   // times in nanoseconds; only the modification time is kept
-  [`${N}utimensat0(IJJJI)V`]: (t, [, p, , mtime]) => {
-    const abs = path(t, p);
-    if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime))) unixError(EROFS);
+  [`${N}utimensat0(IJJJI)V`]: (t, [dfd, p, , mtime, flags]) => {
+    const abs = pathAt(t, dfd, p);
+    if (!t.vm.fs.lstat(abs)) unixError(ENOENT);
+    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime), (flags & AT_SYMLINK_NOFOLLOW) !== 0)) unixError(EROFS);
   },
   [`${N}futimens0(IJJ)V`]: (t, [fd, , mtime]) => {
     const f = fileOf(t, fd);

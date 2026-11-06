@@ -60,7 +60,7 @@ export interface Backend {
   // the file system holding path: block size and block counts, as statvfs gives them
   space?(path: string): Space | null;
   // sets the modification time, in milliseconds since the epoch
-  setMtime?(path: string, ms: number): boolean;
+  setMtime?(path: string, ms: number, noFollow?: boolean): boolean;
   // whether the host refuses to write the file, or to create it when it is missing
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
@@ -466,10 +466,11 @@ export class VFS {
   // ns, when given, is the exact time asked for. Hosts keep times as floating
   // point seconds or milliseconds, which lose nanoseconds, so stat reports ns
   // for as long as the file keeps the time this set.
-  setMtime(path: string, ms: number, ns?: bigint): boolean {
+  setMtime(path: string, ms: number, ns?: bigint, noFollow = false): boolean {
     const r = this.resolve(path);
-    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms)) return false;
+    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms, noFollow)) return false;
     this.changed(path, "modify");
+    if (noFollow) return true;
     const n = normalize(path);
     const st = ns === undefined ? null : r[0].stat(r[1]);
     // only a time the host kept, give or take its rounding; a host can clamp it

@@ -230,9 +230,10 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
-  setMtime(p: string, ms: number) {
+  setMtime(p: string, ms: number, noFollow = false) {
     try {
-      fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);
+      if (noFollow) fs.lutimesSync(this.host(p), fs.lstatSync(this.host(p)).atime, ms / 1000);
+      else fs.utimesSync(this.host(p), fs.statSync(this.host(p)).atime, ms / 1000);
       return true;
     } catch {
       return false;
