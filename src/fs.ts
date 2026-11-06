@@ -453,7 +453,9 @@ export class VFS {
     const real = r[0].realpath(r[1]);
     if (real === null) return null;
     const n = normalize(path);
-    return normalize(n.slice(0, n.length - r[1].length) + real);
+    // a mount point itself maps to "/" in its backend
+    const base = n.slice(0, n.length - (r[1] === "/" ? 0 : r[1].length));
+    return normalize(base + real);
   }
 
   // A file system without its own figures reports 4 KB blocks and no space,
