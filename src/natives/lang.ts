@@ -43,12 +43,17 @@ export function interruptibleWait(t: JThread, ms: number | null, register?: (wak
     };
     t.wake = done;
     register?.(done);
-    if (ms !== null) {
-      timer = setTimeout(done, Math.max(0, ms));
+    // timers fire at once past MAX_DELAY, so a longer wait re-arms
+    const arm = (left: number) => {
+      const step = Math.min(Math.max(0, left), MAX_DELAY);
+      timer = setTimeout(step < left ? () => { t.vm.timers.delete(timer!); arm(left - step); } : done, step);
       t.vm.timers.add(timer);
-    }
+    };
+    if (ms !== null) arm(ms);
   });
 }
+
+const MAX_DELAY = 0x7fffffff;
 
 function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const vm = t.vm;
