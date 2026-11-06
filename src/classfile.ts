@@ -41,26 +41,33 @@ export class Code {
   readonly handlers: ExceptionEntry[];
   // raw LocalVariableTable attribute body, parsed on demand
   readonly localVars: Uint8Array | null;
-  private rawLines: Uint8Array[] | null;
+  // the class's bytes, and where its LineNumberTable bodies start (-1 for none)
+  private bytes: Uint8Array;
+  private linesAt: number;
+  private moreLines: number[] | null;
   private parsedLines: number[] | null | undefined;
-  constructor(maxStack: number, maxLocals: number, code: Uint8Array, handlers: ExceptionEntry[], rawLines: Uint8Array[] | null, localVars: Uint8Array | null) {
+  constructor(maxStack: number, maxLocals: number, code: Uint8Array, handlers: ExceptionEntry[], bytes: Uint8Array, linesAt: number, moreLines: number[] | null, localVars: Uint8Array | null) {
     this.maxStack = maxStack;
     this.maxLocals = maxLocals;
     this.code = code;
     this.handlers = handlers;
-    this.rawLines = rawLines;
+    this.bytes = bytes;
+    this.linesAt = linesAt;
+    this.moreLines = moreLines;
     this.localVars = localVars;
   }
   // pairs of (start pc, line), sorted by pc
   get lines(): number[] | null {
     if (this.parsedLines !== undefined) return this.parsedLines;
     let lines: number[] | null = null;
-    for (const body of this.rawLines ?? []) {
-      const lr = new Reader(body);
-      lines ??= [];
-      for (let n = lr.u2(); n > 0; n--) lines.push(lr.u2(), lr.u2());
+    if (this.linesAt >= 0) {
+      const r = new Reader(this.bytes);
+      for (const at of [this.linesAt, ...(this.moreLines ?? [])]) {
+        r.pos = at;
+        lines ??= [];
+        for (let n = r.u2(); n > 0; n--) lines.push(r.u2(), r.u2());
+      }
     }
-    this.rawLines = null;
     if (lines && lines.length > 2) {
       let sorted = true;
       for (let i = 2; i < lines.length; i += 2) if (lines[i] < lines[i - 2]) { sorted = false; break; }
@@ -178,6 +185,7 @@ export function encodeMutf8(s: string): Uint8Array {
 }
 
 const NO_ATTRS = new Map<string, Uint8Array>();
+const NO_HANDLERS: ExceptionEntry[] = [];
 
 function readMember(r: Reader, cp: ClassFile["cp"]): Member {
   const access = r.u2();
@@ -213,19 +221,27 @@ function readCode(r: Reader, cp: ClassFile["cp"]): Code {
   const maxStack = r.u2();
   const maxLocals = r.u2();
   const code = r.slice(r.u4());
-  const handlers: ExceptionEntry[] = [];
-  for (let n = r.u2(); n > 0; n--) {
+  let n = r.u2();
+  const handlers: ExceptionEntry[] = n === 0 ? NO_HANDLERS : [];
+  for (; n > 0; n--) {
     handlers.push({ start: r.u2(), end: r.u2(), handler: r.u2(), catchType: r.u2() });
   }
-  let lines: Uint8Array[] | null = null;
+  let linesAt = -1;
+  let moreLines: number[] | null = null;
   let localVars: Uint8Array | null = null;
-  for (let n = r.u2(); n > 0; n--) {
+  for (n = r.u2(); n > 0; n--) {
     const name = utf8(cp, r.u2());
-    const body = r.slice(r.u4());
-    if (name === "LocalVariableTable") localVars = body;
-    else if (name === "LineNumberTable") (lines ??= []).push(body);
+    const length = r.u4();
+    if (name === "LineNumberTable") {
+      if (linesAt < 0) linesAt = r.pos;
+      else (moreLines ??= []).push(r.pos);
+      r.pos += length;
+    } else {
+      const body = r.slice(length);
+      if (name === "LocalVariableTable") localVars = body;
+    }
   }
-  return new Code(maxStack, maxLocals, code, handlers, lines, localVars);
+  return new Code(maxStack, maxLocals, code, handlers, r.bytes, linesAt, moreLines, localVars);
 }
 
 export function cpEntry(cp: ClassFile["cp"], i: number): CpEntry | undefined {
