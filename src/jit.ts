@@ -22,6 +22,7 @@ import { memberTarget } from "./natives/invoke.ts";
 import { concatStrings } from "./natives/strings.ts";
 import { Frame, JavaThrow, NativeFrame, PendingThrow, fromNative } from "./thread.ts";
 import type { JThread } from "./thread.ts";
+import type { JVM } from "./jvm.ts";
 
 export const RET = 0, SUSPEND = 1;
 export type Compiled = (t: JThread, f: Frame) => number;
@@ -64,10 +65,26 @@ export function noteBackedge(t: JThread, m: JMethod) {
   if (m.hot >= BACKEDGE_THRESHOLD && m.jit === null && !m.noJit) compile(t, m);
 }
 
+export interface SavedJit { src: string; consts: any[] }
+
+// Gives m the code saved with a warm snapshot, compiled on its first call.
+export function restoreJit(vm: JVM, m: JMethod, code: SavedJit) {
+  if (disabled || noInline || stats) return;
+  vm.jitCode.set(m, code);
+  m.hot = THRESHOLD - 1;
+}
+
 function compile(t: JThread, m: JMethod) {
   if (disabled || m.noJit || !m.code || m.name === "<clinit>" || m.code.code.length > MAX_CODE) return;
+  const vm = t.vm;
   try {
-    const { src, consts } = generate(t, m);
+    let code = vm.keepJit ? undefined : vm.jitCode.get(m);
+    if (code) vm.jitCode.delete(m);
+    else {
+      code = generate(t, m);
+      if (vm.keepJit && !stats && !noInline) vm.jitCode.set(m, code);
+    }
+    const { src, consts } = code;
     if (dump && m.toString().includes(dump)) console.error(`// ${m}\n${src}`);
     m.jit = new Function("rt", "K", src)(runtime, consts) as Compiled;
     if (stats) stats.set(`compiled ${m}`, src.length);

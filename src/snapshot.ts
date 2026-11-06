@@ -12,6 +12,7 @@ import { MAX_HEAP } from "./runtime.ts";
 import type { WarmTrace } from "./fs.ts";
 import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
 import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
+import { restoreJit } from "./jit.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 
@@ -48,6 +49,8 @@ interface ClassRec {
   nestHost: unknown;
   links: [string, unknown][];
   caches: [string, unknown][];
+  // generated JS and constants of compiled methods, in warm snapshots
+  jit?: [string, string, unknown][];
 }
 
 interface VmRec {
@@ -111,6 +114,18 @@ class Encoder {
   }
 
   private work: (() => void)[] = [];
+
+  // enc, or null with nothing recorded when v cannot be saved
+  tryEnc(v: any, path: string): any {
+    const before = this.twins.size;
+    try {
+      return this.enc(v, path);
+    } catch {
+      this.work.length = 0;
+      [...this.twins.keys()].slice(before).forEach((k) => this.twins.delete(k));
+      return null;
+    }
+  }
 
   // the twin of v; containers are filled in by drain, so deep object graphs
   // need no deep recursion
@@ -271,6 +286,15 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
       links: c.methods.filter((m) => m.link).map((m) => [m.key, e.enc(m.link, `${p}.${m.key}.link`)]),
       caches: c.methods.filter((m) => m.cache).map((m) => [m.key, e.enc(m.cache, `${p}.${m.key}.cache`)]),
     };
+    if (library) {
+      const jit: [string, string, unknown][] = [];
+      for (const m of c.methods) {
+        const code = m.jit && vm.jitCode.get(m);
+        const consts = code && e.tryEnc(code.consts, `${p}.${m.key}.jit`);
+        if (code && consts) jit.push([m.key, code.src, consts]);
+      }
+      if (jit.length) rec.jit = jit;
+    }
     if (c.initThread || c.initWaiters.length) throw new Error(`snapshot: ${c.name} is being initialized`);
     if (rec.kind === "prim") rec.desc = c.prim!;
     else if (rec.kind === "array") rec.component = e.cls(c.component!, p);
@@ -397,6 +421,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
     c.nestHost = d.dec(r.nestHost);
     for (const [k, l] of r.links) c.methodMap.get(k)!.link = d.dec(l);
     for (const [k, cache] of r.caches ?? []) c.methodMap.get(k)!.cache = d.dec(cache);
+    for (const [k, src, consts] of r.jit ?? []) restoreJit(vm, c.methodMap.get(k)!, { src, consts: d.dec(consts) });
   });
   d.flush();
   const v = image.vm;
