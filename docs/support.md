@@ -9,6 +9,10 @@ java-web targets headless Java: console apps, libraries and javac.
 - `java.desktop`'s headless parts work: 2D geometry, image pixels, `Graphics2D`
   drawing on a `BufferedImage`, and JavaBeans. So does `java.xml`, including
   XML Schema validation and DTDs from the JDK's built-in catalog.
+- File mappings are copies in the VM's 512 MB native memory, which is also
+  shared with direct buffers and other native allocations. A mapping that does
+  not fit fails with `IOException: Map failed` and an `OutOfMemoryError` cause.
+  Read-write changes reach the file on force or unmap.
 - `Deflater` writes valid DEFLATE streams using stored blocks. Compression
   levels and strategies currently do not reduce output size; compressed bytes
   and compression ratios differ from HotSpot's zlib output.
