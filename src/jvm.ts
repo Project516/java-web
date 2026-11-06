@@ -20,6 +20,7 @@ import {
 } from "./thread.ts";
 import type { NativeGen, Request } from "./thread.ts";
 import { intrinsics, natives as builtinNatives } from "./natives/index.ts";
+import { canUnmount, dropOwned, unmountBlocked } from "./natives/continuation.ts";
 import { invokePolymorphic, linkCallSite, resolveConstant } from "./indy.ts";
 import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
@@ -917,6 +918,12 @@ export class JVM {
       }
       return true;
     }
+    // a virtual thread unmounts once the run loop has the frames in hand
+    if (t.mounted !== null && canUnmount(t)) {
+      t.unmounting = o;
+      t.state = WAITING;
+      return false;
+    }
     // Thread.getState() says BLOCKED while it waits, as on HotSpot
     if (!t.blockedOnMonitor) {
       t.blockedOnMonitor = true;
@@ -941,12 +948,11 @@ export class JVM {
     if (mon.owner === null) {
       mon.owner = t;
       mon.count = 1;
-      t.held++;
+      if (t.mounted !== null) t.owned.push(o);
       return true;
     }
     if (mon.owner === t) {
       mon.count++;
-      t.held++;
       return true;
     }
     return false;
@@ -955,14 +961,17 @@ export class JVM {
   monitorExit(t: JThread, o: JObject) {
     const mon = o.mon;
     if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException");
-    t.held--;
-    if (--mon.count === 0) this.releaseMonitor(mon);
+    if (--mon.count === 0) {
+      if (t.mounted !== null) dropOwned(t, o);
+      this.releaseMonitor(mon);
+    }
   }
 
   releaseMonitor(mon: Monitor) {
     mon.owner = null;
     mon.count = 0;
     const entry = mon.entry;
+    if (entry.length === 0) return;
     mon.entry = [];
     for (const w of entry) w();
   }
@@ -1006,6 +1015,7 @@ export class JVM {
       if (t.state !== RUNNABLE) continue;
       sched.thread = t;
       runThread(t, 20000);
+      if (t.unmounting !== null) unmountBlocked(t);
       if (t.state === RUNNABLE && !this.queued.has(t)) {
         this.queued.add(t);
         this.runQueue.push(t);

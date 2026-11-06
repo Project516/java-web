@@ -75,7 +75,6 @@ interface ThreadRec {
   obj: unknown;
   daemon: boolean;
   parkPermit: boolean;
-  held: number;
   pins: number;
   stackLimit: number;
   mounted: unknown;
@@ -471,7 +470,6 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
       obj: e.enc(t.obj, p),
       daemon: t.daemon,
       parkPermit: t.parkPermit,
-      held: t.held,
       pins: t.pins,
       stackLimit: t.stackLimit,
       mounted: e.enc(t.mounted, p),
@@ -584,7 +582,6 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
     t.obj = d.dec(r.obj);
     t.daemon = r.daemon;
     t.parkPermit = r.parkPermit;
-    t.held = r.held;
     t.pins = r.pins;
     t.stackLimit = r.stackLimit;
     t.mounted = d.dec(r.mounted);
