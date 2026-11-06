@@ -11,7 +11,7 @@ import { JImage } from "./jimage.ts";
 import {
   ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_NATIVE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
   ACC_STATIC, ACC_SUPER, ACC_VARARGS, ERRONEOUS, INITIALIZED, INITIALIZING, JArray, JClass, JField,
-  JMethod, JObject, LINKED, Monitor, defaultValue, newArrayData,
+  JMethod, JObject, LINKED, Monitor, defaultValue, newArrayData, noteYield, sched,
 } from "./runtime.ts";
 import type { CallSite, NativeFn } from "./runtime.ts";
 import {
@@ -974,23 +974,28 @@ export class JVM {
   private schedule() {
     if (this.scheduled || this.exitCode !== null) return;
     this.scheduled = true;
-    YIELD(() => this.loop());
+    // over the heap cap the threads wait for a collection
+    if (sched.pause) setTimeout(() => this.loop(), 4);
+    else YIELD(() => this.loop());
   }
 
   private loop() {
     this.scheduled = false;
+    noteYield();
     const end = performance.now() + 20;
     while (this.runQueue.length > 0 && this.exitCode === null) {
       const t = this.runQueue.shift()!;
       this.queued.delete(t);
       if (t.state !== RUNNABLE) continue;
+      sched.thread = t;
       runThread(t, 20000);
       if (t.state === RUNNABLE && !this.queued.has(t)) {
         this.queued.add(t);
         this.runQueue.push(t);
       }
-      if (performance.now() > end) break;
+      if (performance.now() > end || sched.yieldNow) break;
     }
+    sched.thread = null;
     if (this.runQueue.length > 0) this.schedule();
   }
 

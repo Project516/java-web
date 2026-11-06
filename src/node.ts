@@ -18,6 +18,7 @@ import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
 import { processNatives } from "./process-node.ts";
 import { PendingThrow } from "./thread.ts";
+import { heapSize } from "./heapsize.ts";
 import { clearAllocationCheck, hasMaxHeap, MAX_HEAP, resetAllocationCheck, setAllocationCheck, setMaxHeap } from "./runtime.ts";
 import type { NetBackend } from "./sockets.ts";
 
@@ -414,7 +415,7 @@ function nodeVm(o: NodeRunOptions): JVM {
     setAllocationCheck(MAX_HEAP, () => {
       const m = process.memoryUsage();
       return m.heapUsed + m.arrayBuffers;
-    }, gc);
+    }, { gc });
   } else clearAllocationCheck();
   const bridge = new Bridge({
     call: (_, req) => vm.library.request(req),
@@ -527,12 +528,6 @@ export function moduleFlag(o: NodeRunOptions, arg: string, next: string | undefi
     props[`${spec[0]}.${n}`] = value;
   }
   return true;
-}
-
-// a -Xmx size: bytes, or k, m or g
-function heapSize(s: string): number {
-  const unit = { k: 2 ** 10, m: 2 ** 20, g: 2 ** 30 }[s.slice(-1).toLowerCase()];
-  return unit ? Number(s.slice(0, -1)) * unit : Number(s);
 }
 
 // the java-web command, which dist/cli.js runs
