@@ -6,19 +6,30 @@ import { JThread, PendingThrow } from "../thread.ts";
 import { u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
+// slicing-by-8: table k holds the CRC of a byte followed by k zero bytes
 const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
+  const t = new Int32Array(8 * 256);
   for (let n = 0; n < 256; n++) {
     let c = n;
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     t[n] = c;
   }
+  for (let n = 0; n < 256; n++) {
+    let c = t[n];
+    for (let k = 1; k < 8; k++) t[k * 256 + n] = c = t[c & 0xff] ^ (c >>> 8);
+  }
   return t;
 })();
 
 export function crc32(crc: number, b: Uint8Array): number {
-  let c = ~crc;
-  for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xff] ^ (c >>> 8);
+  const T = CRC_TABLE, n = b.length;
+  let c = ~crc, i = 0;
+  for (; i + 8 <= n; i += 8) {
+    const x = c ^ (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24));
+    c = T[1792 + (x & 0xff)] ^ T[1536 + ((x >>> 8) & 0xff)] ^ T[1280 + ((x >>> 16) & 0xff)] ^ T[1024 + (x >>> 24)] ^
+      T[768 + b[i + 4]] ^ T[512 + b[i + 5]] ^ T[256 + b[i + 6]] ^ T[b[i + 7]];
+  }
+  for (; i < n; i++) c = T[(c ^ b[i]) & 0xff] ^ (c >>> 8);
   return ~c;
 }
 
@@ -229,7 +240,7 @@ export const natives: Natives = {
   [`${D}reset(J)V`]: (t, [addr]) => deflater(t, addr).reset(),
   [`${D}end(J)V`]: (t, [addr]) => void streams(t).delete(addr),
 
-  "java/util/zip/CRC32.update(II)I": (_t, [crc, b]) => crc32(crc, Uint8Array.of(b)),
+  "java/util/zip/CRC32.update(II)I": (_t, [crc, b]) => ~(CRC_TABLE[(~crc ^ b) & 0xff] ^ (~crc >>> 8)),
   "java/util/zip/CRC32.updateBytes0(I[BII)I": (_t, [crc, b, off, len]) => crc32(crc, u8(b as JArray, off, len)),
   "java/util/zip/CRC32.updateByteBuffer0(IJII)I": (t, [crc, addr, off, len]) => crc32(crc, mem(t, addr + BigInt(off), len)),
   "java/util/zip/Adler32.update(II)I": (_t, [a, b]) => adler32(a, Uint8Array.of(b)),
