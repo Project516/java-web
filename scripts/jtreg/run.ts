@@ -431,7 +431,7 @@ function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<
     const start = Date.now();
     const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let text = "";
-    const keep = (d: Buffer) => { text = (text + d.toString()).slice(-4000); };
+    const keep = (d: Buffer) => { text = (text + d.toString()).slice(-65536); };
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
     let timedOut = false;

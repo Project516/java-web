@@ -19,7 +19,8 @@ const drained = (output: Writable) => output.writableNeedDrain
 // execvp as the JDK's launcher does it: the parent's PATH, ":/bin:/usr/bin" when it has none,
 // and EACCES in place of ENOENT when a match was not executable.
 function findProgram(command: string, cwd: string, parentPath: string | undefined): string | NodeJS.ErrnoException {
-  if (command === "" || command.includes("/")) return command;
+  if (command === "") return Object.assign(new Error("ENOENT"), { code: "ENOENT", errno: -2 });
+  if (command.includes("/")) return command;
   let denied = false;
   for (const dir of (parentPath ?? ":/bin:/usr/bin").split(":")) {
     const candidate = dir ? `${dir}/${command}` : `./${command}`;
@@ -192,8 +193,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         args = [entry, "--java-child", ...(packaged ? [] : ["--jdk", jdk]), ...args];
       }
       const env = envBlock === null ? t.vm.opts.env : Object.fromEntries(block(envBlock).map((s) => {
-        const i = s.indexOf("=");
-        return [s.slice(0, i), s.slice(i + 1)];
+        const i = s.indexOf("=", 1);
+        return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
       }));
       const descriptors = (fds as JArray).a as Int32Array;
       const opened: number[] = [];
