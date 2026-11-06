@@ -599,7 +599,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const fname = `${m.cls.name}_${m.name}`.replace(/[^A-Za-z0-9_$]/g, "_");
   const out: string[] = [];
   // direct calls pass arguments as parameters and a frame without arrays
-  out.push(`return function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
+  out.push(`return (function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
   out.push(`let pc=f.pc,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
   out.push(`if(L===null){${params.map((p, i) => `${L(i)}=${p};`).join("")}}else{${Array.from({ length: nl }, (_, i) => `${L(i)}=L[${i}];`).join("")}${Array.from({ length: ns }, (_, i) => `${S(i)}=S[${i}];`).join("")}}`);
   out.push(`X:{for(;;){try{switch(pc){`);
@@ -616,7 +616,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   out.push(`f.pc=x>>>13;xs=x>>>3&1023;${spillLocals()}switch(xs){${stack}}f.sp=xs;`);
   out.push(`switch(x&7){case ${EXIT_FALLBACK}:return rt.fallback(t,f);case ${EXIT_INTERPRET}:return rt.viaInterpreter(t,f);` +
     `case ${EXIT_RETHROW}:t.pushNative(rt.rethrow(xe.obj),null,"V",false);return 1;` +
-    `case ${EXIT_ERROR}:H.handleError(t,xe);return 1;}return 1;}`);
+    `case ${EXIT_ERROR}:H.handleError(t,xe);return 1;}return 1;})`);
   return { src: out.join("\n"), consts };
 }
 
