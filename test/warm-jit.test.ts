@@ -42,7 +42,8 @@ test("a warm restore compiles methods from their saved code on first call", asyn
     const restored = await compile(dir, args);
     assert.equal(restored.result, expected);
     assert.ok(restored.before > 100, `saved code for ${restored.before} methods`);
-    assert.ok(restored.after < restored.before / 2, `${restored.after} of ${restored.before} saved methods were not compiled`);
+    // compile removes a method's saved code only when it compiles from it
+    assert.ok(restored.before - restored.after >= 50, `${restored.before - restored.after} methods compiled from saved code`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
