@@ -18,7 +18,7 @@ const FD = "java/io/FileDescriptor";
 const IOS_EOF = -1, IOS_UNAVAILABLE = -2, IOS_INTERRUPTED = -3;
 const EEXIST = 17, EBADF = 9, EPROTO = 71, ENOTDIR = 20, EFAULT = 14, ENAMETOOLONG = 36;
 
-type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number }>; paths: Map<string, number>; nextWd: number; overflowed: boolean; remove: () => void };
+type Inotify = { sock: Sock; watches: Map<number, { path: string; mask: number; stop: () => void }>; paths: Map<string, number>; nextWd: number; overflowed: boolean; remove: () => void };
 const IN_MODIFY = 0x2, IN_ATTRIB = 0x4, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80;
 const IN_CREATE = 0x100, IN_DELETE = 0x200, IN_Q_OVERFLOW = 0x4000;
 const IN_IGNORED = 0x8000;
@@ -47,6 +47,7 @@ function initInotify(t: JThread): number {
         view.setInt32(0, wd, true);
         view.setUint32(4, IN_IGNORED, true);
         sock.push(bytes);
+        watch.stop();
         state.watches.delete(wd);
         state.paths.delete(path);
         continue;
@@ -78,13 +79,18 @@ function initInotify(t: JThread): number {
   });
   const fd = register(t, sock);
   all.set(fd, state);
-  t.vm.exited.then(() => state.remove());
+  t.vm.exited.then(() => {
+    for (const watch of state.watches.values()) watch.stop();
+    state.remove();
+  });
   return fd;
 }
 
 // Stops an inotify descriptor's watches before the descriptor closes.
 export function closeInotify(t: JThread, fd: number) {
-  inotify(t, fd)?.remove();
+  const state = inotify(t, fd);
+  if (state) for (const watch of state.watches.values()) watch.stop();
+  state?.remove();
   (t.vm.state.get("inotify") as Map<number, Inotify> | undefined)?.delete(fd);
 }
 
@@ -556,7 +562,8 @@ export const natives: Natives = {
       wd = state.nextWd++;
       state.paths.set(path, wd);
     }
-    state.watches.set(wd, { path, mask: mask & WATCH_EVENTS });
+    const stop = state.watches.get(wd)?.stop ?? t.vm.fs.watchDirectory(path);
+    state.watches.set(wd, { path, mask: mask & WATCH_EVENTS, stop });
     return wd;
   },
   "sun/nio/fs/LinuxWatchService.inotifyRmWatch(II)V": (t, [fd, wd]) => {
@@ -564,6 +571,7 @@ export const natives: Natives = {
     if (!state) throw unixError(EBADF);
     const watch = state.watches.get(wd);
     if (watch) {
+      watch.stop();
       state.watches.delete(wd);
       state.paths.delete(watch.path);
     }

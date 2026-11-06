@@ -21,6 +21,8 @@ export interface Stat {
   atimeNs?: bigint;
   // permission and special bits, when the backend can report them
   mode?: number;
+  // a socket, FIFO or device on the host, which cannot be opened here
+  special?: boolean;
   // a character device; it streams and is never read whole
   device?: boolean;
   // lstat of a symbolic link: the length of its target, which is also its size
@@ -79,6 +81,10 @@ export interface Backend {
   link?(existing: string, path: string): string | undefined;
   // the path with every link resolved, where the missing tail stays as written
   realpath?(path: string): string | null;
+  // reports changes others make to a directory's entries (name "" is the directory itself); returns what stops it
+  watch?(path: string, onEvent: (name: string, event: "create" | "modify" | "delete") => void): (() => void) | null;
+  // changes whenever the entry's content or times do, or is "" when it is missing
+  signature?(path: string): string;
 }
 
 export interface WarmTrace {
@@ -232,6 +238,50 @@ export class VFS {
   private changedNormalized(path: string, event: "create" | "modify" | "delete") {
     for (const watcher of this.watchers) watcher(path, event);
     this.warmChanged?.add(path);
+    const watch = this.hostWatches.get(parentOf(path));
+    if (watch) watch.own.set(path.slice(path.lastIndexOf("/") + 1), this.signature(path));
+  }
+
+  // Host directories being watched: the entries as the VM last left them, so
+  // that only changes others make reach watchers a second time.
+  private hostWatches = new Map<string, { stop: () => void; refs: number; own: Map<string, string> }>();
+
+  private signature(path: string): string {
+    const r = this.resolve(path);
+    return (r && r[0].signature?.(r[1])) ?? "";
+  }
+
+  // Starts reporting what others do to a directory on a host backend, as
+  // inotify does; the VM's own changes already reach watchers. Returns what stops it.
+  watchDirectory(path: string): () => void {
+    const dir = normalize(path);
+    let watch = this.hostWatches.get(dir);
+    if (!watch) {
+      const r = this.resolve(dir);
+      const stop = r?.[0].watch?.(r[1], (name, event) => this.hostChanged(dir, name, event));
+      if (!stop) return () => {};
+      watch = { stop, refs: 0, own: new Map() };
+      this.hostWatches.set(dir, watch);
+    }
+    const w = watch;
+    w.refs++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      if (--w.refs === 0) {
+        w.stop();
+        if (this.hostWatches.get(dir) === w) this.hostWatches.delete(dir);
+      }
+    };
+  }
+
+  private hostChanged(dir: string, name: string, event: "create" | "modify" | "delete") {
+    const watch = this.hostWatches.get(dir);
+    if (!watch) return;
+    const path = name === "" ? dir : (dir === "/" ? "" : dir) + "/" + name;
+    if (name !== "" && watch.own.get(name) === this.signature(path)) return;
+    for (const watcher of this.watchers) watcher(path, event);
   }
 
   resolvePath(path: string): string {

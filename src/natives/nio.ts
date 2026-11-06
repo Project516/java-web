@@ -10,12 +10,12 @@ import { closeFd, DirectoryFile, newFd, fileInode, fileOf, flush, flushOrThrow, 
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
-export const EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, ENOMEM = 12, EACCES = 13,
+export const EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, ENXIO = 6, EBADF = 9, ENOMEM = 12, EACCES = 13,
   EEXIST = 17, EXDEV = 18, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ENOSPC = 28, EROFS = 30,
   ENOTEMPTY = 39, ENOSYS = 38, ENAMETOOLONG = 36, ELOOP = 40, ENOTSUP = 95, ESTALE = 116, EDQUOT = 122;
 
 const MESSAGES: Record<number, string> = {
-  [EPERM]: "Operation not permitted", [EINTR]: "Interrupted system call", [EIO]: "Input/output error",
+  [EPERM]: "Operation not permitted", [ENXIO]: "No such device or address", [EINTR]: "Interrupted system call", [EIO]: "Input/output error",
   [ENOMEM]: "Cannot allocate memory", [ENOSPC]: "No space left on device",
   [ELOOP]: "Too many levels of symbolic links", [ENOTSUP]: "Operation not supported", [ESTALE]: "Stale file handle",
   [ENAMETOOLONG]: "File name too long", [EDQUOT]: "Disk quota exceeded",
@@ -107,6 +107,7 @@ function openAbs(t: JThread, abs: string, flags: number, mode: number): number {
   if (flags & O_NOFOLLOW && !(flags & O_CREAT && flags & O_EXCL) && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
   const st = t.vm.fs.stat(abs);
   if ((flags & O_CREAT) && (flags & O_EXCL) && (st || t.vm.fs.lstat(abs))) unixError(EEXIST);
+  if (st?.special) unixError(ENXIO);
   if (!st && !(flags & O_CREAT)) unixError(ENOENT);
   if (flags & O_DIRECTORY && st && !st.dir) unixError(ENOTDIR);
   const write = (flags & O_ACCMODE) !== 0;

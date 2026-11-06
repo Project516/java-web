@@ -85,6 +85,7 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.statSync(this.host(p));
       st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, atime: s.atimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
+      if (!s.isDirectory() && !s.isFile()) st.special = true;
     } catch {
       st = null;
     }
@@ -232,6 +233,34 @@ export class NodeBackend implements Backend {
     } catch {
       return null;
     }
+  }
+  watch(p: string, onEvent: (name: string, event: "create" | "modify" | "delete") => void) {
+    const host = this.host(p);
+    try {
+      const exists = (file: string) => {
+        try {
+          return !!fs.lstatSync(file, { throwIfNoEntry: false });
+        } catch {
+          return false;
+        }
+      };
+      const watcher = fs.watch(host, { persistent: false }, (type, name) => {
+        if (name === null) return;
+        const child = exists(path.join(host, name));
+        // the directory's own events carry its name
+        if (name === path.basename(host) && !child) return exists(host) ? undefined : onEvent("", "delete");
+        if (type === "change") return onEvent(name, "modify");
+        onEvent(name, child ? "create" : "delete");
+      });
+      watcher.on("error", () => {});
+      return () => watcher.close();
+    } catch {
+      return null;
+    }
+  }
+  signature(p: string) {
+    const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
+    return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
   }
   setMtime(p: string, ms: number, noFollow = false, atimeMs?: number) {
     try {
