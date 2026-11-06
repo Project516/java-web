@@ -765,7 +765,7 @@ export const natives: Natives = {
   [`${UFS}.createFileExclusively0(Ljava/lang/String;)Z`]: (t, [, p]) => {
     if (t.vm.jsString(p) === "") throw new PendingThrow("java/io/IOException", "No such file or directory");
     const abs = resolvePath(t, t.vm.jsString(p));
-    if (t.vm.fs.stat(abs)) return 0;
+    if (t.vm.fs.lstat(abs)) return 0;
     if (t.vm.fs.denied(abs)) throw new PendingThrow("java/io/IOException", "Permission denied");
     if (!t.vm.fs.write(abs, new Uint8Array(0))) throw new PendingThrow("java/io/IOException", "No such file or directory");
     return 1;
