@@ -18,6 +18,15 @@ java-web targets headless Java: console apps, libraries and javac.
   java-web VM on the same image. A child cannot use a directory that exists only
   in the VM, such as `/jdk`, as its working directory. `ProcessHandle` reads
   other processes from Linux's `/proc`; elsewhere it sees only its own children.
+- Symbolic and hard links work on file systems that come from the host, as
+  under Node. Elsewhere, such as the browser's in-memory files, creating a link
+  fails with "Function not implemented". Files in the VM have the host's inode
+  numbers and link counts, and the modes `open` and `mkdir` ask for, less the
+  process's umask.
+- `-XX:OnOutOfMemoryError` runs no command, and `StackWalker`
+  has no live locals or operands. `ThreadMXBean.getThreadInfo` and
+  `dumpThreads` are not implemented, and a virtual thread that yields while it
+  holds a monitor stays pinned to its carrier.
 - `WatchService` reports files the program itself, or another thread in the
   same VM, creates, changes or deletes. It does not see changes made outside
   the VM, including by child processes the program starts.
