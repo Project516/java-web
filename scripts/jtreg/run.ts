@@ -119,7 +119,7 @@ function requiresHolds(expr: string): boolean {
     switch (op) {
       case "==": return a === b;
       case "!=": return a !== b;
-      case "~=": return a !== null && new RegExp(b ?? "").test(a);
+      case "~=": return a !== null && new RegExp(`^(?:${b ?? ""})$`).test(a);
     }
     const x = size(a ?? ""), y = size(b ?? "");
     return op === ">=" ? x >= y : op === "<=" ? x <= y : op === ">" ? x > y : x < y;
