@@ -411,7 +411,7 @@ function writeBack(t: JThread, m: Mapping, base: number, addr: number, len: numb
   if (n <= 0) return true;
   const save = m.f.pos;
   m.f.pos = at;
-  m.f.write(t.vm.mem.u8.slice(addr, addr + n), true);
+  m.f.write(t.vm.mem.u8.subarray(addr, addr + n), true);
   m.f.pos = save;
   return flush(t, m.f);
 }
@@ -507,7 +507,13 @@ Object.assign(natives, {
   // writes only then.
   [`${UFD}map0(Ljava/io/FileDescriptor;IJJZ)J`]: (t: JThread, [fd, prot, pos, len]: any[]) => {
     const f = chanFile(t, fd);
-    const addr = t.vm.mem.malloc(Number(len), 4096);
+    let addr: number;
+    try { addr = t.vm.mem.malloc(Number(len), 4096); }
+    catch (e) {
+      // FileChannelImpl retries once, then wraps this in IOException("Map failed")
+      if (e instanceof PendingThrow) throw new PendingThrow("java/lang/OutOfMemoryError", "Map failed");
+      throw e;
+    }
     const save = f.pos;
     f.pos = Number(pos);
     const n = Math.min(f.size - Number(pos), Number(len));

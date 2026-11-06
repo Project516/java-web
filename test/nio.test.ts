@@ -9,6 +9,8 @@ import { natives } from "../src/natives/nio.ts";
 import { PendingThrow } from "../src/thread.ts";
 import type { JThread } from "../src/thread.ts";
 import { NodeBackend } from "../src/node.ts";
+import { NativeMemory } from "../src/memory.ts";
+import { OpenFile } from "../src/natives/io.ts";
 
 function thread(backend: Backend): JThread {
   const fs = new VFS();
@@ -121,4 +123,19 @@ test("a large file on a read-only host mount uses a handle", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("map0 of a region that does not fit throws OutOfMemoryError for FileChannelImpl to wrap", () => {
+  const backend = memory();
+  const t = thread(backend);
+  const vm = t.vm as any;
+  vm.mem = new NativeMemory();
+  vm.state.set("fds", { files: new Map([[3, new OpenFile("/file", new Uint8Array(1), false)]]) });
+  vm.getField = () => 3;
+  assert.throws(() => natives["sun/nio/ch/UnixFileDispatcherImpl.map0(Ljava/io/FileDescriptor;IJJZ)J"](t, [{}, 0, 0n, 600n << 20n]), (e) => {
+    assert.ok(e instanceof PendingThrow);
+    assert.equal(e.cls, "java/lang/OutOfMemoryError");
+    assert.equal(e.msg, "Map failed");
+    return true;
+  });
 });
