@@ -26,7 +26,7 @@ function findProgram(command: string, cwd: string, parentPath: string | undefine
     const candidate = dir ? `${dir}/${command}` : `./${command}`;
     const full = path.resolve(cwd, candidate);
     try {
-      if (fs.statSync(full).isDirectory()) denied = true;
+      if (!fs.statSync(full).isFile()) denied = true;
       else {
         fs.accessSync(full, fs.constants.X_OK);
         return candidate;
