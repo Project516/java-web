@@ -736,7 +736,10 @@ export const natives: Natives = {
     f.setLength(Number(n));
   },
 
-  [`${UFS}.canonicalize0(Ljava/lang/String;)Ljava/lang/String;`]: (t, [, p]) => t.vm.str(resolvePath(t, t.vm.jsString(p))),
+  [`${UFS}.canonicalize0(Ljava/lang/String;)Ljava/lang/String;`]: (t, [, p]) => {
+    const abs = resolvePath(t, t.vm.jsString(p));
+    return t.vm.str(t.vm.fs.realpath(abs) ?? abs);
+  },
   [`${UFS}.getBooleanAttributes0(Ljava/io/File;)I`]: (t, [, f]) => attrs(t, f),
   [`${UFS}.checkAccess0(Ljava/io/File;I)Z`]: (t, [, f, access]) => {
     const abs = resolvePath(t, pathOf(t, f));

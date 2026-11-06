@@ -88,6 +88,50 @@ export class NodeBackend implements Backend {
     if (!this.writable) this.stats.set(p, st);
     return st;
   }
+  lstat(p: string): Stat | null {
+    try {
+      const s = fs.lstatSync(this.host(p));
+      if (!s.isSymbolicLink()) return null;
+      return { dir: false, size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, link: s.size };
+    } catch {
+      return null;
+    }
+  }
+  readlink(p: string) {
+    try {
+      return { target: fs.readlinkSync(this.host(p)) };
+    } catch (e) {
+      return { code: (e as NodeJS.ErrnoException).code ?? "EIO" };
+    }
+  }
+  symlink(target: string, p: string) {
+    try {
+      fs.symlinkSync(target, this.host(p));
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code ?? "EIO";
+    }
+  }
+  link(existing: string, p: string) {
+    try {
+      fs.linkSync(this.host(existing), this.host(p));
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code ?? "EIO";
+    }
+  }
+  realpath(p: string) {
+    const host = this.host(p);
+    const rest: string[] = [];
+    for (let dir = host; ; dir = path.dirname(dir)) {
+      try {
+        const real = fs.realpathSync.native(dir);
+        const full = path.join(real, ...rest);
+        return this.root === "/" ? full : full.startsWith(this.root) ? full.slice(this.root.length) || "/" : null;
+      } catch (e) {
+        if (dir === path.dirname(dir) || (e as NodeJS.ErrnoException).code === "EACCES") return null;
+        rest.unshift(path.basename(dir));
+      }
+    }
+  }
   // Only regular files: readFileSync on a device or pipe can grow without end.
   read(p: string) {
     try {
@@ -205,7 +249,7 @@ export class NodeBackend implements Backend {
   // like unlink or rmdir: a directory must be empty
   remove(p: string) {
     try {
-      if (fs.statSync(this.host(p)).isDirectory()) fs.rmdirSync(this.host(p));
+      if (fs.lstatSync(this.host(p)).isDirectory()) fs.rmdirSync(this.host(p));
       else fs.rmSync(this.host(p));
       return true;
     } catch {

@@ -27,13 +27,13 @@ const MESSAGES: Record<number, string> = {
 
 // errno numbers of the host errors Node reports by name
 const HOST_ERRNO: Record<string, number> = {
-  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, ENOTDIR, EINVAL, ENOSPC, EROFS, ELOOP,
+  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, EEXIST, EXDEV, ENOTDIR, EISDIR, EINVAL, ENOSPC, EROFS, ELOOP, ENOTEMPTY, ENOSYS,
   ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE, ENAMETOOLONG, EDQUOT,
 };
 
 // Linux open(2) flags
 const O_ACCMODE = 3, O_CREAT = 0o100, O_EXCL = 0o200, O_TRUNC = 0o1000, O_APPEND = 0o2000;
-const S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFCHR = 0o020000;
+const S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFCHR = 0o020000, S_IFLNK = 0o120000;
 
 export function unixError(errno: number): never {
   throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [errno] });
@@ -58,7 +58,7 @@ function path(t: JThread, addr: bigint) {
 }
 
 const SUPPORTS_OPENAT = 2;
-const AT_FDCWD = -100, AT_REMOVEDIR = 0x200;
+const AT_SYMLINK_NOFOLLOW = 0x100, AT_FDCWD = -100, AT_REMOVEDIR = 0x200;
 
 // path(2) relative to the directory behind dfd, as the *at system calls resolve it
 function pathAt(t: JThread, dfd: number, p: bigint): string {
@@ -70,16 +70,16 @@ function pathAt(t: JThread, dfd: number, p: bigint): string {
 }
 
 function removeDir(t: JThread, abs: string) {
-  const st = t.vm.fs.stat(abs);
+  const st = t.vm.fs.lstat(abs);
   if (!st) unixError(ENOENT);
   if (!st.dir) unixError(ENOTDIR);
   if (!removePath(t, abs)) unixError(ENOTEMPTY);
 }
 
 function unlinkAbs(t: JThread, abs: string) {
-  const st = t.vm.fs.stat(abs);
+  const st = t.vm.fs.lstat(abs);
   if (!st) unixError(ENOENT);
-  if (st.dir) unixError(EISDIR);
+  if (st.dir && st.link === undefined) unixError(EISDIR);
   if (!removePath(t, abs)) unixError(EROFS);
 }
 
@@ -137,9 +137,9 @@ function applyCreateMode(t: JThread, abs: string, mode: number) {
   t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & ~processUmask! & 0o7777));
 }
 
-function fillAttrs(t: JThread, attrs: JObject, p: string): number {
+function fillAttrs(t: JThread, attrs: JObject, p: string, follow = true): number {
   syncPath(t, p);
-  const st = t.vm.fs.stat(p);
+  const st = follow ? t.vm.fs.stat(p) : t.vm.fs.lstat(p);
   if (!st) return ENOENT;
   fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p));
   return 0;
@@ -147,7 +147,7 @@ function fillAttrs(t: JThread, attrs: JObject, p: string): number {
 
 function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: number, size = st.size, nlink = 1) {
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
-  const mode = st.device ? S_IFCHR | 0o666 : (st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
+  const mode = st.device ? S_IFCHR | 0o666 : (st.link !== undefined ? S_IFLNK : st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
   let sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
   if (st.mtimeNs !== undefined) {
     sec = st.mtimeNs / 1_000_000_000n;
@@ -191,7 +191,7 @@ export const natives: Natives = {
   [`${N}strerror(I)[B`]: (t, [errno]) => bytes(t, MESSAGES[errno] ?? `errno ${errno}`),
   [`${N}stat0(JLsun/nio/fs/UnixFileAttributes;)I`]: (t, [p, attrs]) => fillAttrs(t, attrs, path(t, p)),
   [`${N}lstat0(JLsun/nio/fs/UnixFileAttributes;)V`]: (t, [p, attrs]) => {
-    const err = fillAttrs(t, attrs, path(t, p));
+    const err = fillAttrs(t, attrs, path(t, p), false);
     if (err) unixError(err);
   },
   [`${N}fstat0(ILsun/nio/fs/UnixFileAttributes;)V`]: (t, [fd, attrs]) => {
@@ -217,8 +217,8 @@ export const natives: Natives = {
     else unlinkAbs(t, abs);
   },
   [`${N}renameat0(IJIJ)V`]: (t, [sfd, a, dfd, b]) => renameAbs(t, pathAt(t, sfd, a), pathAt(t, dfd, b)),
-  [`${N}fstatat0(IJILsun/nio/fs/UnixFileAttributes;)V`]: (t, [dfd, p, , attrs]) => {
-    const err = fillAttrs(t, attrs, pathAt(t, dfd, p));
+  [`${N}fstatat0(IJILsun/nio/fs/UnixFileAttributes;)V`]: (t, [dfd, p, flag, attrs]) => {
+    const err = fillAttrs(t, attrs, pathAt(t, dfd, p), !(flag & AT_SYMLINK_NOFOLLOW));
     if (err) unixError(err);
   },
   [`${N}fchmodat0(IJII)V`]: (t, [dfd, p, mode]) => chmod(t, pathAt(t, dfd, p), mode),
@@ -255,11 +255,22 @@ export const natives: Natives = {
   [`${N}realpath0(J)[B`]: (t, [p]) => {
     const abs = path(t, p);
     if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    return bytes(t, abs);
+    return bytes(t, t.vm.fs.realpath(abs) ?? abs);
   },
-  [`${N}readlink0(J)[B`]: () => unixError(EINVAL),
-  [`${N}symlink0(JJ)V`]: () => unixError(ENOSYS),
-  [`${N}link0(JJ)V`]: () => unixError(ENOSYS),
+  [`${N}readlink0(J)[B`]: (t, [p]) => {
+    const r = t.vm.fs.readlink(path(t, p));
+    if ("code" in r) unixError(HOST_ERRNO[r.code] ?? EIO);
+    return bytes(t, r.target);
+  },
+  [`${N}symlink0(JJ)V`]: (t, [target, p]) => {
+    const code = t.vm.fs.symlink(cstring(t, target), path(t, p));
+    if (code) unixError(HOST_ERRNO[code] ?? EIO);
+  },
+  [`${N}link0(JJ)V`]: (t, [existing, p]) => {
+    syncPath(t, path(t, existing));
+    const code = t.vm.fs.link(path(t, existing), path(t, p));
+    if (code) unixError(HOST_ERRNO[code] ?? EIO);
+  },
   [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
     chmod(t, path(t, p), mode);
   },
