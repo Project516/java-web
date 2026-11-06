@@ -58,6 +58,8 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const count = mon.count;
   vm.releaseMonitor(mon);
   setThreadStatus(t, ms > 0n ? STATUS_TIMED_WAITING : STATUS_WAITING);
+  t.waitingOn = self;
+  t.waitedCount++;
   let entry: { t: JThread; wake: () => void; count: number } | null = null;
   yield t.block(interruptibleWait(t, ms > 0n ? Number(ms) : null, (wake) => {
     entry = { t, wake, count };
@@ -69,6 +71,7 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   while (mon.owner !== null) yield t.block(new Promise<void>((r) => mon.entry.push(r)));
   mon.owner = t;
   mon.count = count;
+  t.waitingOn = null;
   setThreadStatus(t, STATUS_RUNNABLE);
   checkInterrupt(t);
 }
@@ -242,6 +245,7 @@ export const natives: Natives = {
   "java/lang/Thread.sleepNanos0(J)V": function* (t, [nanos]): NativeGen {
     checkInterrupt(t);
     setThreadStatus(t, STATUS_SLEEPING);
+    t.waitedCount++;
     // timers can fire a little early by the clock nanoTime reads; sleep at least as asked
     const end = performance.now() + Number(nanos) / 1e6;
     try {
