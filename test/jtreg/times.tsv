@@ -640,6 +640,7 @@
 8380	java/lang/Thread/BuilderTest.java
 8373	java/util/Scanner/EncodingTest.java
 8372	java/beans/PropertyEditor/TestByteClassNull.java
+8353	java/util/zip/CopyZipFile.java
 8352	java/security/cert/CertPathBuilder/selfIssued/DisableRevocation.java
 8349	java/nio/channels/Selector/Alias.java
 8341	java/net/Socket/DeadlockTest.java

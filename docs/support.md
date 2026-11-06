@@ -14,9 +14,10 @@ java-web targets headless Java: console apps, libraries and javac.
   shared with direct buffers and other native allocations. A mapping that does
   not fit fails with `IOException: Map failed` and an `OutOfMemoryError` cause.
   Read-write changes reach the file on force or unmap.
-- `Deflater` writes valid DEFLATE streams using stored blocks. Compression
-  levels and strategies currently do not reduce output size; compressed bytes
-  and compression ratios differ from HotSpot's zlib output.
+- `Deflater` is a DEFLATE compressor in TypeScript (`src/deflate.ts`) with
+  zlib's levels, strategies, flush modes, dictionaries and `setLevel` and
+  `setStrategy` changes. Compressed sizes are close to zlib's at each level, but
+  the bytes are not the same as HotSpot's zlib output.
 - Child processes (`ProcessBuilder`, `Runtime.exec`, `ProcessHandle`) work
   under Node and run the host's programs. Starting `java` starts another
   java-web VM on the same image. A child cannot use a directory that exists only

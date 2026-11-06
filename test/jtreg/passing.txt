@@ -3368,6 +3368,7 @@ java/util/zip/Bounds.java
 java/util/zip/CloseInflaterDeflaterTest.java
 java/util/zip/ConstructDeflaterInput.java
 java/util/zip/ConstructInflaterOutput.java
+java/util/zip/CopyZipFile.java
 java/util/zip/DataDescriptor.java
 java/util/zip/DataDescriptorIgnoreCrcAndSizeFields.java
 java/util/zip/DataDescriptorSignatureMissing.java
