@@ -24,9 +24,10 @@ java-web targets headless Java: console apps, libraries and javac.
   other processes from Linux's `/proc`; elsewhere it sees only its own children.
 - Symbolic and hard links work on file systems that come from the host, as
   under Node. Elsewhere, such as the browser's in-memory files, creating a link
-  fails with "Function not implemented". Files in the VM have the host's inode
-  numbers and link counts, and the modes `open` and `mkdir` ask for, less the
-  process's umask.
+  fails with "Function not implemented". Files on host file systems have the
+  host's inode numbers and link counts, and the modes `open` and `mkdir` ask
+  for, less the process's umask. In-memory files get synthetic inode numbers, a
+  link count of 1 and default modes.
 - `-XX:OnOutOfMemoryError` runs no command, and `StackWalker`
   has no live locals or operands. `ThreadMXBean.getThreadInfo` and
   `dumpThreads` are not implemented, and a virtual thread that yields while it
