@@ -84,7 +84,7 @@ function unlinkAbs(t: JThread, abs: string) {
 }
 
 function renameAbs(t: JThread, from: string, to: string) {
-  if (!t.vm.fs.stat(from)) unixError(ENOENT);
+  if (!t.vm.fs.lstat(from)) unixError(ENOENT);
   if (!renamePath(t, from, to)) unixError(EXDEV);
 }
 
@@ -273,6 +273,9 @@ export const natives: Natives = {
     syncPath(t, path(t, existing));
     const code = t.vm.fs.link(path(t, existing), path(t, p));
     if (code) unixError(HOST_ERRNO[code] ?? EIO);
+    // both names are one file
+    const ino = fileInode(t, path(t, existing));
+    t.vm.state.get("inodes").set(path(t, p), ino);
   },
   [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
     chmod(t, path(t, p), mode);
