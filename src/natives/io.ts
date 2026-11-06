@@ -323,7 +323,8 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     return tab.next++;
   }
   if (write && fs.denied(abs)) notFound(path, "Permission denied");
-  if (st && !shared && !truncate && st.size >= STREAM_MIN && fs.canOpenFile(abs, write)) {
+  // a file too big to hold, or one that may be written but not read, goes through a host handle
+  if (st && !shared && !truncate && (st.size >= STREAM_MIN || (write && !fs.access(abs, 4))) && fs.canOpenFile(abs, write)) {
     const host = openHost(fs, abs, write, readable);
     if (host) {
       closeHostsOnExit(t.vm);

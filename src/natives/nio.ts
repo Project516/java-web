@@ -32,7 +32,7 @@ const HOST_ERRNO: Record<string, number> = {
 };
 
 // Linux open(2) flags
-const O_ACCMODE = 3, O_CREAT = 0o100, O_EXCL = 0o200, O_TRUNC = 0o1000, O_APPEND = 0o2000;
+const O_ACCMODE = 3, O_DIRECTORY = 0o200000, O_NOFOLLOW = 0o400000, O_CREAT = 0o100, O_EXCL = 0o200, O_TRUNC = 0o1000, O_APPEND = 0o2000;
 const S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFCHR = 0o020000, S_IFLNK = 0o120000;
 
 export function unixError(errno: number): never {
@@ -92,9 +92,12 @@ function openAbs(t: JThread, abs: string, flags: number, mode: number): number {
   const st = t.vm.fs.stat(abs);
   if ((flags & O_CREAT) && (flags & O_EXCL) && st) unixError(EEXIST);
   if (!st && !(flags & O_CREAT)) unixError(ENOENT);
+  if (flags & O_NOFOLLOW && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
+  if (flags & O_DIRECTORY && st && !st.dir) unixError(ENOTDIR);
   const write = (flags & O_ACCMODE) !== 0;
   if (st?.dir && write) unixError(EISDIR);
   if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
+  if (st && !st.dir && (flags & O_ACCMODE) !== 1 && !t.vm.fs.access(abs, 4)) unixError(EACCES);
   try {
     const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1, true);
     fileOf(t, fd).ino = fileInode(t, abs);
