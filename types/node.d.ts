@@ -26,6 +26,8 @@ export interface NodeRunOptions {
   onOutOfMemoryError?: string[];
   // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
   vmOutputToStderr?: boolean;
+  // -XX:MaxDirectMemorySize in bytes
+  maxDirectMemory?: number;
   // what InetAddress.getLocalHost() reports instead of the host's name
   hostName?: string;
   // what System.getenv() returns instead of the host's environment

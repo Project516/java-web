@@ -297,6 +297,8 @@ export interface NodeRunOptions {
   onOutOfMemoryError?: string[];
   // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
   vmOutputToStderr?: boolean;
+  // -XX:MaxDirectMemorySize in bytes
+  maxDirectMemory?: number;
   // what InetAddress.getLocalHost() reports instead of the host's name
   hostName?: string;
   // what System.getenv() returns instead of the host's environment
@@ -501,7 +503,11 @@ function nodeVm(o: NodeRunOptions): JVM {
     javaHome: "/jdk",
     localeData: o.localeData,
     classpath,
-    props: { "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props },
+    props: {
+      "java.io.tmpdir": os.tmpdir(), "user.home": os.homedir(), "user.name": os.userInfo().username, ...o.props,
+      // only the option sets it, as in HotSpot
+      "sun.nio.MaxDirectMemorySize": String(o.maxDirectMemory ?? -1),
+    },
     cwd: toVfs(process.cwd()),
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
@@ -652,6 +658,14 @@ export function main(argv: string[]) {
     else if (a === "-XX:+DisplayVMOutputToStderr") o.vmOutputToStderr = true;
     else if (a === "-XX:-DisplayVMOutputToStderr") o.vmOutputToStderr = false;
     else if (a.startsWith("-XX:OnOutOfMemoryError=")) (o.onOutOfMemoryError ??= []).push(a.slice(23));
+    else if (a.startsWith("-XX:MaxDirectMemorySize=")) {
+      const n = heapSize(a.slice(24));
+      if (!(n >= 0) || !Number.isInteger(n)) {
+        console.error(`Improperly specified VM option '${a.slice(4)}'\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);
+        process.exit(1);
+      }
+      o.maxDirectMemory = n;
+    }
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;

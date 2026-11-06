@@ -49,7 +49,7 @@ resolves to the exit code. Its options:
 - `natives`: Java `native` methods in JS, as in the browser ([browser.md](browser.md))
 - `assertions` (the flags, for example `["-ea"]`), `enablePreview`, `localeData`
 - `hostName` (what `InetAddress.getLocalHost()` reports), `maxRssMb`, `jdk`, `debug`
-- `onOutOfMemoryError` (`-XX:OnOutOfMemoryError` commands),
+- `maxDirectMemory` (`-XX:MaxDirectMemorySize`, in bytes), `onOutOfMemoryError` (`-XX:OnOutOfMemoryError` commands),
   `vmOutputToStderr` (`-XX:+DisplayVMOutputToStderr`)
 - `fetch`: sockets stay inside the VM, and `http:` requests go to this `fetch`, as in the browser
 

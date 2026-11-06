@@ -162,6 +162,7 @@
 24155	java/util/concurrent/atomic/LongAdderDemo.java
 24125	java/lang/invoke/VarHandles/VarHandleTestAccessString.java
 24120	java/net/httpclient/http2/Timeout.java
+23979	java/nio/Buffer/LimitDirectMemory.java
 23424	java/lang/invoke/BigArityTest.java
 23286	java/lang/RuntimeTests/loadLibrary/LoadLibraryTest.java
 23282	java/util/Collection/HotPotatoes.java

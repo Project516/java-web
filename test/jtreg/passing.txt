@@ -1941,6 +1941,7 @@ java/nio/Buffer/Chars.java
 java/nio/Buffer/Chew.java
 java/nio/Buffer/CopyDirectMemory.java
 java/nio/Buffer/GetChars.java
+java/nio/Buffer/LimitDirectMemory.java
 java/nio/Buffer/Order.java
 java/nio/Buffer/ReachabilityTest.java
 java/nio/Buffer/StringCharBufferSliceTest.java
