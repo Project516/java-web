@@ -31,16 +31,20 @@ public class SecureDirectories {
                     for (Path p : sub) names.add(p.getFileName().toString());
                     System.out.println("listed " + names);
                 }
-                try {
-                    secure.newDirectoryStream(Path.of("a"));
+                try (var notDir = secure.newDirectoryStream(Path.of("a"))) {
+                    System.out.println("opened a file as a directory");
                 } catch (NotDirectoryException e) {
                     System.out.println("not a directory");
                 }
-                secure.move(Path.of("a"), (SecureDirectoryStream<Path>) Files.newDirectoryStream(other), Path.of("b"));
+                try (DirectoryStream<Path> target = Files.newDirectoryStream(other)) {
+                    secure.move(Path.of("a"), (SecureDirectoryStream<Path>) target, Path.of("b"));
+                }
                 System.out.println("moved " + Files.exists(dir.resolve("a")) + " " + Files.exists(other.resolve("b")));
-                secure.deleteDirectory(Path.of("missing-dir"));
-            } catch (java.nio.file.NoSuchFileException e) {
-                System.out.println("no such file");
+                try {
+                    secure.deleteDirectory(Path.of("missing-dir"));
+                } catch (java.nio.file.NoSuchFileException e) {
+                    System.out.println("no such file");
+                }
             }
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(other)) {
                 var secure = (SecureDirectoryStream<Path>) stream;

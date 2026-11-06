@@ -29,7 +29,9 @@ public class SymbolicLinks {
             System.out.println("canonical missing " + new File(dir + "/toDir/new").getCanonicalPath().equals(sub + "/new"));
 
             Files.writeString(toDir.resolve("inner"), "x");
-            System.out.println("list through link " + Files.list(toDir).map(p -> p.getFileName().toString()).collect(Collectors.toList()));
+            try (var list = Files.list(toDir)) {
+                System.out.println("list through link " + list.map(p -> p.getFileName().toString()).collect(Collectors.toList()));
+            }
 
             try {
                 Files.createSymbolicLink(toFile, file);

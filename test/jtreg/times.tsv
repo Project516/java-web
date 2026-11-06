@@ -3507,7 +3507,6 @@
 1077	java/io/FileInputStream/LargeFileAvailable.java
 1074	java/nio/channels/Selector/SelectAfterRead.java
 1070	java/nio/file/Files/FileAttributes.java
-1055	java/nio/channels/FileChannel/AtomicAppend.java
 1038	java/nio/channels/FileChannel/LoopingTruncate.java
 1036	java/net/URL/Constructor.java
 1021	java/nio/file/Files/TemporaryFiles.java

@@ -135,14 +135,18 @@ test("an open host file keeps its inode when its path is deleted and recreated",
     writeFileSync(join(dir, "file"), "old");
     const fd = openFile(t, "/file", true, false, false);
     const f = fileOf(t, fd);
-    assert.ok(f.contents.pin);
-    const original = fs.stat("/file")!.ino;
-    assert.equal(removePath(t, "/file"), true);
-    const replacement = openFile(t, "/file", true, false, false);
-    assert.notEqual(fs.stat("/file")!.ino, original);
-    assert.equal(f.ino, original);
-    closeFd(t, replacement);
-    closeFd(t, fd);
+    let replacement = -1;
+    try {
+      assert.ok(f.contents.pin);
+      const original = fs.stat("/file")!.ino;
+      assert.equal(removePath(t, "/file"), true);
+      replacement = openFile(t, "/file", true, false, false);
+      assert.notEqual(fs.stat("/file")!.ino, original);
+      assert.equal(f.ino, original);
+    } finally {
+      if (replacement >= 0) closeFd(t, replacement);
+      closeFd(t, fd);
+    }
     assert.equal(f.contents.pin, undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
