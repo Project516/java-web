@@ -46,6 +46,19 @@ export function parseMethodDesc(desc: string): { params: string[]; ret: string }
   return { params, ret: desc.slice(i + 1) };
 }
 
+// parsed descriptors, shared by the methods that have them; slots exclude the receiver
+const shapes = new Map<string, { params: string[]; ret: string; slots: number }>();
+function methodShape(desc: string) {
+  let s = shapes.get(desc);
+  if (s === undefined) {
+    const { params, ret } = parseMethodDesc(desc);
+    let slots = 0;
+    for (const p of params) slots += isWide(p) ? 2 : 1;
+    shapes.set(desc, s = { params, ret, slots });
+  }
+  return s;
+}
+
 export function isWide(desc: string) {
   return desc === "J" || desc === "D";
 }
@@ -128,12 +141,10 @@ export class JMethod {
     this.isAbstract = (m.access & ACC_ABSTRACT) !== 0;
     this.isPrivate = (m.access & ACC_PRIVATE) !== 0;
     this.isSynchronized = (m.access & ACC_SYNCHRONIZED) !== 0;
-    const { params, ret } = parseMethodDesc(m.desc);
-    this.params = params;
-    this.ret = ret;
-    let slots = this.isStatic ? 0 : 1;
-    for (const p of params) slots += isWide(p) ? 2 : 1;
-    this.argSlots = slots;
+    const shape = methodShape(m.desc);
+    this.params = shape.params;
+    this.ret = shape.ret;
+    this.argSlots = shape.slots + (this.isStatic ? 0 : 1);
   }
   // flags as fields: these are read on every call
   readonly isStatic: boolean;
