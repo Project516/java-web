@@ -90,7 +90,7 @@ function renameAbs(t: JThread, from: string, to: string) {
 
 function openAbs(t: JThread, abs: string, flags: number, mode: number): number {
   const st = t.vm.fs.stat(abs);
-  if ((flags & O_CREAT) && (flags & O_EXCL) && st) unixError(EEXIST);
+  if ((flags & O_CREAT) && (flags & O_EXCL) && (st || t.vm.fs.lstat(abs))) unixError(EEXIST);
   if (!st && !(flags & O_CREAT)) unixError(ENOENT);
   if (flags & O_NOFOLLOW && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
   if (flags & O_DIRECTORY && st && !st.dir) unixError(ENOTDIR);
