@@ -168,11 +168,12 @@ export class Inflate {
       if (e !== UNDERFLOW) throw e;
       this.ip = ip; this.bitbuf = buf; this.bitcnt = cnt;
     }
-    if (this.stage === Stage.Done) {
-      // whole bytes still buffered belong to whatever follows the stream
-      this.ip -= this.bitcnt >> 3;
-      this.bitbuf = this.bitcnt = 0;
-    }
+    // give back whole buffered bytes, as zlib does, so a caller's remaining count stays exact
+    const back = Math.min(this.bitcnt >> 3, this.ip);
+    this.ip -= back;
+    this.bitcnt -= back << 3;
+    this.bitbuf &= (1 << this.bitcnt) - 1;
+    if (this.stage === Stage.Done) this.bitbuf = this.bitcnt = 0;
     this.finishCall();
     return [this.ip, this.op - off];
   }

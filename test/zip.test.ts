@@ -105,6 +105,25 @@ test("inflate stops at the end of the stream and leaves the bytes after it", () 
   assert.equal(read, packed.length);
 });
 
+test("inflate reads exactly the stream when the output is small", () => {
+  const data = sample(300, 14);
+  const packed = deflateRawSync(data);
+  const input = Buffer.concat([packed, Buffer.from([1, 2, 3, 4, 5])]);
+  for (const size of [1, 2, 3, 4, 5, 8]) {
+    const z = new Inflate(true);
+    const out = new Uint8Array(size);
+    let pos = 0, total = 0;
+    while (!z.finished) {
+      const [read, written] = z.run(input.subarray(pos), out, 0, size);
+      assert.ok(read > 0 || written > 0, `no progress at size ${size}`);
+      pos += read;
+      total += written;
+    }
+    assert.equal(total, data.length);
+    assert.equal(pos, packed.length, `size ${size}`);
+  }
+});
+
 test("inflate sees the end of the stream when the output fills on the last byte", () => {
   for (const wrap of [true, false]) {
     for (const size of [1, 10, 5000]) {
