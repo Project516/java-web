@@ -165,6 +165,8 @@ export function socketError(errno: number, msg?: string): PendingThrow {
 }
 
 const ioError = (errno: number) => new PendingThrow("java/io/IOException", strerror(errno));
+// what the native methods the JDK declares with `throws UnixException` throw
+const unixError = (errno: number) => new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [errno] });
 const connectionReset = () => new PendingThrow("sun/net/ConnectionResetException", "Connection reset");
 
 // Reads and discards up to max wake-up bytes; an event counter counts as one.
@@ -238,9 +240,9 @@ function* pollPair(t: JThread, a: Sock, b: Sock): NativeGen {
 function nativePath(t: JThread, address: bigint): string {
   const bytes = t.vm.mem.u8;
   const start = Number(address);
-  if (start <= 0 || start >= bytes.length) throw ioError(EFAULT);
+  if (start <= 0 || start >= bytes.length) throw unixError(EFAULT);
   const len = bytes.subarray(start, start + 4096).indexOf(0);
-  if (len < 0) throw ioError(ENAMETOOLONG);
+  if (len < 0) throw unixError(ENAMETOOLONG);
   return resolvePath(t, new TextDecoder().decode(bytes.subarray(start, start + len)));
 }
 
@@ -544,11 +546,11 @@ export const natives: Natives = {
   "sun/nio/fs/LinuxWatchService.inotifyInit()I": (t) => initInotify(t),
   "sun/nio/fs/LinuxWatchService.inotifyAddWatch(IJI)I": (t, [fd, address, mask]) => {
     const state = inotify(t, fd);
-    if (!state || !socksOf(t.vm.state).has(fd)) throw ioError(EBADF);
+    if (!state || !socksOf(t.vm.state).has(fd)) throw unixError(EBADF);
     const path = nativePath(t, address);
     const st = t.vm.fs.stat(path);
-    if (!st) throw ioError(ENOENT);
-    if (!st.dir) throw ioError(ENOTDIR);
+    if (!st) throw unixError(ENOENT);
+    if (!st.dir) throw unixError(ENOTDIR);
     let wd = state.paths.get(path);
     if (wd === undefined) {
       wd = state.nextWd++;
@@ -559,7 +561,7 @@ export const natives: Natives = {
   },
   "sun/nio/fs/LinuxWatchService.inotifyRmWatch(II)V": (t, [fd, wd]) => {
     const state = inotify(t, fd);
-    if (!state) throw ioError(EBADF);
+    if (!state) throw unixError(EBADF);
     const watch = state.watches.get(wd);
     if (watch) {
       state.watches.delete(wd);
@@ -568,7 +570,7 @@ export const natives: Natives = {
   },
   "sun/nio/fs/LinuxWatchService.configureBlocking(IZ)V": (t, [fd, blocking]) => {
     const s = socksOf(t.vm.state).get(fd);
-    if (!s) throw ioError(EBADF);
+    if (!s) throw unixError(EBADF);
     s.blocking = blocking === 1;
   },
   "sun/nio/fs/LinuxWatchService.socketpair([I)V": (t, [sv]) => {
@@ -579,7 +581,7 @@ export const natives: Natives = {
   },
   "sun/nio/fs/LinuxWatchService.poll(II)I": function* (t, [fd1, fd2]): NativeGen {
     const a = socksOf(t.vm.state).get(fd1), b = socksOf(t.vm.state).get(fd2);
-    if (!a || !b) throw ioError(EBADF);
+    if (!a || !b) throw unixError(EBADF);
     return yield* pollPair(t, a, b);
   },
   "sun/nio/fs/UnixNativeDispatcher.read0(IJI)I": function* (t, [fd, address, len]): NativeGen {
