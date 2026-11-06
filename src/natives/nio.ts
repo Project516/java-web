@@ -444,9 +444,9 @@ function readAt(t: JThread, fdObj: JObject, addr: bigint, len: number, pos: numb
 
 function writeAt(t: JThread, fdObj: JObject, addr: bigint, len: number, pos: number | null): number {
   const fd = fdNum(t, fdObj);
-  const data = t.vm.mem.u8.slice(Number(addr), Number(addr) + len);
+  const data = t.vm.mem.u8.subarray(Number(addr), Number(addr) + len);
   if (fd === 1 || fd === 2) {
-    (fd === 1 ? t.vm.opts.stdout : t.vm.opts.stderr)(data);
+    (fd === 1 ? t.vm.opts.stdout : t.vm.opts.stderr)(data.slice());
     return len;
   }
   const f = chanFile(t, fdObj);

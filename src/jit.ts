@@ -999,18 +999,27 @@ function fuseConcat(g: Gen, b: Body, pc: number): { pieces: string[]; end: numbe
   return { pieces: pieces.map((f) => f()), end: last + 3 };
 }
 
-// An invoke inside a region: the target must be fixed and inlinable itself.
+// An invoke inside a region: the target must be fixed and inlinable itself, or a
+// virtual call to the receiver class seen last here, which deoptimizes on any other.
 function regionInvoke(g: Gen, b: Body, op: number, pc: number, d: number, target: JMethod | undefined): string {
-  if (!target || target.polymorphic || op === 0xb9 || (op === 0xb8 && target.cls.state !== INITIALIZED)) throw new NoInline();
-  const callee = op === 0xb7 ? g.t.vm.specialTarget(b.m.cls, target) : target;
-  if (!callee.code || callee.isAbstract || !isFixed(op, callee)) throw new NoInline();
+  if (!target || target.polymorphic || (op === 0xb8 && target.cls.state !== INITIALIZED)) throw new NoInline();
+  let callee = op === 0xb7 ? g.t.vm.specialTarget(b.m.cls, target) : target;
+  let guard: JClass | null = null;
+  if (op === 0xb9 || !isFixed(op, callee)) {
+    const site = b.m.cache?.[pc];
+    if (!site || !site.m.code || site.m.isAbstract || site.m.polymorphic) throw new NoInline();
+    callee = site.m;
+    guard = site.c;
+  }
+  if (!callee.code || callee.isAbstract) throw new NoInline();
   const n = target.argSlots;
   const base = d - n;
   const args = Array.from({ length: n }, (_, i) => b.S(base + i));
   const result = target.ret === "V" ? null : b.S(base);
+  const check = guard === null ? "" : `if(${args[0]}!==null&&${args[0]}.cls!==${g.K(guard)}){dpc=${pc};dsp=${d};throw rt.DEOPT;}`;
   const trivial = trivialBody(callee);
-  if (trivial) return genInline(trivial, result ?? "v", args, pc, callee.isStatic);
-  return (callee.isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`) + genRegion(g, b, callee, args, result, pc, base);
+  if (trivial) return check + genInline(trivial, result ?? "v", args, pc, callee.isStatic);
+  return check + (callee.isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`) + genRegion(g, b, callee, args, result, pc, base);
 }
 
 // The callee of an invoke does not depend on the receiver's class.
@@ -1150,7 +1159,7 @@ function genInline(body: Trivial, res: string, args: string[], pc: number, isSta
 
 function genInvoke(
   g: Gen, op: number, pc: number, next: number, d: number, target: JMethod, cls: JClass,
-  slowDepth = d, inline = op !== 0xb9 && slowDepth === d,
+  slowDepth = d, inline = slowDepth === d,
 ): string {
   const { t, K, exit, call } = g;
   const n = target.argSlots;
@@ -1158,11 +1167,24 @@ function genInvoke(
   const args = Array.from({ length: n }, (_, i) => `s${base + i}`);
   // inline the callee, guarded by the receiver's class unless the target is fixed
   if (inline) {
-    const callee = op === 0xb7 ? t.vm.specialTarget(cls, target) : target;
+    let callee = op === 0xb7 ? t.vm.specialTarget(cls, target) : target;
+    // the class guarding the inlined body, or null when the callee is fixed
+    let guard: JClass | null = isFixed(op, callee) && op !== 0xb9 ? null : callee.cls;
+    // a virtual or interface call inlines the method of the receiver class seen last at this site
+    let seen = false;
+    if (guard !== null && !target.isPrivate) {
+      const site = g.top.m.cache?.[pc];
+      if (site && site.m.code && !site.m.isAbstract && !site.m.polymorphic) {
+        callee = site.m;
+        guard = site.c;
+        seen = true;
+      }
+    }
     const res = `s${base}`;
     let code: string | null = null;
     const trivial = trivialBody(callee);
-    if (trivial) code = genInline(trivial, res, args, pc, callee.isStatic);
+    if (op === 0xb9 && !seen) code = null;
+    else if (trivial) code = genInline(trivial, res, args, pc, callee.isStatic);
     else if (callee.code && !callee.isAbstract) {
       try {
         const nullCheck = callee.isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`;
@@ -1172,8 +1194,8 @@ function genInvoke(
       }
     }
     if (code !== null) {
-      if (isFixed(op, callee)) return code;
-      return `if(${args[0]}!==null&&${args[0]}.cls===${K(callee.cls)}){${code}}else{${genInvoke(g, op, pc, next, d, target, cls, d, false)}}`;
+      if (guard === null) return code;
+      return `if(${args[0]}!==null&&${args[0]}.cls===${K(guard)}){${code}}else{${genInvoke(g, op, pc, next, d, target, cls, d, false)}}`;
     }
   }
   const parts: string[] = [`f.pc=${pc};`];
