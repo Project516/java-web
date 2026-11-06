@@ -45,6 +45,8 @@ interface Contents {
   host?: FileHandle;
   hostWritable?: boolean;
   hostReadable?: boolean;
+  // a host descriptor that keeps the file's inode alive, as an open descriptor does on Linux
+  pin?: FileHandle;
 }
 
 // Opens a file's host handle when it outgrows memory. Kept apart from the
@@ -66,6 +68,8 @@ function closeHostsOnExit(vm: JVM) {
     for (const f of tab?.files.values() ?? []) {
       f.contents.host?.close();
       f.contents.host = undefined;
+      f.contents.pin?.close();
+      f.contents.pin = undefined;
     }
   });
 }
@@ -181,6 +185,8 @@ export class OpenFile {
       return false;
     }
     c.host = host;
+    c.pin?.close();
+    c.pin = undefined;
     c.hostWritable = true;
     c.data = new Uint8Array(0);
     c.dirty = false;
@@ -190,10 +196,12 @@ export class OpenFile {
   // a mapping keeps the file open after its descriptor closes
   retain() { this.contents.refs++; }
   release() {
-    if (--this.contents.refs === 0 && this.contents.host) {
-      this.contents.host.close();
-      this.contents.host = undefined;
-    }
+    const c = this.contents;
+    if (--c.refs > 0) return;
+    c.host?.close();
+    c.host = undefined;
+    c.pin?.close();
+    c.pin = undefined;
   }
   close() { this.release(); }
 }
@@ -357,6 +365,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     Object.assign(shared, { host, hostWritable: w, hostReadable: r });
   }
   const f = new OpenFile(abs, data, write, shared);
+  if (!f.contents.host && !f.contents.pin) pinInode(t, f.contents, abs, write, readable);
   // only a writer can grow a file, so read-only files never hold an opener
   if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs, true)) {
     const vm = t.vm;
@@ -375,6 +384,15 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   const fd = tab.next++;
   tab.files.set(fd, f);
   return fd;
+}
+
+// Only a writable host tree can lose the file while it is open, and only one
+// that reports inode numbers can reuse them.
+function pinInode(t: JThread, c: Contents, abs: string, write: boolean, readable: boolean) {
+  const fs = t.vm.fs;
+  if (!fs.canOpenFile(abs, true) || fs.stat(abs)?.ino === undefined) return;
+  c.pin = openHost(fs, abs, false, true) ?? (write ? openHost(fs, abs, true, readable) : undefined);
+  if (c.pin) closeHostsOnExit(t.vm);
 }
 
 function openHost(fs: VFS, abs: string, write: boolean, readable: boolean): FileHandle | undefined {

@@ -125,6 +125,30 @@ test("a large file on a read-only host mount uses a handle", async () => {
   }
 });
 
+test("an open host file keeps its inode when its path is deleted and recreated", async () => {
+  const { openFile, fileOf, closeFd, removePath } = await import("../src/natives/io.ts");
+  const dir = mkdtempSync(join(tmpdir(), "java-web-pin-"));
+  const fs = new VFS();
+  fs.mount("/", new NodeBackend(dir, true));
+  const t = { vm: { fs, opts: {}, state: new Map(), exited: new Promise(() => {}) } } as unknown as JThread;
+  try {
+    writeFileSync(join(dir, "file"), "old");
+    const fd = openFile(t, "/file", true, false, false);
+    const f = fileOf(t, fd);
+    assert.ok(f.contents.pin);
+    const original = fs.stat("/file")!.ino;
+    assert.equal(removePath(t, "/file"), true);
+    const replacement = openFile(t, "/file", true, false, false);
+    assert.notEqual(fs.stat("/file")!.ino, original);
+    assert.equal(f.ino, original);
+    closeFd(t, replacement);
+    closeFd(t, fd);
+    assert.equal(f.contents.pin, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("map0 of a region that does not fit throws OutOfMemoryError for FileChannelImpl to wrap", () => {
   const backend = memory();
   const t = thread(backend);
