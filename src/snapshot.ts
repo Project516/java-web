@@ -442,14 +442,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
       vm.state.set(k, { next: fds.next, files });
     } else vm.state.set(k, d.dec(x));
   }
-  const mem = vm.mem as any;
-  mem.buf = new ArrayBuffer(Math.max(mem.buf.byteLength, v.mem.buf.length));
-  mem.u8 = new Uint8Array(mem.buf);
-  mem.dv = new DataView(mem.buf);
-  mem.u8.set(v.mem.buf);
-  mem.top = v.mem.top;
-  mem.sizes = d.dec(v.mem.sizes);
-  mem.free = d.dec(v.mem.free);
+  vm.mem.restore(v.mem.buf, v.mem.top, d.dec(v.mem.sizes), d.dec(v.mem.free));
   d.flush();
 
   const mainRec = image.threads[0];

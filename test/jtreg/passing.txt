@@ -1967,6 +1967,7 @@ java/nio/channels/DatagramChannel/ThereCanBeOnlyOne.java
 java/nio/channels/DatagramChannel/Truncate.java
 java/nio/channels/DatagramChannel/UseDGWithIPv6.java
 java/nio/channels/FileChannel/Args.java
+java/nio/channels/FileChannel/AtomicAppend.java
 java/nio/channels/FileChannel/CloseDuringTransfer.java
 java/nio/channels/FileChannel/ClosedByInterrupt.java
 java/nio/channels/FileChannel/ClosedChannelTransfer.java
