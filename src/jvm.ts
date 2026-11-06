@@ -1277,7 +1277,7 @@ export class JVM {
           return false;
         }
         try {
-          this.keepJit = false;
+          this.dropJit();
           restoreVM(this, image, t);
           this.warmRestored = true;
           this.warmSaved = true;
