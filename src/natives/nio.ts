@@ -6,7 +6,7 @@ import type { Stat } from "../fs.ts";
 import { preCloseSock } from "../sockets.ts";
 import { closeInotify, sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
-import { closeFd, endsInDot, newFd, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
+import { closeFd, DirectoryFile, newFd, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
@@ -66,7 +66,21 @@ function pathAt(t: JThread, dfd: number, p: bigint): string {
   if (dfd === AT_FDCWD || name.startsWith("/")) return resolvePath(t, name);
   const dir = t.vm.state.get("fds")?.files.get(dfd);
   if (!dir) unixError(EBADF);
+  if (!(dir instanceof DirectoryFile)) unixError(ENOTDIR);
+  if (!dir.path) unixError(ENOENT);
   return resolvePath(t, `${dir.path}/${name}`);
+}
+
+// the last path component, ignoring trailing slashes
+function lastComponent(p: string): string | undefined {
+  return p.replace(/\/+$/, "").split("/").pop();
+}
+
+// the descriptor's file, or EBADF as the system calls give for one that is not open
+function openFileOf(t: JThread, fd: number) {
+  const f = t.vm.state.get("fds")?.files.get(fd);
+  if (!f) unixError(EBADF);
+  return f;
 }
 
 function removeDir(t: JThread, abs: string) {
@@ -215,7 +229,9 @@ export const natives: Natives = {
   [`${N}open0(JII)I`]: (t, [p, flags, mode]) => openAbs(t, path(t, p), flags, mode),
   [`${N}openat0(IJII)I`]: (t, [dfd, p, flags, mode]) => openAbs(t, pathAt(t, dfd, p), flags, mode),
   [`${N}unlinkat0(IJI)V`]: (t, [dfd, p, flag]) => {
+    const last = lastComponent(cstring(t, p));
     const abs = pathAt(t, dfd, p);
+    if (last === "." || last === "..") unixError(flag & AT_REMOVEDIR ? (last === "." ? EINVAL : ENOTEMPTY) : EISDIR);
     if (flag & AT_REMOVEDIR) removeDir(t, abs);
     else unlinkAbs(t, abs);
   },
@@ -226,14 +242,14 @@ export const natives: Natives = {
   },
   [`${N}fchmodat0(IJII)V`]: (t, [dfd, p, mode]) => chmod(t, pathAt(t, dfd, p), mode),
   [`${N}fdopendir(I)J`]: (t, [fd]) => {
-    const f = fileOf(t, fd);
+    const f = openFileOf(t, fd);
     if (!t.vm.fs.stat(f.path)?.dir) unixError(ENOTDIR);
     const id = nextDir++;
     dirs(t).set(id, { names: t.vm.fs.list(f.path) ?? [], pos: 0, fd });
     return id;
   },
   [`${N}dup(I)I`]: (t, [fd]) => {
-    const f = fileOf(t, fd);
+    const f = openFileOf(t, fd);
     const copy = newFd(t);
     t.vm.state.get("fds").files.set(copy, f);
     f.retain();
@@ -245,12 +261,13 @@ export const natives: Natives = {
   },
   [`${N}mkdir0(JI)V`]: (t, [p, mode]) => {
     const abs = path(t, p);
-    if (t.vm.fs.stat(abs)) unixError(EEXIST);
+    if (t.vm.fs.lstat(abs)) unixError(EEXIST);
     if (!t.vm.fs.mkdir(abs)) unixError(t.vm.fs.writable(abs) ? ENOENT : EROFS);
     applyCreateMode(t, abs, mode);
   },
   [`${N}rmdir0(J)V`]: (t, [p]) => {
-    if (endsInDot(cstring(t, p))) unixError(EINVAL);
+    const last = lastComponent(cstring(t, p));
+    if (last === "." || last === "..") unixError(last === "." ? EINVAL : ENOTEMPTY);
     removeDir(t, path(t, p));
   },
   [`${N}unlink0(J)V`]: (t, [p]) => unlinkAbs(t, path(t, p)),

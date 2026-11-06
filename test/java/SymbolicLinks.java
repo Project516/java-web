@@ -43,6 +43,20 @@ public class SymbolicLinks {
             } catch (java.nio.file.NotLinkException e) {
                 System.out.println("not a link");
             }
+            try {
+                Files.createDirectory(dangling);
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                System.out.println("directory over dangling link");
+            }
+            for (String name : new String[] {"sub/.", "sub/.."}) {
+                try {
+                    Files.delete(dir.resolve(name));
+                    System.out.println("deleted " + name);
+                } catch (IOException e) {
+                    System.out.println("delete " + name + " " + e.getClass().getSimpleName());
+                }
+            }
+            System.out.println("sub kept " + Files.isDirectory(sub));
 
             Path copy = Files.copy(toFile, dir.resolve("copy"), LinkOption.NOFOLLOW_LINKS);
             System.out.println("copy of link " + Files.isSymbolicLink(copy));

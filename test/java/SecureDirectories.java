@@ -45,11 +45,42 @@ public class SecureDirectories {
                 } catch (java.nio.file.NoSuchFileException e) {
                     System.out.println("no such file");
                 }
+                for (String name : new String[] {".", ".."}) {
+                    try {
+                        secure.deleteDirectory(Path.of(name));
+                        System.out.println("deleted directory " + name);
+                    } catch (IOException e) {
+                        System.out.println("delete directory " + name + " " + e.getClass().getSimpleName());
+                    }
+                    try {
+                        secure.deleteFile(Path.of(name));
+                        System.out.println("deleted file " + name);
+                    } catch (IOException e) {
+                        System.out.println("delete file " + name + " " + e.getClass().getSimpleName());
+                    }
+                }
+                System.out.println("directory kept " + Files.isDirectory(dir));
             }
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(other)) {
                 var secure = (SecureDirectoryStream<Path>) stream;
                 secure.deleteFile(Path.of("b"));
                 System.out.println("deleted " + Files.exists(other.resolve("b")));
+            }
+            Path gone = Files.createTempDirectory("secure");
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(gone)) {
+                var secure = (SecureDirectoryStream<Path>) stream;
+                Files.delete(gone);
+                try (var ch = secure.newByteChannel(Path.of("late"),
+                        Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))) {
+                    System.out.println("created in a deleted directory");
+                } catch (IOException e) {
+                    System.out.println("deleted directory " + e.getClass().getSimpleName());
+                }
+                try {
+                    secure.deleteFile(Path.of("late"));
+                } catch (IOException e) {
+                    System.out.println("delete in deleted directory " + e.getClass().getSimpleName());
+                }
             }
             try {
                 Files.newDirectoryStream(other.resolve("nothing"));
