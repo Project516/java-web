@@ -71,6 +71,14 @@ function chmod(t: JThread, p: string, mode: number) {
   unixError(HOST_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
 }
 
+let processUmask: number | undefined;
+
+// open(2) and mkdir(2) give a new file the requested mode less the umask
+function applyCreateMode(t: JThread, abs: string, mode: number) {
+  processUmask ??= (globalThis as any).process?.umask?.() ?? 0o022;
+  t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & ~processUmask! & 0o7777));
+}
+
 function fillAttrs(t: JThread, attrs: JObject, p: string): number {
   syncPath(t, p);
   const st = t.vm.fs.stat(p);
@@ -143,7 +151,7 @@ export const natives: Natives = {
     if (!t.vm.fs.stat(abs)) return ENOENT;
     return t.vm.fs.access(abs, amode) ? 0 : EACCES;
   },
-  [`${N}open0(JII)I`]: (t, [p, flags]) => {
+  [`${N}open0(JII)I`]: (t, [p, flags, mode]) => {
     const abs = path(t, p);
     const st = t.vm.fs.stat(abs);
     if ((flags & O_CREAT) && (flags & O_EXCL) && st) unixError(EEXIST);
@@ -154,6 +162,7 @@ export const natives: Natives = {
     try {
       const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1, true);
       fileOf(t, fd).ino = fileInode(t, abs);
+      if (!st) applyCreateMode(t, abs, mode);
       return fd;
     } catch (e) {
       if (e instanceof PendingThrow) {
@@ -169,10 +178,11 @@ export const natives: Natives = {
     closeFd(t, fd);
   },
   [`${N}dup(I)I`]: () => unixError(ENOSYS),
-  [`${N}mkdir0(JI)V`]: (t, [p]) => {
+  [`${N}mkdir0(JI)V`]: (t, [p, mode]) => {
     const abs = path(t, p);
     if (t.vm.fs.stat(abs)) unixError(EEXIST);
     if (!t.vm.fs.mkdir(abs)) unixError(t.vm.fs.writable(abs) ? ENOENT : EROFS);
+    applyCreateMode(t, abs, mode);
   },
   [`${N}rmdir0(J)V`]: (t, [p]) => {
     if (endsInDot(cstring(t, p))) unixError(EINVAL);

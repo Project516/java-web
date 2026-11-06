@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 out=build/jdk
-modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.security.jgss,jdk.unsupported,jdk.zipfs,jdk.localedata,jdk.internal.md,javaweb.tls}
+modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.security.jgss,jdk.unsupported,jdk.zipfs,jdk.localedata,jdk.management,jdk.internal.md,javaweb.tls}
 
 # Builds from one pinned JDK release so every machine makes the same image.
 # Renovate bumps the release.

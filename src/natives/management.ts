@@ -10,6 +10,7 @@ import type { JMethod, JObject } from "../runtime.ts";
 import { TERMINATED } from "../thread.ts";
 import type { JThread, NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
+import { openFdCount } from "./io.ts";
 import type { Natives } from "./util.ts";
 
 const MANAGERS = [
@@ -112,7 +113,26 @@ function liveThreads(vm: JVM): JThread[] {
   return [...vm.threads].filter((x) => x.state !== TERMINATED && x.obj);
 }
 
+// A host module under Node; none in a browser.
+function host(name: string): any {
+  return (globalThis as any).process?.getBuiltinModule?.(name);
+}
+
+// A number from a /proc file's line that starts with the label, in its unit
+function procValue(file: string, label: string, field = 1): number {
+  try {
+    const line = host("node:fs").readFileSync(file, "utf8").split("\n").find((l: string) => l.startsWith(label));
+    return Number(line?.trim().split(/\s+/)[field]);
+  } catch {
+    return NaN;
+  }
+}
+
+const orElse = (x: number, fallback: number) => (Number.isFinite(x) ? x : fallback);
+const KB = 1024;
+
 const V = "sun/management/VMManagementImpl.";
+const OS = "com/sun/management/internal/OperatingSystemImpl.";
 const P = "sun/management/MemoryPoolImpl.";
 const T = "sun/management/ThreadImpl.";
 
@@ -209,4 +229,29 @@ export const natives: Natives = {
   "sun/management/HotspotThread.getInternalThreadCount()I": () => 0,
   "sun/management/HotspotThread.getInternalThreadTimes0([Ljava/lang/String;[J)I": () => 0,
   "sun/management/ClassLoadingImpl.setVerboseClass(Z)V": () => undefined,
+
+  // no container limits: Container.metrics() is null
+  "jdk/internal/platform/CgroupMetrics.isUseContainerSupport()Z": () => 0,
+  "jdk/internal/platform/CgroupMetrics.isContainerized0()Z": () => 0,
+  "jdk/internal/platform/CgroupMetrics.getTotalMemorySize0()J": () => BigInt(host("node:os")?.totalmem() ?? MAX_HEAP),
+  "jdk/internal/platform/CgroupMetrics.getTotalSwapSize0()J": () => BigInt(orElse(procValue("/proc/meminfo", "SwapTotal:") * KB, 0)),
+
+  [`${OS}initialize0()V`]: () => undefined,
+  [`${OS}getOpenFileDescriptorCount0()J`]: (t) => BigInt(openFdCount(t.vm)),
+  [`${OS}getMaxFileDescriptorCount0()J`]: () => BigInt(orElse(procValue("/proc/self/limits", "Max open files", 3), 1024)),
+  [`${OS}getCommittedVirtualMemorySize0()J`]: () => BigInt(orElse(procValue("/proc/self/statm", "", 0) * 4096, (globalThis as any).process?.memoryUsage?.().rss ?? -1)),
+  [`${OS}getTotalMemorySize0()J`]: () => BigInt(host("node:os")?.totalmem() ?? MAX_HEAP),
+  [`${OS}getFreeMemorySize0()J`]: () => BigInt(host("node:os")?.freemem() ?? 0),
+  [`${OS}getTotalSwapSpaceSize0()J`]: () => BigInt(orElse(procValue("/proc/meminfo", "SwapTotal:") * KB, 0)),
+  [`${OS}getFreeSwapSpaceSize0()J`]: () => BigInt(orElse(procValue("/proc/meminfo", "SwapFree:") * KB, 0)),
+  [`${OS}getProcessCpuTime0()J`]: () => {
+    const u = (globalThis as any).process?.cpuUsage?.();
+    return u ? BigInt(u.user + u.system) * 1000n : -1n;
+  },
+  [`${OS}getProcessCpuLoad0()D`]: () => -1,
+  [`${OS}getCpuLoad0()D`]: () => -1,
+  [`${OS}getSingleCpuLoad0(I)D`]: () => -1,
+  [`${OS}getHostConfiguredCpuCount0()I`]: () => host("node:os")?.availableParallelism() ?? 1,
+  [`${OS}getHostOnlineCpuCount0()I`]: () => host("node:os")?.availableParallelism() ?? 1,
+  [`${OS}getHostTotalCpuTicks0()J`]: () => -1n,
 };

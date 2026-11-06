@@ -6,7 +6,7 @@ import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { FileHandle, Stat, VFS } from "../fs.ts";
-import { closeSockFd } from "../sockets.ts";
+import { closeSockFd, socksOf } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
@@ -437,6 +437,13 @@ export function flushOrThrow(t: JThread, f: OpenFile) {
 
 export function writeFailed(t: JThread, path: string): PendingThrow {
   return new PendingThrow("java/io/IOException", ERRNO[t.vm.fs.writeError(path) ?? ""] ?? "Input/output error");
+}
+
+// Descriptors the program holds, with the three standard streams.
+export function openFdCount(vm: JVM): number {
+  const files = (vm.state.get("fds") as FdTable | undefined)?.files.size ?? 0;
+  const pipeCount = (vm.state.get("processPipes") as Map<number, unknown> | undefined)?.size ?? 0;
+  return 3 + files + pipeCount + socksOf(vm.state).size;
 }
 
 export function newFd(t: JThread): number {
