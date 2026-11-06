@@ -15,8 +15,13 @@ import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts"
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 
+// Bump when the layout of an image changes; images of another format are ignored.
+export const SNAPSHOT_FORMAT = 2;
+
 export interface SnapshotImage {
+  format: number;
   key: string;
+  table: unknown[];
   classes: ClassRec[];
   vm: VmRec;
   threads: ThreadRec[];
@@ -94,8 +99,26 @@ const REF_WAIT = "java/lang/ref/Reference.waitForReferencePendingList()V";
 // vm.state entries rebuilt on demand rather than saved
 const TRANSIENT = new Set(["stdin", "refs", "socks", "continuations"]);
 
+// V8's serializer and deserializer recurse on nesting, so the image must stay
+// shallow whatever the Java heap holds. Each object is written in place once,
+// inside the first thing that refers to it, as far as NEST levels down; a deeper
+// object, and any later reference to one, goes by its index in the table of
+// named objects. A list of values holds primitives, typed arrays and objects
+// written in place; its references are [position, index] pairs in a second list.
+// An object with no objects inside it (a string, a class) adds one level
+// wherever it is, so it is shared directly.
+const NEST = 64;
+
+interface Values {
+  v: unknown[];
+  r?: number[];
+}
+
 class Encoder {
-  private twins = new Map<unknown, unknown>();
+  readonly table: unknown[] = [];
+  private twins = new Map<unknown, any>();
+  private named = new Map<unknown, number>();
+  private leaves = new Set<unknown>();
   private classIndex = new Map<JClass, number>();
   private threadIndex = new Map<JThread, number>();
 
@@ -112,140 +135,227 @@ class Encoder {
 
   private work: (() => void)[] = [];
 
-  // the twin of v; containers are filled in by drain, so deep object graphs
-  // need no deep recursion
+  // The twin of v, or a reference to it if it has one already. Containers are
+  // filled in by drain, so deep object graphs need no deep recursion.
   enc(v: any, path: string): any {
-    const t = this.twin(v, path);
+    const t = this.child(v, path, 0);
     while (this.work.length) this.work.pop()!();
     return t;
   }
 
-  private twin(v: any, path: string): any {
+  private name(t: unknown): number {
+    let i = this.named.get(t);
+    if (i === undefined) {
+      i = this.table.length;
+      this.table.push(t);
+      this.named.set(t, i);
+    }
+    return i;
+  }
+
+  private child(v: any, path: string, depth: number): any {
     if (v === null || (typeof v !== "object" && typeof v !== "function")) return v;
-    const memo = this.twins.get(v);
-    if (memo !== undefined) return memo;
-    if (typeof v === "function") throw new Error(`snapshot: cannot save function ${v.name || "(anonymous)"} in ${path}`);
     if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer) return v;
+    const memo = this.twins.get(v);
+    if (memo !== undefined) return this.leaves.has(memo) ? memo : { $: "R", i: this.name(memo) };
+    const t = this.make(v, path, depth);
+    return depth >= NEST && !this.leaves.has(t) ? { $: "R", i: this.name(t) } : t;
+  }
+
+  // src's elements as children at depth
+  private values(src: ArrayLike<unknown>, path: string, depth: number): Values {
+    const n = src.length;
+    const v = new Array(n);
+    let r: number[] | undefined;
+    for (let i = 0; i < n; i++) {
+      const x: any = src[i];
+      if (x === null || (typeof x !== "object" && typeof x !== "function")) {
+        if (x !== undefined || i in (src as object)) v[i] = x;
+      } else if (ArrayBuffer.isView(x) || x instanceof ArrayBuffer) v[i] = x;
+      else {
+        const memo = this.twins.get(x);
+        if (memo !== undefined) {
+          if (this.leaves.has(memo)) v[i] = memo;
+          else {
+            (r ??= []).push(i, this.name(memo));
+            v[i] = null;
+          }
+        } else {
+          const t = this.make(x, path, depth);
+          if (depth >= NEST && !this.leaves.has(t)) {
+            (r ??= []).push(i, this.name(t));
+            v[i] = null;
+          } else v[i] = t;
+        }
+      }
+    }
+    return r ? { v, r } : { v };
+  }
+
+  private isLeaf(v: JObject): boolean {
+    if (v.mon || v.x !== undefined) return false;
+    const list = v instanceof JArray ? v.a : v.f;
+    if (!Array.isArray(list)) return true;
+    for (const e of list) if (e !== null && (typeof e === "function" || (typeof e === "object" && !ArrayBuffer.isView(e) && !(e instanceof ArrayBuffer)))) return false;
+    return true;
+  }
+
+  private make(v: any, path: string, depth: number): any {
+    if (typeof v === "function") throw new Error(`snapshot: cannot save function ${v.name || "(anonymous)"} in ${path}`);
+    const next = depth + 1;
     let t: any;
     if (v instanceof JObject) {
-      t = { $: v instanceof JArray ? "A" : "O", c: this.cls(v.cls, path), h: v.hash };
+      const array = v instanceof JArray;
+      t = { $: array ? "A" : "O", c: this.cls(v.cls, path), h: v.hash };
       this.work.push(() => {
-        if (v instanceof JArray) t.a = Array.isArray(v.a) ? v.a.map((e) => this.twin(e, path)) : v.a;
-        else t.f = v.f.map((e) => this.twin(e, path));
-        if (v.mon) t.n = this.twin(v.mon, path);
-        if (v.x !== undefined) t.x = v.x instanceof WeakRef ? { $: "W", v: this.twin(v.x.deref() ?? null, path) } : this.twin(v.x, path);
+        if (array && !Array.isArray(v.a)) t.a = v.a;
+        else {
+          const { v: list, r } = this.values(array ? (v.a as unknown[]) : v.f, path, next);
+          t[array ? "a" : "f"] = list;
+          if (r) t.r = r;
+        }
+        if (v.mon) t.n = this.child(v.mon, path, next);
+        if (v.x !== undefined) t.x = v.x instanceof WeakRef ? { $: "W", v: this.child(v.x.deref() ?? null, path, next) } : this.child(v.x, path, next);
       });
     } else if (v instanceof JClass) t = { $: "C", i: this.cls(v, path) };
     else if (v instanceof JMethod) t = { $: "M", c: this.cls(v.cls, path), k: v.key };
     else if (v instanceof JField) t = { $: "F", c: this.cls(v.cls, path), i: v.cls.fields.indexOf(v) };
     else if (v instanceof JThread) {
-      const i = this.threadIndex.get(v);
-      if (i === undefined) throw new Error(`snapshot: unknown thread in ${path}`);
-      t = { $: "T", i };
+      const k = this.threadIndex.get(v);
+      if (k === undefined) throw new Error(`snapshot: unknown thread in ${path}`);
+      t = { $: "T", i: k };
     } else if (v instanceof Monitor) {
       if (v.entry.length) throw new Error(`snapshot: a thread is blocked entering a monitor in ${path}`);
       t = { $: "N", n: v.count };
-      this.work.push(() => (t.o = this.twin(v.owner, path)));
+      this.work.push(() => (t.o = this.child(v.owner, path, next)));
     } else if (v instanceof Map) {
-      t = new Map();
-      this.work.push(() => { for (const [k, x] of v) t.set(this.twin(k, path), this.twin(x, path)); });
+      t = { $: "m" };
+      this.work.push(() => {
+        const flat: unknown[] = [];
+        for (const [k, x] of v) flat.push(k, x);
+        Object.assign(t, this.values(flat, path, next));
+      });
     } else if (v instanceof Set) {
-      t = new Set();
-      this.work.push(() => { for (const x of v) t.add(this.twin(x, path)); });
+      t = { $: "s" };
+      this.work.push(() => Object.assign(t, this.values([...v], path, next)));
     } else if (Array.isArray(v)) {
-      t = new Array(v.length);
-      this.work.push(() => v.forEach((x, i) => (t[i] = this.twin(x, path))));
+      t = { $: "L" };
+      this.work.push(() => Object.assign(t, this.values(v, path, next)));
     } else {
       const proto = Object.getPrototypeOf(v);
       if (proto !== Object.prototype && proto !== null) throw new Error(`snapshot: cannot save ${v.constructor?.name} in ${path}`);
-      const o: any = {};
-      t = { $: "P", v: o };
-      this.work.push(() => { for (const k of Object.keys(v)) o[k] = this.twin(v[k], path); });
+      t = { $: "P" };
+      this.work.push(() => {
+        const keys = Object.keys(v);
+        const { v: list, r } = this.values(keys.map((k) => v[k]), path, next);
+        const o: any = {};
+        keys.forEach((k, j) => (o[k] = list[j]));
+        t.v = o;
+        if (r) t.r = r.map((x, j) => (j % 2 === 0 ? keys[x] : x));
+      });
     }
     this.twins.set(v, t);
+    if (!(v instanceof JObject) ? v instanceof JClass || v instanceof JMethod || v instanceof JField || v instanceof JThread : this.isLeaf(v)) this.leaves.add(t);
     return t;
   }
 }
 
 class Decoder {
-  private twins = new Map<unknown, unknown>();
-  private fills: (() => void)[] = [];
+  private made = new Map<unknown, any>();
+  private fills: any[] = [];
   readonly references: [JObject, unknown][] = [];
 
   readonly classes: JClass[];
   private threads: JThread[];
+  private table: any[];
 
-  constructor(classes: JClass[], threads: JThread[]) {
+  constructor(table: any[], classes: JClass[], threads: JThread[]) {
+    this.table = table;
     this.classes = classes;
     this.threads = threads;
   }
 
-  dec(v: any): any {
-    if (v === null || typeof v !== "object") return v;
-    const memo = this.twins.get(v);
+  // The value for x, a field of a record. Objects are made at once and filled
+  // by flush. The image is changed in place, so a VM needs its own copy.
+  dec(x: any): any {
+    if (x === null || typeof x !== "object" || ArrayBuffer.isView(x) || x instanceof ArrayBuffer) return x;
+    const v = x.$ === "R" ? this.table[x.i] : x;
+    const memo = this.made.get(v);
     if (memo !== undefined) return memo;
-    if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer) return v;
-    if (v instanceof Map) {
-      const m = new Map();
-      this.twins.set(v, m);
-      for (const [k, x] of v) m.set(this.dec(k), this.dec(x));
-      return m;
-    }
-    if (v instanceof Set) {
-      const s = new Set();
-      this.twins.set(v, s);
-      for (const x of v) s.add(this.dec(x));
-      return s;
-    }
-    if (Array.isArray(v)) {
-      const a = new Array(v.length);
-      this.twins.set(v, a);
-      v.forEach((x, i) => (a[i] = this.dec(x)));
-      return a;
-    }
+    let o: any;
     switch (v.$) {
       case "O": case "A": {
         const cls = this.classes[v.c];
         if (!cls) throw new Error(`snapshot: object of class #${v.c} before its class`);
-        const o = v.$ === "A" ? new JArray(cls, Array.isArray(v.a) ? new Array(v.a.length) : v.a) : new JObject(cls, []);
+        o = v.$ === "A" ? new JArray(cls, v.a) : new JObject(cls, v.f);
         o.hash = v.h;
-        this.twins.set(v, o);
-        this.fills.push(() => {
-          if (o instanceof JArray) {
-            if (Array.isArray(v.a)) v.a.forEach((x: unknown, i: number) => ((o.a as unknown[])[i] = this.dec(x)));
-          } else o.f = v.f.map((x: unknown) => this.dec(x));
-          if (v.n) o.mon = this.dec(v.n);
-          if (v.x !== undefined) {
-            if (v.x?.$ === "W") this.references.push([o, v.x.v]);
-            else o.x = this.dec(v.x);
-          }
-        });
-        return o;
+        break;
       }
       case "C": return this.classes[v.i];
       case "M": return this.classes[v.c].methodMap.get(v.k);
       case "F": return this.classes[v.c].fields[v.i];
       case "T": return this.threads[v.i];
-      case "N": {
-        const m = new Monitor();
-        this.twins.set(v, m);
-        m.count = v.n;
-        m.owner = this.dec(v.o);
-        return m;
-      }
-      case "P": {
-        const o: any = {};
-        this.twins.set(v, o);
-        for (const k of Object.keys(v.v)) o[k] = this.dec(v.v[k]);
-        return o;
-      }
+      case "N":
+        o = new Monitor();
+        o.count = v.n;
+        break;
+      case "L": o = v.v; break;
+      case "m": o = new Map(); break;
+      case "s": o = new Set(); break;
+      case "P": o = {}; break;
+      default: throw new Error(`snapshot: unknown record ${JSON.stringify(v).slice(0, 80)}`);
     }
-    throw new Error(`snapshot: unknown record ${JSON.stringify(v).slice(0, 80)}`);
+    this.made.set(v, o);
+    this.fills.push(v);
+    return o;
+  }
+
+  private fill(v: any) {
+    const o = this.made.get(v);
+    if (v.$ === "N") {
+      o.owner = this.dec(v.o);
+      return;
+    }
+    if (v.$ === "P") {
+      for (const k of Object.keys(v.v)) o[k] = this.dec(v.v[k]);
+      if (v.r) for (let k = 0; k < v.r.length; k += 2) o[v.r[k]] = this.dec(this.table[v.r[k + 1]]);
+      return;
+    }
+    const list: unknown[] | undefined = v.$ === "O" ? v.f : v.$ === "A" ? (Array.isArray(v.a) ? v.a : undefined) : v.v;
+    if (list) {
+      for (let i = 0; i < list.length; i++) {
+        const x: any = list[i];
+        if (x !== null && typeof x === "object" && !ArrayBuffer.isView(x) && !(x instanceof ArrayBuffer)) list[i] = this.dec(x);
+      }
+      if (v.r) for (let k = 0; k < v.r.length; k += 2) list[v.r[k]] = this.dec(this.table[v.r[k + 1]]);
+    }
+    switch (v.$) {
+      case "O": case "A":
+        if (v.n) o.mon = this.dec(v.n);
+        if (v.x !== undefined) {
+          if (v.x?.$ === "W") this.references.push([o, v.x.v]);
+          else o.x = this.dec(v.x);
+        }
+        break;
+      case "m":
+        for (let k = 0; k < list!.length; k += 2) o.set(list![k], list![k + 1]);
+        break;
+      case "s":
+        for (const x of list!) o.add(x);
+        break;
+    }
   }
 
   // fills the objects decoded so far, and those their fields lead to
   flush() {
-    while (this.fills.length) this.fills.pop()!();
+    while (this.fills.length) this.fill(this.fills.pop());
+  }
+
+  // dec, then flush, for a value used at once
+  now(x: any): any {
+    const o = this.dec(x);
+    this.flush();
+    return o;
   }
 }
 
@@ -338,7 +448,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
     };
   };
   const threads = others.map((t) => threadRec(t));
-  return { key, classes: classRecs, vm: vmRec, threads: [library ? threadRec(main, true) : { obj: e.enc(main.obj, "main") } as ThreadRec, ...threads] };
+  return { format: SNAPSHOT_FORMAT, key, table: e.table, classes: classRecs, vm: vmRec, threads: [library ? threadRec(main, true) : { obj: e.enc(main.obj, "main") } as ThreadRec, ...threads] };
 }
 
 function snapshotFds(value: unknown): unknown {
@@ -368,7 +478,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   const others = image.threads.slice(1).map(() => new JThread(vm));
   const threads = [main, ...others];
   const classes: JClass[] = [];
-  const d = new Decoder(classes, threads);
+  const d = new Decoder(image.table as any[], classes, threads);
   for (const r of image.classes) {
     let c: JClass | null;
     if (r.kind === "prim") c = vm.primClass(r.desc!);
@@ -400,14 +510,14 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   });
   d.flush();
   const v = image.vm;
-  const boot = d.dec(v.boot) as Map<string, JClass>;
+  const boot = d.now(v.boot) as Map<string, JClass>;
   vm.boot.clear();
   for (const [k, c] of boot) vm.boot.set(k, c);
-  for (const [k, p] of d.dec(v.bootPackages) as Map<string, string>) vm.bootPackages.set(k, p);
-  for (const [k, m] of d.dec(v.bootModules) as Map<string, JObject>) vm.bootModules.set(k, m);
+  for (const [k, p] of d.now(v.bootPackages) as Map<string, string>) vm.bootPackages.set(k, p);
+  for (const [k, m] of d.now(v.bootModules) as Map<string, JObject>) vm.bootModules.set(k, m);
   vm.bootUnnamedModule = d.dec(v.bootUnnamedModule);
   const interned = (vm as any).interned as Map<string, JObject>;
-  for (const [k, s] of d.dec(v.interned) as Map<string, JObject>) interned.set(k, s);
+  for (const [k, s] of d.now(v.interned) as Map<string, JObject>) interned.set(k, s);
   (vm as any).hashSeed = v.hashSeed;
   vm.classCount = v.classCount;
   for (const [k, x] of v.state) {
@@ -472,7 +582,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
     }
   });
   d.flush();
-  restorePending(vm, d.dec(v.pending));
+  restorePending(vm, d.now(v.pending));
   for (const [o, referent] of d.references) {
     const r = d.dec(referent);
     if (r) restoreReference(vm, o, r);
