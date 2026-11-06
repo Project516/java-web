@@ -63,3 +63,26 @@ test("a restored memory lowers top over free blocks", () => {
   assert.equal(copy.malloc(64), a);
   assert.equal(copy.malloc(64), b);
 });
+
+test("freeing many same-sized blocks then the top merges them all", () => {
+  const mem = new NativeMemory();
+  const blocks = Array.from({ length: 20000 }, () => mem.malloc(32));
+  const top = mem.malloc(32);
+  for (let i = blocks.length - 1; i >= 0; i--) mem.freeBlock(blocks[i]);
+  mem.freeBlock(top);
+  assert.equal(mem.malloc(32), blocks[0]);
+  assert.equal(mem.malloc(32), blocks[1]);
+});
+
+test("reused free blocks keep the merge index consistent", () => {
+  const mem = new NativeMemory();
+  const [a, b, c, d] = [mem.malloc(32), mem.malloc(32), mem.malloc(32), mem.malloc(32)];
+  mem.freeBlock(a);
+  mem.freeBlock(b);
+  mem.freeBlock(c);
+  assert.equal(mem.malloc(32), a);
+  mem.freeBlock(d);
+  assert.equal(mem.malloc(32), b);
+  mem.freeBlock(a);
+  assert.equal(mem.malloc(32), a);
+});

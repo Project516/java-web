@@ -16,8 +16,9 @@ export class NativeMemory {
   private sizes = new Map<number, number>();
   // free blocks by size
   private free = new Map<number, number[]>();
-  // end address to size, for the free blocks
+  // end address to size, and start address to list index, for the free blocks
   private freeEnds = new Map<number, number>();
+  private freeAt = new Map<number, number>();
 
   private initial: number;
 
@@ -58,7 +59,21 @@ export class NativeMemory {
     this.sizes = sizes;
     this.free = free;
     this.freeEnds.clear();
-    for (const [size, blocks] of free) for (const start of blocks) this.freeEnds.set(start + size, size);
+    this.freeAt.clear();
+    for (const [size, blocks] of free) {
+      blocks.forEach((start, i) => { this.freeEnds.set(start + size, size); this.freeAt.set(start, i); });
+    }
+  }
+
+  // The order of a free list does not matter, so the last block fills the gap.
+  private takeFree(size: number, list: number[], at: number): number {
+    const addr = list[at];
+    const last = list.pop()!;
+    if (at < list.length) { list[at] = last; this.freeAt.set(last, at); }
+    if (!list.length) this.free.delete(size);
+    this.freeAt.delete(addr);
+    this.freeEnds.delete(addr + size);
+    return addr;
   }
 
   malloc(n: number, alignment = ALIGN): number {
@@ -66,11 +81,7 @@ export class NativeMemory {
     const list = this.free.get(size);
     const reuse = list?.findIndex((addr) => addr % alignment === 0) ?? -1;
     if (list && reuse >= 0) {
-      // the order of a free list does not matter, so the last block fills the gap
-      const addr = list[reuse];
-      list[reuse] = list[list.length - 1];
-      list.pop();
-      this.freeEnds.delete(addr + size);
+      const addr = this.takeFree(size, list, reuse);
       this.sizes.set(addr, size);
       return addr;
     }
@@ -89,25 +100,24 @@ export class NativeMemory {
     if (addr + size < this.top) {
       let list = this.free.get(size);
       if (!list) this.free.set(size, (list = []));
-      list.push(addr);
+      this.freeAt.set(addr, list.push(addr) - 1);
       this.freeEnds.set(addr + size, size);
       return;
     }
     // Lower top over this block and any free blocks that end where it starts.
     let top = addr;
     for (let below = this.freeEnds.get(top); below !== undefined; below = this.freeEnds.get(top)) {
-      const list = this.free.get(below)!;
-      const at = list.lastIndexOf(top - below);
-      list[at] = list[list.length - 1];
-      list.pop();
-      if (!list.length) this.free.delete(below);
-      this.freeEnds.delete(top);
       top -= below;
+      this.takeFree(below, this.free.get(below)!, this.freeAt.get(top)!);
     }
     this.top = Math.max(top, ALIGN);
     if (this.buf.byteLength >= MIN_SHRINK && this.top <= this.buf.byteLength / 4) {
       const size = Math.max(this.initial, 2 ** Math.ceil(Math.log2(this.top)));
-      if (size < this.buf.byteLength) this.resize(size);
+      // best effort: a free must not fail
+      if (size < this.buf.byteLength) {
+        try { this.resize(size); }
+        catch (e) { if (!(e instanceof RangeError)) throw e; }
+      }
     }
   }
 
