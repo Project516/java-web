@@ -29,7 +29,7 @@ java-web targets headless Java: console apps, libraries and javac.
   host's inode numbers and link counts, and the modes `open` and `mkdir` ask
   for, less the process's umask. In-memory files get synthetic inode numbers, a
   link count of 1 and default modes.
-- `-XX:OnOutOfMemoryError` runs no command, and `StackWalker`
+- `-XX:OnOutOfMemoryError` runs its commands under Node only, and `StackWalker`
   has no live locals or operands. A virtual thread that yields while it
   holds a monitor stays pinned to its carrier.
 - `ThreadMXBean` describes threads and finds deadlocks, but has no CPU times

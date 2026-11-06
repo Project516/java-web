@@ -860,6 +860,8 @@ java/lang/Package/PackageVersionTest.java
 java/lang/PrimitiveSumMinMaxTest.java
 java/lang/Process/WaitFor.java
 java/lang/Process/WaitForDuration.java
+java/lang/ProcessBuilder/Basic.java#2
+java/lang/ProcessBuilder/Basic.java#3
 java/lang/ProcessBuilder/CloseRace.java
 java/lang/ProcessBuilder/DestroyTest.java
 java/lang/ProcessBuilder/InheritIOEHandle.java

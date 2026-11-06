@@ -1,6 +1,7 @@
 // Node entry: java-web [-cp path] [-Dk=v] [--debug] Main [args] | -jar app.jar [args]
 
 import { isAssertionFlag, parseAssertions } from "./assertions.ts";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,7 +17,7 @@ import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend, imageFd } from "./image.ts";
 import { NodeNet } from "./net-node.ts";
-import { processNatives } from "./process-node.ts";
+import { ENV_CHANNEL, javaChild, processNatives } from "./process-node.ts";
 import { PendingThrow } from "./thread.ts";
 import { heapSize } from "./heapsize.ts";
 import { clearAllocationCheck, hasMaxHeap, MAX_HEAP, resetAllocationCheck, setAllocationCheck, setMaxHeap } from "./runtime.ts";
@@ -292,6 +293,10 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
+  onOutOfMemoryError?: string[];
+  // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
+  vmOutputToStderr?: boolean;
   // what InetAddress.getLocalHost() reports instead of the host's name
   hostName?: string;
   // what System.getenv() returns instead of the host's environment
@@ -345,6 +350,23 @@ function hostOut(s: NodeJS.WriteStream) {
 }
 function onOutError(this: NodeJS.WriteStream) {
   broken.add(this);
+}
+
+// What HotSpot does on the first OutOfMemoryError: it prints the commands and
+// runs each through /bin/sh, with %p the process id, before throwing.
+function runOnOutOfMemory(commands: string[], message: string | null, out: ((b: Uint8Array) => void) | undefined, fd: number, java: string[]) {
+  const say = (line: string) => out ? out(new TextEncoder().encode(line + "\n")) : fs.writeSync(fd, line + "\n");
+  say(`#\n# java.lang.OutOfMemoryError: ${message ?? "null"}`);
+  for (const raw of commands) {
+    say(`# -XX:OnOutOfMemoryError="${raw}"`);
+    for (const part of raw.split(";")) {
+      const cmd = part.replaceAll("%p", String(process.pid));
+      say(`#   Executing /bin/sh -c "${cmd}"...`);
+      // java.home is not a host path, so a command that starts java-web's java starts it directly
+      const run = cmd.replace(/^\s*(\/jdk\/bin\/java|java)(?=\s|$)/, java.map((w) => `'${w.replaceAll("'", "'\\''")}'`).join(" "));
+      spawnSync("/bin/sh", ["-c", run], { stdio: "inherit" });
+    }
+  }
 }
 
 function defaultSnapshotDir(): string | null {
@@ -505,6 +527,7 @@ function nodeVm(o: NodeRunOptions): JVM {
       process.stdin.resume();
     }),
     afterBoot: resetAllocationCheck,
+    onOutOfMemory: o.onOutOfMemoryError && ((message) => runOnOutOfMemory(o.onOutOfMemoryError!, message, o.vmOutputToStderr ? o.stderr : o.stdout, o.vmOutputToStderr ? 2 : 1, javaChild(fileURLToPath(import.meta.url), jdk, packaged))),
   });
   vm.registerNatives(processNatives(fileURLToPath(import.meta.url), jdk, packaged, o.input === undefined));
   bridges.set(vm, bridge);
@@ -576,12 +599,33 @@ export function moduleFlag(o: NodeRunOptions, arg: string, next: string | undefi
   return true;
 }
 
+// java -version: the launcher's three lines, built from the VM's properties
+async function printVersion(o: NodeRunOptions) {
+  const vm = await startLibrary(o);
+  const System = await libraryOf(vm).java.lang.System;
+  const [version, date, runtimeName, vendor, runtime, vmName, vmVersion, vmInfo] = await Promise.all(
+    ["java.version", "java.version.date", "java.runtime.name", "java.vendor.version", "java.runtime.version", "java.vm.name", "java.vm.version", "java.vm.info"]
+      .map((k) => System.getProperty(k)));
+  const extra = vendor ? `${vendor} ` : "";
+  process.stderr.write(`openjdk version "${version}" ${date}${/-LTS$/.test(runtime) ? " LTS" : ""}\n` +
+    `${runtimeName} ${extra}(build ${runtime})\n${vmName} ${extra}(build ${vmVersion}, ${vmInfo})\n`);
+  vm.halt(0);
+}
+
 // the java-web command, which dist/cli.js runs
 export function main(argv: string[]) {
   const o: NodeRunOptions = { classpath: ["."], props: {} };
   let i = 0;
+  let version = false;
   const javaChild = argv[0] === "--java-child";
-  if (javaChild) i++;
+  if (javaChild) {
+    i++;
+    const sent = process.env[ENV_CHANNEL];
+    if (sent !== undefined) {
+      o.env = JSON.parse(sent);
+      delete process.env[ENV_CHANNEL];
+    }
+  }
   for (; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-cp" || a === "-classpath" || a === "--class-path") o.classpath = argv[++i].split(":");
@@ -594,6 +638,7 @@ export function main(argv: string[]) {
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
     else if (a === "--locale-data") o.localeData = true;
+    else if (a === "-version") version = true;
     else if (a.startsWith("-Xmx")) {
       // x64 HotSpot refuses to start below 2 MB and rounds up to 2 MB steps
       const n = /^-Xmx\d+[kmg]?$/i.test(a) ? heapSize(a.slice(4)) : 0;
@@ -604,6 +649,9 @@ export function main(argv: string[]) {
       }
       setMaxHeap(Math.ceil(n / 2 ** 21) * 2 ** 21);
     }
+    else if (a === "-XX:+DisplayVMOutputToStderr") o.vmOutputToStderr = true;
+    else if (a === "-XX:-DisplayVMOutputToStderr") o.vmOutputToStderr = false;
+    else if (a.startsWith("-XX:OnOutOfMemoryError=")) (o.onOutOfMemoryError ??= []).push(a.slice(23));
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
@@ -615,6 +663,13 @@ export function main(argv: string[]) {
     else { o.mainClass = a; i++; break; }
   }
   o.args = argv.slice(i);
+  if (version) {
+    printVersion(o).then(() => process.exit(0), (e) => {
+      console.error(`java-web: ${(e as Error).message}`);
+      process.exit(1);
+    });
+    return;
+  }
   if (!o.mainClass && !o.jar) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);

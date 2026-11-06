@@ -22,6 +22,10 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
+  onOutOfMemoryError?: string[];
+  // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
+  vmOutputToStderr?: boolean;
   // what InetAddress.getLocalHost() reports instead of the host's name
   hostName?: string;
   // what System.getenv() returns instead of the host's environment

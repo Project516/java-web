@@ -57,6 +57,8 @@ export interface JvmOptions {
   loadNativeLibrary?: (path: string) => Promise<void>;
   // told when Java closes a file it wrote
   fileClosed?: (path: string) => void;
+  // runs before the first OutOfMemoryError the VM throws is created
+  onOutOfMemory?: (message: string | null) => void;
   // log VM internals to the host console
   debug?: boolean;
   assertions?: Assertions;
@@ -837,6 +839,7 @@ export class JVM {
 
   *newThrowable(t: JThread, name: string, msg: string | null, cause: JObject | null = null,
     ctor?: { desc: string; args: any[] }): NativeGen {
+    if (name === "java/lang/OutOfMemoryError") this.reportOutOfMemory(msg);
     const c = this.loadBootOrFail(name);
     if (c.state !== INITIALIZED) yield* this.initGen(t, c);
     const o = this.newObject(c);
@@ -850,6 +853,13 @@ export class JVM {
       yield t.call(c.methodMap.get("<init>(Ljava/lang/String;)V")!, o, this.str(msg));
     }
     return o;
+  }
+
+  private oomReported = false;
+  private reportOutOfMemory(msg: string | null) {
+    if (this.oomReported || !this.opts.onOutOfMemory) return;
+    this.oomReported = true;
+    this.opts.onOutOfMemory(msg);
   }
 
   // native: the native method throwing it, shown in its stack trace
