@@ -25,6 +25,7 @@ import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
 import { dumpVM, restoreVM, snapshotKey } from "./snapshot.ts";
 import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
+import type { SavedJit } from "./jit.ts";
 import type { LibraryRequest } from "./library.ts";
 import type { HostNative } from "./hostnatives.ts";
 import { PROXY_HOST, PROXY_PORT } from "./http-proxy.ts";
@@ -143,6 +144,10 @@ export class JVM {
   classCount = 0;
   // every class in creation order, until the snapshot after boot is taken
   created: JClass[] | null;
+  // Generated JS of compiled methods: kept until the warm snapshot is saved,
+  // then (after a warm restore) compiled on each method's first call.
+  keepJit: boolean;
+  jitCode = new Map<JMethod, SavedJit>();
   threadsStarted = 0;
   peakThreads = 0;
   exitCode: number | null = null;
@@ -159,6 +164,7 @@ export class JVM {
 
   constructor(opts: JvmOptions) {
     this.created = opts.snapshots ? [] : null;
+    this.keepJit = !!(opts.warmSnapshot && opts.warmSnapshots && opts.snapshots);
     this.opts = opts;
     this.fs = opts.fs;
     const extra = ipv4Literal(opts.hostName);
@@ -1139,8 +1145,15 @@ export class JVM {
       this.warmTraceActive = this.fs.beginWarmTrace();
       this.warmTraceClasses = this.classCount;
     }
+    // no warm snapshot will be taken (a restored VM keeps its saved code)
+    if (!this.warmTraceActive && this.keepJit) this.dropJit();
     started();
     yield* this.library.loop(t);
+  }
+
+  private dropJit() {
+    this.keepJit = false;
+    this.jitCode.clear();
   }
 
   libraryIdle(t: JThread) {
@@ -1156,6 +1169,7 @@ export class JVM {
       if (!trace) {
         this.fs.endWarmTrace();
         this.warmTraceActive = false;
+        this.dropJit();
         this.debug("warm snapshot busy: access record too large");
         return;
       }
@@ -1167,6 +1181,7 @@ export class JVM {
       this.fs.endWarmTrace();
       this.warmTraceActive = false;
       this.warmSaved = true;
+      this.dropJit();
       for (const c of this.created ?? []) c.bytes = undefined;
       this.created = null;
       this.debug("warm snapshot saved");
@@ -1262,6 +1277,7 @@ export class JVM {
           return false;
         }
         try {
+          this.dropJit();
           restoreVM(this, image, t);
           this.warmRestored = true;
           this.warmSaved = true;
@@ -1326,6 +1342,7 @@ export class JVM {
     if (!this.opts.warmSnapshot || !this.libraryStarting) {
       for (const c of this.created ?? []) c.bytes = undefined;
       this.created = null;
+      this.dropJit();
     }
     if (cmd !== undefined) {
       this.props.set("sun.java.command", cmd);
