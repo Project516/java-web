@@ -44,6 +44,10 @@ node scripts/jtreg/run.ts <jdk-source> java/lang
 without the `+build` part. A sparse checkout of `test/lib` and the test
 directories is enough.
 
+The runner evaluates a test's `@requires` as jtreg does on a release Linux
+HotSpot with default options (for example `vm.continuations` is true and
+`vm.debug` is false); a test that needs more is skipped.
+
 `test/jtreg/passing.txt` lists the tests CI runs, with `--only-passing`.
 `--shard k/n` splits them into n shards of about equal run time, using each
 test's time on java-web from `test/jtreg/times.tsv` (the median for a test

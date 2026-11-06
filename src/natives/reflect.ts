@@ -58,7 +58,7 @@ function* exceptionTypes(t: JThread, m: JMethod): NativeGen {
   return t.vm.newObjectArray("java/lang/Class", out);
 }
 
-function* initialized(t: JThread, name: string): NativeGen {
+export function* initialized(t: JThread, name: string): NativeGen {
   const c = t.vm.loadBoot(name)!;
   if (c.state !== INITIALIZED) yield* t.vm.initGen(t, c);
   return c;

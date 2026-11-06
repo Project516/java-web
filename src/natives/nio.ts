@@ -6,7 +6,7 @@ import type { Stat } from "../fs.ts";
 import { preCloseSock } from "../sockets.ts";
 import { closeInotify, sockRead, sockReadv, sockWrite, sockWritev } from "./sockets.ts";
 import { JThread, PendingThrow } from "../thread.ts";
-import { closeFd, endsInDot, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
+import { closeFd, DirectoryFile, newFd, fileInode, fileOf, flush, flushOrThrow, openFile, removePath, renamePath, resolvePath, setMtime, syncPath, writeFailed } from "./io.ts";
 import type { OpenFile } from "./io.ts";
 import type { Natives } from "./util.ts";
 
@@ -27,13 +27,13 @@ const MESSAGES: Record<number, string> = {
 
 // errno numbers of the host errors Node reports by name
 const HOST_ERRNO: Record<string, number> = {
-  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, ENOTDIR, EINVAL, ENOSPC, EROFS, ELOOP,
+  EPERM, ENOENT, EINTR, EIO, EBADF, ENOMEM, EACCES, EEXIST, EXDEV, ENOTDIR, EISDIR, EINVAL, ENOSPC, EROFS, ELOOP, ENOTEMPTY, ENOSYS,
   ENOTSUP, EOPNOTSUPP: ENOTSUP, ESTALE, ENAMETOOLONG, EDQUOT,
 };
 
 // Linux open(2) flags
-const O_ACCMODE = 3, O_CREAT = 0o100, O_EXCL = 0o200, O_TRUNC = 0o1000, O_APPEND = 0o2000;
-const S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFCHR = 0o020000;
+const O_ACCMODE = 3, O_DIRECTORY = 0o200000, O_NOFOLLOW = 0o400000, O_CREAT = 0o100, O_EXCL = 0o200, O_TRUNC = 0o1000, O_APPEND = 0o2000;
+const S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFCHR = 0o020000, S_IFLNK = 0o120000;
 
 export function unixError(errno: number): never {
   throw new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [errno] });
@@ -57,6 +57,76 @@ function path(t: JThread, addr: bigint) {
   return resolvePath(t, cstring(t, addr));
 }
 
+const SUPPORTS_OPENAT = 2;
+const AT_SYMLINK_NOFOLLOW = 0x100, AT_FDCWD = -100, AT_REMOVEDIR = 0x200;
+
+// path(2) relative to the directory behind dfd, as the *at system calls resolve it
+function pathAt(t: JThread, dfd: number, p: bigint): string {
+  const name = cstring(t, p);
+  if (dfd === AT_FDCWD || name.startsWith("/")) return resolvePath(t, name);
+  const dir = t.vm.state.get("fds")?.files.get(dfd);
+  if (!dir) unixError(EBADF);
+  if (!(dir instanceof DirectoryFile)) unixError(ENOTDIR);
+  if (!dir.path) unixError(ENOENT);
+  return resolvePath(t, `${dir.path}/${name}`);
+}
+
+// the last path component, ignoring trailing slashes
+function lastComponent(p: string): string | undefined {
+  return p.replace(/\/+$/, "").split("/").pop();
+}
+
+// the descriptor's file, or EBADF as the system calls give for one that is not open
+function openFileOf(t: JThread, fd: number) {
+  const f = t.vm.state.get("fds")?.files.get(fd);
+  if (!f) unixError(EBADF);
+  return f;
+}
+
+function removeDir(t: JThread, abs: string) {
+  const st = t.vm.fs.lstat(abs);
+  if (!st) unixError(ENOENT);
+  if (!st.dir) unixError(ENOTDIR);
+  if (!removePath(t, abs)) unixError(ENOTEMPTY);
+}
+
+function unlinkAbs(t: JThread, abs: string) {
+  const st = t.vm.fs.lstat(abs);
+  if (!st) unixError(ENOENT);
+  if (st.dir && st.link === undefined) unixError(EISDIR);
+  if (!removePath(t, abs)) unixError(EROFS);
+}
+
+function renameAbs(t: JThread, from: string, to: string) {
+  if (!t.vm.fs.lstat(from)) unixError(ENOENT);
+  if (!renamePath(t, from, to)) unixError(EXDEV);
+}
+
+function openAbs(t: JThread, abs: string, flags: number, mode: number): number {
+  const st = t.vm.fs.stat(abs);
+  if ((flags & O_CREAT) && (flags & O_EXCL) && (st || t.vm.fs.lstat(abs))) unixError(EEXIST);
+  if (!st && !(flags & O_CREAT)) unixError(ENOENT);
+  if (flags & O_NOFOLLOW && t.vm.fs.lstat(abs)?.link !== undefined) unixError(ELOOP);
+  if (flags & O_DIRECTORY && st && !st.dir) unixError(ENOTDIR);
+  const write = (flags & O_ACCMODE) !== 0;
+  if (st?.dir && write) unixError(EISDIR);
+  if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
+  if (st && !st.dir && (flags & O_ACCMODE) !== 1 && !t.vm.fs.access(abs, 4)) unixError(EACCES);
+  try {
+    const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1, true);
+    fileOf(t, fd).ino = fileInode(t, abs);
+    if (!st) applyCreateMode(t, abs, mode);
+    return fd;
+  } catch (e) {
+    if (e instanceof PendingThrow) {
+      // a new file the host would not create: its reason
+      const host = st ? undefined : HOST_ERRNO[t.vm.fs.writeError(abs) ?? ""];
+      unixError(host ?? (t.vm.fs.writable(abs) ? ENOENT : EROFS));
+    }
+    throw e;
+  }
+}
+
 function chmod(t: JThread, p: string, mode: number) {
   const fs = t.vm.fs;
   const result = fs.chmod(p, (old) => (old & ~0o7777) | (mode & 0o7777));
@@ -71,17 +141,30 @@ function chmod(t: JThread, p: string, mode: number) {
   unixError(HOST_ERRNO[fs.chmodError(p) ?? "EIO"] ?? EIO);
 }
 
-function fillAttrs(t: JThread, attrs: JObject, p: string): number {
+function accountId(t: JThread, name: string): number {
+  if (name === "root") return 0;
+  return name === (t.vm.props.get("user.name") ?? "user") ? 1000 : -1;
+}
+
+let processUmask: number | undefined;
+
+// open(2) and mkdir(2) give a new file the requested mode less the umask
+function applyCreateMode(t: JThread, abs: string, mode: number) {
+  processUmask ??= (globalThis as any).process?.umask?.() ?? 0o022;
+  t.vm.fs.chmod(abs, (old) => (old & ~0o7777) | (mode & ~processUmask! & 0o7777));
+}
+
+function fillAttrs(t: JThread, attrs: JObject, p: string, follow = true): number {
   syncPath(t, p);
-  const st = t.vm.fs.stat(p);
+  const st = follow ? t.vm.fs.stat(p) : t.vm.fs.lstat(p);
   if (!st) return ENOENT;
-  fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p));
+  fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p, st), st.size, st.nlink ?? 1);
   return 0;
 }
 
 function fillStat(t: JThread, attrs: JObject, st: Stat, writable: boolean, ino: number, size = st.size, nlink = 1) {
   const vm = t.vm, A = "sun/nio/fs/UnixFileAttributes";
-  const mode = st.device ? S_IFCHR | 0o666 : (st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
+  const mode = st.device ? S_IFCHR | 0o666 : (st.link !== undefined ? S_IFLNK : st.dir ? S_IFDIR : S_IFREG) | (st.mode ?? (st.dir ? (writable ? 0o755 : 0o555) : (writable ? 0o644 : 0o444)));
   let sec = BigInt(Math.floor(st.mtime / 1000)), nsec = BigInt(Math.floor((st.mtime % 1000) * 1e6));
   if (st.mtimeNs !== undefined) {
     sec = st.mtimeNs / 1_000_000_000n;
@@ -107,7 +190,7 @@ function mountTables(t: JThread): Map<number, boolean> {
   return m;
 }
 
-interface Dir { names: string[]; pos: number }
+interface Dir { names: string[]; pos: number; fd?: number }
 
 function dirs(t: JThread): Map<bigint, Dir> {
   let m = t.vm.state.get("dirs");
@@ -120,12 +203,12 @@ let nextDir = 1n;
 const N = "sun/nio/fs/UnixNativeDispatcher.";
 
 export const natives: Natives = {
-  [`${N}init()I`]: () => 0,
+  [`${N}init()I`]: () => SUPPORTS_OPENAT,
   [`${N}getcwd()[B`]: (t) => bytes(t, t.vm.opts.cwd ?? "/"),
   [`${N}strerror(I)[B`]: (t, [errno]) => bytes(t, MESSAGES[errno] ?? `errno ${errno}`),
   [`${N}stat0(JLsun/nio/fs/UnixFileAttributes;)I`]: (t, [p, attrs]) => fillAttrs(t, attrs, path(t, p)),
   [`${N}lstat0(JLsun/nio/fs/UnixFileAttributes;)V`]: (t, [p, attrs]) => {
-    const err = fillAttrs(t, attrs, path(t, p));
+    const err = fillAttrs(t, attrs, path(t, p), false);
     if (err) unixError(err);
   },
   [`${N}fstat0(ILsun/nio/fs/UnixFileAttributes;)V`]: (t, [fd, attrs]) => {
@@ -143,64 +226,71 @@ export const natives: Natives = {
     if (!t.vm.fs.stat(abs)) return ENOENT;
     return t.vm.fs.access(abs, amode) ? 0 : EACCES;
   },
-  [`${N}open0(JII)I`]: (t, [p, flags]) => {
-    const abs = path(t, p);
-    const st = t.vm.fs.stat(abs);
-    if ((flags & O_CREAT) && (flags & O_EXCL) && st) unixError(EEXIST);
-    if (!st && !(flags & O_CREAT)) unixError(ENOENT);
-    const write = (flags & O_ACCMODE) !== 0;
-    if (st?.dir && write) unixError(EISDIR);
-    if ((write || !st) && t.vm.fs.denied(abs)) unixError(EACCES);
-    try {
-      const fd = openFile(t, abs, write, (flags & O_TRUNC) !== 0, (flags & O_APPEND) !== 0, (flags & O_ACCMODE) !== 1, true);
-      fileOf(t, fd).ino = fileInode(t, abs);
-      return fd;
-    } catch (e) {
-      if (e instanceof PendingThrow) {
-        // a new file the host would not create: its reason
-        const host = st ? undefined : HOST_ERRNO[t.vm.fs.writeError(abs) ?? ""];
-        unixError(host ?? (t.vm.fs.writable(abs) ? ENOENT : EROFS));
-      }
-      throw e;
-    }
+  [`${N}open0(JII)I`]: (t, [p, flags, mode]) => openAbs(t, path(t, p), flags, mode),
+  [`${N}openat0(IJII)I`]: (t, [dfd, p, flags, mode]) => openAbs(t, pathAt(t, dfd, p), flags, mode),
+  [`${N}unlinkat0(IJI)V`]: (t, [dfd, p, flag]) => {
+    const last = lastComponent(cstring(t, p));
+    const abs = pathAt(t, dfd, p);
+    if (last === "." || last === "..") unixError(flag & AT_REMOVEDIR ? (last === "." ? EINVAL : ENOTEMPTY) : EISDIR);
+    if (flag & AT_REMOVEDIR) removeDir(t, abs);
+    else unlinkAbs(t, abs);
+  },
+  [`${N}renameat0(IJIJ)V`]: (t, [sfd, a, dfd, b]) => renameAbs(t, pathAt(t, sfd, a), pathAt(t, dfd, b)),
+  [`${N}fstatat0(IJILsun/nio/fs/UnixFileAttributes;)V`]: (t, [dfd, p, flag, attrs]) => {
+    const err = fillAttrs(t, attrs, pathAt(t, dfd, p), !(flag & AT_SYMLINK_NOFOLLOW));
+    if (err) unixError(err);
+  },
+  [`${N}fchmodat0(IJII)V`]: (t, [dfd, p, mode]) => chmod(t, pathAt(t, dfd, p), mode),
+  [`${N}fdopendir(I)J`]: (t, [fd]) => {
+    const f = openFileOf(t, fd);
+    if (!t.vm.fs.stat(f.path)?.dir) unixError(ENOTDIR);
+    const id = nextDir++;
+    dirs(t).set(id, { names: t.vm.fs.list(f.path) ?? [], pos: 0, fd });
+    return id;
+  },
+  [`${N}dup(I)I`]: (t, [fd]) => {
+    const f = openFileOf(t, fd);
+    const copy = newFd(t);
+    t.vm.state.get("fds").files.set(copy, f);
+    f.retain();
+    return copy;
   },
   [`${N}close0(I)V`]: (t, [fd]) => {
     closeInotify(t, fd);
     closeFd(t, fd);
   },
-  [`${N}dup(I)I`]: () => unixError(ENOSYS),
-  [`${N}mkdir0(JI)V`]: (t, [p]) => {
+  [`${N}mkdir0(JI)V`]: (t, [p, mode]) => {
     const abs = path(t, p);
-    if (t.vm.fs.stat(abs)) unixError(EEXIST);
+    if (t.vm.fs.lstat(abs)) unixError(EEXIST);
     if (!t.vm.fs.mkdir(abs)) unixError(t.vm.fs.writable(abs) ? ENOENT : EROFS);
+    applyCreateMode(t, abs, mode);
   },
   [`${N}rmdir0(J)V`]: (t, [p]) => {
-    if (endsInDot(cstring(t, p))) unixError(EINVAL);
-    const abs = path(t, p);
-    const st = t.vm.fs.stat(abs);
-    if (!st) unixError(ENOENT);
-    if (!st.dir) unixError(ENOTDIR);
-    if (!removePath(t, abs)) unixError(ENOTEMPTY);
+    const last = lastComponent(cstring(t, p));
+    if (last === "." || last === "..") unixError(last === "." ? EINVAL : ENOTEMPTY);
+    removeDir(t, path(t, p));
   },
-  [`${N}unlink0(J)V`]: (t, [p]) => {
-    const abs = path(t, p);
-    const st = t.vm.fs.stat(abs);
-    if (!st) unixError(ENOENT);
-    if (st.dir) unixError(EISDIR);
-    if (!removePath(t, abs)) unixError(EROFS);
-  },
-  [`${N}rename0(JJ)V`]: (t, [a, b]) => {
-    if (!t.vm.fs.stat(path(t, a))) unixError(ENOENT);
-    if (!renamePath(t, path(t, a), path(t, b))) unixError(EXDEV);
-  },
+  [`${N}unlink0(J)V`]: (t, [p]) => unlinkAbs(t, path(t, p)),
+  [`${N}rename0(JJ)V`]: (t, [a, b]) => renameAbs(t, path(t, a), path(t, b)),
   [`${N}realpath0(J)[B`]: (t, [p]) => {
     const abs = path(t, p);
     if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    return bytes(t, abs);
+    return bytes(t, t.vm.fs.realpath(abs) ?? abs);
   },
-  [`${N}readlink0(J)[B`]: () => unixError(EINVAL),
-  [`${N}symlink0(JJ)V`]: () => unixError(ENOSYS),
-  [`${N}link0(JJ)V`]: () => unixError(ENOSYS),
+  [`${N}readlink0(J)[B`]: (t, [p]) => {
+    const r = t.vm.fs.readlink(path(t, p));
+    if ("code" in r) unixError(HOST_ERRNO[r.code] ?? EIO);
+    return bytes(t, r.target);
+  },
+  [`${N}symlink0(JJ)V`]: (t, [target, p]) => {
+    const code = t.vm.fs.symlink(cstring(t, target), path(t, p));
+    if (code) unixError(HOST_ERRNO[code] ?? EIO);
+  },
+  [`${N}link0(JJ)V`]: (t, [existing, p]) => {
+    syncPath(t, path(t, existing));
+    const code = t.vm.fs.link(path(t, existing), path(t, p));
+    if (code) unixError(HOST_ERRNO[code] ?? EIO);
+  },
   [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
     chmod(t, path(t, p), mode);
   },
@@ -221,10 +311,10 @@ export const natives: Natives = {
   [`${N}lchown0(JII)V`]: () => undefined,
   [`${N}fchown0(III)V`]: () => undefined,
   // times in nanoseconds; only the modification time is kept
-  [`${N}utimensat0(IJJJI)V`]: (t, [, p, , mtime]) => {
-    const abs = path(t, p);
-    if (!t.vm.fs.stat(abs)) unixError(ENOENT);
-    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime))) unixError(EROFS);
+  [`${N}utimensat0(IJJJI)V`]: (t, [dfd, p, , mtime, flags]) => {
+    const abs = pathAt(t, dfd, p);
+    if (!t.vm.fs.lstat(abs)) unixError(ENOENT);
+    if (!setMtime(t, abs, Number(mtime) / 1e6, BigInt(mtime), (flags & AT_SYMLINK_NOFOLLOW) !== 0)) unixError(EROFS);
   },
   [`${N}futimens0(IJJ)V`]: (t, [fd, , mtime]) => {
     const f = fileOf(t, fd);
@@ -244,11 +334,16 @@ export const natives: Natives = {
     if (!d) unixError(EBADF);
     return d.pos < d.names.length ? bytes(t, d.names[d.pos++]) : null;
   },
-  [`${N}closedir(J)V`]: (t, [id]) => void dirs(t).delete(id),
-  [`${N}getpwuid(I)[B`]: (t) => bytes(t, t.vm.props.get("user.name") ?? "user"),
-  [`${N}getgrgid(I)[B`]: (t) => bytes(t, t.vm.props.get("user.name") ?? "user"),
-  [`${N}getpwnam0(J)I`]: () => 1000,
-  [`${N}getgrnam0(J)I`]: () => 1000,
+  [`${N}closedir(J)V`]: (t, [id]) => {
+    const fd = dirs(t).get(id)?.fd;
+    dirs(t).delete(id);
+    if (fd !== undefined) closeFd(t, fd);
+  },
+  [`${N}getpwuid(I)[B`]: (t, [id]) => bytes(t, id === 0 ? "root" : t.vm.props.get("user.name") ?? "user"),
+  [`${N}getgrgid(I)[B`]: (t, [id]) => bytes(t, id === 0 ? "root" : t.vm.props.get("user.name") ?? "user"),
+  // the user and root are the only accounts; -1 for any other name
+  [`${N}getpwnam0(J)I`]: (t, [p]) => accountId(t, cstring(t, p)),
+  [`${N}getgrnam0(J)I`]: (t, [p]) => accountId(t, cstring(t, p)),
   [`${N}fchmodatNoFollowSupported0()Z`]: () => 0,
   [`${N}statvfs0(JLsun/nio/fs/UnixFileStoreAttributes;)V`]: (t, [p, attrs]) => {
     const abs = path(t, p);

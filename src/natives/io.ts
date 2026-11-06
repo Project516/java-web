@@ -6,7 +6,7 @@ import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { FileHandle, Stat, VFS } from "../fs.ts";
-import { closeSockFd } from "../sockets.ts";
+import { closeSockFd, socksOf } from "../sockets.ts";
 import { nonNull, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
@@ -45,6 +45,10 @@ interface Contents {
   host?: FileHandle;
   hostWritable?: boolean;
   hostReadable?: boolean;
+  // a host descriptor that keeps the file's inode alive, as an open descriptor does on Linux
+  pin?: FileHandle;
+  // the host inode these bytes came from, where the host has them
+  ino?: number;
 }
 
 // Opens a file's host handle when it outgrows memory. Kept apart from the
@@ -66,6 +70,8 @@ function closeHostsOnExit(vm: JVM) {
     for (const f of tab?.files.values() ?? []) {
       f.contents.host?.close();
       f.contents.host = undefined;
+      f.contents.pin?.close();
+      f.contents.pin = undefined;
     }
   });
 }
@@ -181,6 +187,8 @@ export class OpenFile {
       return false;
     }
     c.host = host;
+    c.pin?.close();
+    c.pin = undefined;
     c.hostWritable = true;
     c.data = new Uint8Array(0);
     c.dirty = false;
@@ -190,16 +198,18 @@ export class OpenFile {
   // a mapping keeps the file open after its descriptor closes
   retain() { this.contents.refs++; }
   release() {
-    if (--this.contents.refs === 0 && this.contents.host) {
-      this.contents.host.close();
-      this.contents.host = undefined;
-    }
+    const c = this.contents;
+    if (--c.refs > 0) return;
+    c.host?.close();
+    c.host = undefined;
+    c.pin?.close();
+    c.pin = undefined;
   }
   close() { this.release(); }
 }
 
 // A read-only directory descriptor can be opened, but cannot be read as bytes.
-class DirectoryFile extends OpenFile {
+export class DirectoryFile extends OpenFile {
   constructor(path: string, size: number) {
     super(path, new Uint8Array(0), false);
     this.size = size;
@@ -277,7 +287,8 @@ function table(t: JThread): FdTable {
   return tab;
 }
 
-export function fileInode(t: JThread, path: string): number {
+export function fileInode(t: JThread, path: string, st: Stat | null = t.vm.fs.stat(path)): number {
+  if (st?.ino !== undefined) return st.ino;
   let inodes = t.vm.state.get("inodes") as Map<string, number> | undefined;
   if (!inodes) t.vm.state.set("inodes", (inodes = new Map()));
   const ino = inodes.get(path);
@@ -316,14 +327,15 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     tab.files.set(tab.next, new DirectoryFile(abs, st.size));
     return tab.next++;
   }
-  const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile)?.contents : undefined;
+  const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile && (o.contents.ino === undefined || o.contents.ino === st.ino))?.contents : undefined;
   if (st?.device || (st && !shared && !write && st.size >= LAZY_MIN && fs.canReadRange(abs))) {
     const tab = table(t);
     tab.files.set(tab.next, st.device ? new DeviceFile(abs) : new LazyFile(abs, st.size, fs));
     return tab.next++;
   }
   if (write && fs.denied(abs)) notFound(path, "Permission denied");
-  if (st && !shared && !truncate && st.size >= STREAM_MIN && fs.canOpenFile(abs, write)) {
+  // a file too big to hold, or one that may be written but not read, goes through a host handle
+  if (st && !shared && !truncate && (st.size >= STREAM_MIN || (write && !fs.access(abs, 4))) && fs.canOpenFile(abs, write)) {
     const host = openHost(fs, abs, write, readable);
     if (host) {
       closeHostsOnExit(t.vm);
@@ -355,6 +367,8 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     Object.assign(shared, { host, hostWritable: w, hostReadable: r });
   }
   const f = new OpenFile(abs, data, write, shared);
+  if (!shared) f.contents.ino = (st ?? fs.stat(abs))?.ino;
+  if (!f.contents.host && !f.contents.pin) pinInode(t, f.contents, abs, write, readable);
   // only a writer can grow a file, so read-only files never hold an opener
   if (write && !hostOpeners.has(f.contents) && fs.canOpenFile(abs, true)) {
     const vm = t.vm;
@@ -375,6 +389,17 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
   return fd;
 }
 
+// Only a writable host tree can lose the file while it is open, and only one
+// that reports inode numbers can reuse them.
+function pinInode(t: JThread, c: Contents, abs: string, write: boolean, readable: boolean) {
+  const fs = t.vm.fs;
+  if (c.ino === undefined || !fs.canOpenFile(abs, true)) return;
+  const pin = openHost(fs, abs, false, true) ?? (write ? openHost(fs, abs, true, readable) : undefined);
+  if (pin?.ino() !== c.ino) return pin?.close();
+  c.pin = pin;
+  closeHostsOnExit(t.vm);
+}
+
 function openHost(fs: VFS, abs: string, write: boolean, readable: boolean): FileHandle | undefined {
   try { return fs.openFile(abs, write, false, readable); }
   catch { return undefined; }
@@ -387,9 +412,9 @@ export function syncPath(t: JThread, abs: string) {
 }
 
 // Pending writes go out first, so closing the file later does not change the time again.
-export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint): boolean {
+export function setMtime(t: JThread, abs: string, ms: number, ns?: bigint, noFollow = false): boolean {
   syncPath(t, abs);
-  return t.vm.fs.setMtime(abs, ms, ns);
+  return t.vm.fs.setMtime(abs, ms, ns, noFollow);
 }
 
 // write(2) on a descriptor opened read-only fails with EBADF.
@@ -437,6 +462,13 @@ export function flushOrThrow(t: JThread, f: OpenFile) {
 
 export function writeFailed(t: JThread, path: string): PendingThrow {
   return new PendingThrow("java/io/IOException", ERRNO[t.vm.fs.writeError(path) ?? ""] ?? "Input/output error");
+}
+
+// Descriptors the program holds, with the three standard streams.
+export function openFdCount(vm: JVM): number {
+  const files = (vm.state.get("fds") as FdTable | undefined)?.files.size ?? 0;
+  const pipeCount = (vm.state.get("processPipes") as Map<number, unknown> | undefined)?.size ?? 0;
+  return 3 + files + pipeCount + socksOf(vm.state).size;
 }
 
 export function newFd(t: JThread): number {
@@ -501,8 +533,8 @@ export function removePath(t: JThread, abs: string): boolean {
 }
 
 function detachFile(t: JThread, f: OpenFile) {
-  f.ino ??= fileInode(t, f.path);
   const stat = t.vm.fs.stat(f.path);
+  f.ino ??= fileInode(t, f.path, stat);
   if (stat) f.detached = { path: f.path, stat, writable: t.vm.fs.writable(f.path) };
 }
 
@@ -729,7 +761,10 @@ export const natives: Natives = {
     f.setLength(Number(n));
   },
 
-  [`${UFS}.canonicalize0(Ljava/lang/String;)Ljava/lang/String;`]: (t, [, p]) => t.vm.str(resolvePath(t, t.vm.jsString(p))),
+  [`${UFS}.canonicalize0(Ljava/lang/String;)Ljava/lang/String;`]: (t, [, p]) => {
+    const abs = resolvePath(t, t.vm.jsString(p));
+    return t.vm.str(t.vm.fs.realpath(abs) ?? abs);
+  },
   [`${UFS}.getBooleanAttributes0(Ljava/io/File;)I`]: (t, [, f]) => attrs(t, f),
   [`${UFS}.checkAccess0(Ljava/io/File;I)Z`]: (t, [, f, access]) => {
     const abs = resolvePath(t, pathOf(t, f));
@@ -752,8 +787,9 @@ export const natives: Natives = {
     return chmod(t, f, (m) => (enable ? m | bits : m & ~bits));
   },
   [`${UFS}.createFileExclusively0(Ljava/lang/String;)Z`]: (t, [, p]) => {
+    if (t.vm.jsString(p) === "") throw new PendingThrow("java/io/IOException", "No such file or directory");
     const abs = resolvePath(t, t.vm.jsString(p));
-    if (t.vm.fs.stat(abs)) return 0;
+    if (t.vm.fs.lstat(abs)) return 0;
     if (t.vm.fs.denied(abs)) throw new PendingThrow("java/io/IOException", "Permission denied");
     if (!t.vm.fs.write(abs, new Uint8Array(0))) throw new PendingThrow("java/io/IOException", "No such file or directory");
     return 1;

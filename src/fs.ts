@@ -20,6 +20,11 @@ export interface Stat {
   mode?: number;
   // a character device; it streams and is never read whole
   device?: boolean;
+  // lstat of a symbolic link: the length of its target, which is also its size
+  link?: number;
+  // the host's inode number and link count, so hard links and links to a file share a key
+  ino?: number;
+  nlink?: number;
 }
 
 // The same in every mount layout, so SecureRandom and the like work in the
@@ -29,6 +34,7 @@ export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/u
 // Errors carry an errno name in `code`, as Node's do.
 export interface FileHandle {
   size(): number;
+  ino(): number;
   read(dst: Uint8Array, off: number, len: number, pos: number): number;
   write(src: Uint8Array, pos: number): void;
   truncate(size: number): void;
@@ -55,7 +61,7 @@ export interface Backend {
   // the file system holding path: block size and block counts, as statvfs gives them
   space?(path: string): Space | null;
   // sets the modification time, in milliseconds since the epoch
-  setMtime?(path: string, ms: number): boolean;
+  setMtime?(path: string, ms: number, noFollow?: boolean): boolean;
   // whether the host refuses to write the file, or to create it when it is missing
   denied?(path: string): boolean;
   // sets the permission bits to f(current bits)
@@ -63,6 +69,13 @@ export interface Backend {
   chmodError?(path: string): string | undefined;
   // whether the host allows reading (4) and executing (1), as access(2)
   access?(path: string, mode: number): boolean;
+  // symbolic and hard links, for a host that has them; failures return the errno code
+  lstat?(path: string): Stat | null;
+  readlink?(path: string): { target: string } | { code: string };
+  symlink?(target: string, path: string): string | undefined;
+  link?(existing: string, path: string): string | undefined;
+  // the path with every link resolved, where the missing tail stays as written
+  realpath?(path: string): string | null;
 }
 
 export interface WarmTrace {
@@ -309,6 +322,7 @@ export class VFS {
     // writes through the handle are changes watchers see, as writes through VFS.write are
     return {
       size: () => h.size(),
+      ino: () => h.ino(),
       read: (dst, off, len, pos) => h.read(dst, off, len, pos),
       close: () => h.close(),
       write: (src, pos) => { h.write(src, pos); this.changed(path, "modify"); },
@@ -407,6 +421,45 @@ export class VFS {
     return !!r && r[0].writable;
   }
 
+  // like stat, but a symbolic link reports itself
+  lstat(path: string): Stat | null {
+    const r = this.resolve(path);
+    return (r && r[0].lstat?.(r[1])) || this.stat(path);
+  }
+
+  readlink(path: string): { target: string } | { code: string } {
+    const r = this.resolve(path);
+    return r?.[0].readlink?.(r[1]) ?? { code: this.stat(path) ? "EINVAL" : "ENOENT" };
+  }
+
+  // undefined on success, else the errno code; ENOSYS where the backend has no links
+  symlink(target: string, path: string): string | undefined {
+    const r = this.resolve(path);
+    if (!r || !r[0].writable || !r[0].symlink) return "ENOSYS";
+    const code = r[0].symlink(target, r[1]);
+    if (!code) this.changed(path, "create");
+    return code;
+  }
+
+  link(existing: string, path: string): string | undefined {
+    const a = this.resolve(existing), b = this.resolve(path);
+    if (!a || !b || a[0] !== b[0] || !b[0].writable || !b[0].link) return "ENOSYS";
+    const code = b[0].link(a[1], b[1]);
+    if (!code) this.changed(path, "create");
+    return code;
+  }
+
+  realpath(path: string): string | null {
+    const r = this.resolve(path);
+    if (!r?.[0].realpath) return null;
+    const real = r[0].realpath(r[1]);
+    if (real === null) return null;
+    const n = normalize(path);
+    // a mount point itself maps to "/" in its backend
+    const base = n.slice(0, n.length - (r[1] === "/" ? 0 : r[1].length));
+    return normalize(base + real);
+  }
+
   // A file system without its own figures reports 4 KB blocks and no space,
   // as Linux does for virtual file systems such as /proc.
   space(path: string): Space {
@@ -417,10 +470,11 @@ export class VFS {
   // ns, when given, is the exact time asked for. Hosts keep times as floating
   // point seconds or milliseconds, which lose nanoseconds, so stat reports ns
   // for as long as the file keeps the time this set.
-  setMtime(path: string, ms: number, ns?: bigint): boolean {
+  setMtime(path: string, ms: number, ns?: bigint, noFollow = false): boolean {
     const r = this.resolve(path);
-    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms)) return false;
+    if (!r || !r[0].writable || !r[0].setMtime?.(r[1], ms, noFollow)) return false;
     this.changed(path, "modify");
+    if (noFollow) return true;
     const n = normalize(path);
     const st = ns === undefined ? null : r[0].stat(r[1]);
     // only a time the host kept, give or take its rounding; a host can clamp it

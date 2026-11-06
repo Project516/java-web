@@ -38,3 +38,14 @@ test("host path resolution leaves other mounts and memory paths lexical", () => 
   memory.mount("/files", new MemoryBackend());
   assert.equal(memory.resolvePath("/files/dir/../file"), "/files/file");
 });
+
+test("realpath keeps the mount prefix of a mount point", () => {
+  const fs = new VFS();
+  const withRealpath = () => Object.assign(new MemoryBackend(), { realpath: (p: string) => p });
+  fs.mount("/", withRealpath());
+  fs.mount("/jdk", withRealpath());
+  assert.equal(fs.realpath("/jdk"), "/jdk");
+  assert.equal(fs.realpath("/jdk/lib"), "/jdk/lib");
+  assert.equal(fs.realpath("/"), "/");
+  assert.equal(fs.realpath("/dir/file"), "/dir/file");
+});
