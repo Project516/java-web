@@ -238,6 +238,7 @@ export class VFS {
   private changedNormalized(path: string, event: "create" | "modify" | "delete") {
     for (const watcher of this.watchers) watcher(path, event);
     this.warmChanged?.add(path);
+    if (this.hostWatches.size === 0) return;
     const watch = this.hostWatches.get(parentOf(path));
     if (watch) watch.own.set(path.slice(path.lastIndexOf("/") + 1), this.signature(path));
   }
