@@ -14,7 +14,7 @@
 // caller spill too, and later delivers its result through the frame like an
 // interpreted call.
 
-import { cpEntry, Tag, utf8 } from "./classfile.ts";
+import { cpB, cpTag, cpValue, Tag, utf8 } from "./classfile.ts";
 import {
   ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc,
 } from "./runtime.ts";
@@ -708,9 +708,9 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x11: emit(`${S(d)}=${s16(c, pc + 1)};`); break;
     case 0x12: case 0x13: case 0x14: {
       const i = op === 0x12 ? c[pc + 1] : idx2;
-      const e = cpEntry(cp, i)!;
-      if (e.tag === Tag.Integer || e.tag === Tag.Float || e.tag === Tag.Double) emit(`${S(d)}=${numLit(e.value as number)};`);
-      else if (e.tag === Tag.Long) emit(`${S(d)}=${e.value}n;`);
+      const tag = cpTag(cp, i), value = cpValue(cp, i);
+      if (tag === Tag.Integer || tag === Tag.Float || tag === Tag.Double) emit(`${S(d)}=${numLit(value as number)};`);
+      else if (tag === Tag.Long) emit(`${S(d)}=${value}n;`);
       else {
         const v = cls.ldc[i];
         if (v === undefined) { emit(slow(pc, d)); break; }
@@ -966,7 +966,7 @@ function fuseConcat(g: Gen, b: Body, pc: number): { pieces: string[]; end: numbe
     else if (op === 0x12 || op === 0x13) {
       const i = op === 0x12 ? c[p + 1] : u16(c, p + 1);
       const v = cls.ldc[i];
-      if (cpEntry(cls.cf!.cp, i)!.tag !== Tag.String || v === undefined) return null;
+      if (cpTag(cls.cf!.cp, i) !== Tag.String || v === undefined) return null;
       pieces.push(() => g.K(v));
       p += op === 0x12 ? 2 : 3;
     } else return null;
@@ -1249,13 +1249,12 @@ function stackDelta(cls: JClass, c: Uint8Array, pc: number): number {
   const op = c[pc];
   const cp = cls.cf!.cp;
   const fieldSize = (idx: number) => {
-    const nat = cpEntry(cp, cpEntry(cp, idx)!.b)!;
-    return isWide(utf8(cp, nat.b)) ? 2 : 1;
+    const nat = cpB(cp, idx);
+    return isWide(utf8(cp, cpB(cp, nat))) ? 2 : 1;
   };
   const methodSlots = (idx: number, withReceiver: boolean) => {
-    const e = cpEntry(cp, idx)!;
-    const nat = cpEntry(cp, e.b)!;
-    const { params, ret } = parseMethodDesc(utf8(cp, nat.b));
+    const nat = cpB(cp, idx);
+    const { params, ret } = parseMethodDesc(utf8(cp, cpB(cp, nat)));
     let n = withReceiver ? 1 : 0;
     for (const p of params) n += isWide(p) ? 2 : 1;
     return (ret === "V" ? 0 : isWide(ret) ? 2 : 1) - n;

@@ -16,6 +16,15 @@ export interface CpEntry {
   b: number;
 }
 
+// Utf8 and numeric values live in values. Other entries keep a and b as two
+// u16 in one word of ab.
+export interface ConstantPool {
+  length: number;
+  values: (string | number | bigint | undefined)[];
+  tags: Uint8Array;
+  ab: Uint32Array;
+}
+
 export interface ExceptionEntry {
   start: number;
   end: number;
@@ -52,7 +61,7 @@ export interface ClassFile {
   renamedFrom?: string;
   minor: number;
   major: number;
-  cp: (CpEntry | string | undefined)[];
+  cp: ConstantPool;
   access: number;
   name: string;
   superName: string | null;
@@ -181,22 +190,27 @@ function readCode(raw: Uint8Array, cp: ClassFile["cp"]): Code {
   return { maxStack, maxLocals, code, handlers, lines, localVars };
 }
 
-// UTF-8 entries are stored as strings to avoid an object per constant.
 export function cpEntry(cp: ClassFile["cp"], i: number): CpEntry | undefined {
-  const e = cp[i];
-  return typeof e === "string" ? { tag: Tag.Utf8, value: e, a: 0, b: 0 } : e;
+  const tag = cp.tags[i];
+  if (!tag) return undefined;
+  const value = cp.values[i];
+  return { tag, value, a: cp.ab[i] >>> 16, b: cp.ab[i] & 0xffff };
 }
 
+export function cpTag(cp: ClassFile["cp"], i: number): number { return cp.tags[i]; }
+export function cpA(cp: ClassFile["cp"], i: number): number { return cp.ab[i] >>> 16; }
+export function cpB(cp: ClassFile["cp"], i: number): number { return cp.ab[i] & 0xffff; }
+export function cpValue(cp: ClassFile["cp"], i: number): number | bigint | undefined { return cp.values[i] as number | bigint | undefined; }
+
 export function utf8(cp: ClassFile["cp"], i: number): string {
-  const e = cp[i];
-  if (typeof e !== "string") throw new ClassFormatError(`bad utf8 index ${i}`);
-  return e;
+  const s = cp.values[i];
+  if (typeof s !== "string") throw new ClassFormatError(`bad utf8 index ${i}`);
+  return s;
 }
 
 export function className(cp: ClassFile["cp"], i: number): string {
-  const e = cpEntry(cp, i);
-  if (!e || e.tag !== Tag.Class) throw new ClassFormatError(`bad class index ${i}`);
-  return utf8(cp, e.a);
+  if (cp.tags[i] !== Tag.Class) throw new ClassFormatError(`bad class index ${i}`);
+  return utf8(cp, cp.ab[i] >>> 16);
 }
 
 export function parseClass(bytes: Uint8Array, preview = false): ClassFile {
@@ -221,7 +235,12 @@ function parseBody(r: Reader, preview: boolean): ClassFile {
   if (major < 45 || major > MAX_MAJOR) throw new UnsupportedVersion(major, minor);
   if (major >= 56 && minor !== 0 && !(minor === 0xffff && major === MAX_MAJOR && preview)) throw new UnsupportedVersion(major, minor);
   const count = r.u2();
-  const cp: ClassFile["cp"] = new Array(count);
+  const cp: ClassFile["cp"] = {
+    length: count,
+    values: new Array(count),
+    tags: new Uint8Array(count),
+    ab: new Uint32Array(count),
+  };
   for (let i = 1; i < count; i++) {
     const tag = r.u1();
     let value: CpEntry["value"], a = 0, b = 0;
@@ -239,7 +258,9 @@ function parseBody(r: Reader, preview: boolean): ClassFile {
         a = r.u2(); b = r.u2(); break;
       default: throw new ClassFormatError(`bad constant pool tag ${tag} at ${i}`);
     }
-    cp[i] = tag === Tag.Utf8 ? value as string : { tag, value, a, b };
+    cp.tags[i] = tag;
+    if (value !== undefined) cp.values[i] = value;
+    cp.ab[i] = a << 16 | b;
     if (tag === Tag.Long || tag === Tag.Double) i++;
   }
   const access = r.u2();
