@@ -23,7 +23,7 @@ import { intrinsics, natives as builtinNatives } from "./natives/index.ts";
 import { invokePolymorphic, linkCallSite, resolveConstant } from "./indy.ts";
 import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
-import { dumpVM, restoreVM, snapshotKey } from "./snapshot.ts";
+import { dumpVM, restoreVM, snapshotKey, SNAPSHOT_FORMAT } from "./snapshot.ts";
 import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import type { SavedJit } from "./jit.ts";
 import type { LibraryRequest } from "./library.ts";
@@ -1262,7 +1262,7 @@ export class JVM {
       const build = snaps.build;
       this.warmKey = JSON.stringify([snapshotKey(this, build), this.opts.classpath ?? [], this.opts.cwd ?? "/", this.props.get("sun.java.command") ?? null]);
       const useWarm = (image: WarmSnapshotImage | null) => {
-        if (!image) return false;
+        if (image?.format !== SNAPSHOT_FORMAT) return false;
         let mismatch: string | null;
         try {
           mismatch = image.warmKey === this.warmKey && image.key === snapshotKey(this, build) ? this.fs.warmTraceMismatch(image.trace) : "key changed";
@@ -1305,7 +1305,7 @@ export class JVM {
     const key = snapshotKey(this, snaps.build);
     const done = (image: SnapshotImage | null) => {
       // an async load can finish after the VM was halted
-      if (image?.key !== key || this.exitCode !== null) return start(false);
+      if (image?.format !== SNAPSHOT_FORMAT || image.key !== key || this.exitCode !== null) return start(false);
       try {
         restoreVM(this, image, t);
       } catch (e) {
