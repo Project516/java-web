@@ -1,5 +1,6 @@
 // java.util.zip natives: Inflater, Deflater, CRC32, Adler32.
 
+import { Deflate } from "../deflate.ts";
 import { DataFormatError, Inflate } from "../inflate.ts";
 import type { JArray } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
@@ -44,109 +45,6 @@ export function adler32(adler: number, b: Uint8Array): number {
   return ((s2 << 16) | s1) | 0;
 }
 
-const BLOCK = 65535;
-
-// Deflate with stored blocks only: valid output, no compression yet. As in
-// zlib, input is taken only while output drains, so memory stays bounded.
-class Deflate {
-  private readonly wrap: boolean;
-  private headerDone = false;
-  // input not yet in a block, and output waiting for room
-  private held = new Uint8Array(BLOCK);
-  private heldLen = 0;
-  private pending = new Uint8Array(BLOCK + 32);
-  private pendPos = 0;
-  private pendLen = 0;
-  private adler = 1;
-  private dictId: number | null = null;
-  private lastFlush = 0;
-  private ended = false;
-  constructor(nowrap: boolean) {
-    this.wrap = !nowrap;
-  }
-  get finished() { return this.ended && this.pendPos === this.pendLen; }
-  get checksum() { return this.headerDone || this.dictId === null ? this.adler : this.dictId; }
-  reset() {
-    this.headerDone = this.ended = false;
-    this.heldLen = this.pendPos = this.pendLen = this.lastFlush = 0;
-    this.adler = 1;
-    this.dictId = null;
-  }
-  // the header names the dictionary; compression would also use it
-  setDictionary(d: Uint8Array) {
-    if (this.wrap && this.headerDone && !this.ended) throw new PendingThrow("java/lang/IllegalArgumentException");
-    if (this.wrap && !this.headerDone) this.dictId = adler32(1, d) >>> 0;
-  }
-  private put(...bytes: number[]) {
-    for (const b of bytes) this.pending[this.pendLen++] = b;
-  }
-  private block(last: boolean) {
-    const n = this.heldLen;
-    this.put(last ? 1 : 0, n & 0xff, n >> 8, ~n & 0xff, (~n >> 8) & 0xff);
-    this.pending.set(this.held.subarray(0, n), this.pendLen);
-    this.pendLen += n;
-    this.heldLen = 0;
-  }
-  private be32(v: number) {
-    this.put(v >>> 24, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);
-  }
-  private drain(output: Uint8Array, at: number): number {
-    const n = Math.min(output.length - at, this.pendLen - this.pendPos);
-    output.set(this.pending.subarray(this.pendPos, this.pendPos + n), at);
-    this.pendPos += n;
-    if (this.pendPos === this.pendLen) this.pendPos = this.pendLen = 0;
-    return n;
-  }
-  // flush: 0 none, 2 sync, 3 full, 4 finish. Returns [read, written].
-  run(input: Uint8Array, output: Uint8Array, flush: number): [number, number] {
-    if (output.length === 0) return [0, 0];
-    let read = 0, written = this.drain(output, 0);
-    if (this.pendLen) {
-      this.lastFlush = -1;
-      return [0, written];
-    }
-    // a repeated flush with no new input adds nothing, so flush loops end
-    if (input.length === 0 && flush <= this.lastFlush && flush !== 4) return [0, written];
-    this.lastFlush = flush;
-    let flushed = false;
-    for (;;) {
-      written += this.drain(output, written);
-      if (this.pendLen || this.ended) return [read, written];
-      if (!this.headerDone) {
-        this.headerDone = true;
-        if (this.wrap) {
-          if (this.dictId === null) this.put(0x78, 0x01);
-          else {
-            this.put(0x78, 0x20);
-            this.be32(this.dictId);
-          }
-        }
-        continue;
-      }
-      if (read < input.length) {
-        const n = Math.min(BLOCK - this.heldLen, input.length - read);
-        const chunk = input.subarray(read, read + n);
-        this.held.set(chunk, this.heldLen);
-        if (this.wrap) this.adler = adler32(this.adler, chunk);
-        this.heldLen += n;
-        read += n;
-        if (this.heldLen === BLOCK) this.block(false);
-        continue;
-      }
-      if (flushed || (flush !== 2 && flush !== 3 && flush !== 4)) return [read, written];
-      flushed = true;
-      if (flush === 4) {
-        this.block(true);
-        if (this.wrap) this.be32(this.adler >>> 0);
-        this.ended = true;
-      } else {
-        if (this.heldLen) this.block(false);
-        this.block(false);
-      }
-    }
-  }
-}
-
 function streams(t: JThread): Map<bigint, Inflate | Deflate> {
   let m = t.vm.state.get("zstreams");
   if (!m) t.vm.state.set("zstreams", (m = new Map()));
@@ -189,10 +87,14 @@ function setInflateDictionary(t: JThread, addr: bigint, d: Uint8Array) {
   if (!inflater(t, addr).setDictionary(d)) throw new PendingThrow("java/lang/IllegalArgumentException");
 }
 
-function deflate(t: JThread, addr: bigint, input: Uint8Array, output: Uint8Array, flush: number): bigint {
+function deflate(t: JThread, addr: bigint, input: Uint8Array, output: Uint8Array, flush: number, params: number): bigint {
   const z = deflater(t, addr);
-  const [read, written] = z.run(input, output, flush);
-  return result(read, written, z.finished, false);
+  const [read, written, retry] = z.run(input, output, flush, params);
+  return result(read, written, z.finished, retry);
+}
+
+function setDeflateDictionary(t: JThread, addr: bigint, d: Uint8Array) {
+  if (!deflater(t, addr).setDictionary(d)) throw new PendingThrow("java/lang/IllegalArgumentException");
 }
 
 function mem(t: JThread, addr: bigint, len: number) {
@@ -221,21 +123,22 @@ export const natives: Natives = {
   [`${I}reset(J)V`]: (t, [addr]) => inflater(t, addr).reset(),
   [`${I}end(J)V`]: (t, [addr]) => void streams(t).delete(addr),
 
-  [`${D}init(IIZ)J`]: (t, [, , nowrap]) => {
+  [`${D}init(IIZ)J`]: (t, [level, strategy, nowrap]) => {
+    if (level < -1 || level > 9 || strategy < 0 || strategy > 2) throw new PendingThrow("java/lang/IllegalArgumentException");
     const id = nextStream++;
-    streams(t).set(id, new Deflate(nowrap === 1));
+    streams(t).set(id, new Deflate(level, strategy, nowrap === 1));
     return id;
   },
-  [`${D}deflateBytesBytes(J[BII[BIIII)J`]: (t, [, addr, ib, io, il, ob, oo, ol, flush]) =>
-    deflate(t, addr, u8(ib, io, il), u8(ob, oo, ol), flush),
-  [`${D}deflateBytesBuffer(J[BIIJIII)J`]: (t, [, addr, ib, io, il, oa, ol, flush]) =>
-    deflate(t, addr, u8(ib, io, il), mem(t, oa, ol), flush),
-  [`${D}deflateBufferBytes(JJI[BIIII)J`]: (t, [, addr, ia, il, ob, oo, ol, flush]) =>
-    deflate(t, addr, mem(t, ia, il), u8(ob, oo, ol), flush),
-  [`${D}deflateBufferBuffer(JJIJIII)J`]: (t, [, addr, ia, il, oa, ol, flush]) =>
-    deflate(t, addr, mem(t, ia, il), mem(t, oa, ol), flush),
-  [`${D}setDictionary(J[BII)V`]: (t, [addr, b, off, len]) => deflater(t, addr).setDictionary(u8(b, off, len)),
-  [`${D}setDictionaryBuffer(JJI)V`]: (t, [addr, a, len]) => deflater(t, addr).setDictionary(mem(t, a, len)),
+  [`${D}deflateBytesBytes(J[BII[BIIII)J`]: (t, [, addr, ib, io, il, ob, oo, ol, flush, params]) =>
+    deflate(t, addr, u8(ib, io, il), u8(ob, oo, ol), flush, params),
+  [`${D}deflateBytesBuffer(J[BIIJIII)J`]: (t, [, addr, ib, io, il, oa, ol, flush, params]) =>
+    deflate(t, addr, u8(ib, io, il), mem(t, oa, ol), flush, params),
+  [`${D}deflateBufferBytes(JJI[BIIII)J`]: (t, [, addr, ia, il, ob, oo, ol, flush, params]) =>
+    deflate(t, addr, mem(t, ia, il), u8(ob, oo, ol), flush, params),
+  [`${D}deflateBufferBuffer(JJIJIII)J`]: (t, [, addr, ia, il, oa, ol, flush, params]) =>
+    deflate(t, addr, mem(t, ia, il), mem(t, oa, ol), flush, params),
+  [`${D}setDictionary(J[BII)V`]: (t, [addr, b, off, len]) => setDeflateDictionary(t, addr, u8(b, off, len)),
+  [`${D}setDictionaryBuffer(JJI)V`]: (t, [addr, a, len]) => setDeflateDictionary(t, addr, mem(t, a, len)),
   [`${D}getAdler(J)I`]: (t, [addr]) => deflater(t, addr).checksum | 0,
   [`${D}reset(J)V`]: (t, [addr]) => deflater(t, addr).reset(),
   [`${D}end(J)V`]: (t, [addr]) => void streams(t).delete(addr),
