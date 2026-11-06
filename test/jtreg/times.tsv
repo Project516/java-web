@@ -151,6 +151,7 @@
 26478	java/nio/channels/Selector/ChangingInterests.java
 26329	java/text/Format/DateFormat/SimpleDateFormatPatternTest.java
 26157	java/lang/ProcessHandle/OnExitTest.java
+26112	java/lang/Thread/virtual/stress/GetStackTraceALotWhenBlocking.java
 25808	java/lang/invoke/ClassValueTest.java
 25743	java/util/zip/DeflateIn_InflateOut.java
 25299	java/net/httpclient/websocket/PendingBinaryPongClose.java
@@ -162,11 +163,16 @@
 24155	java/util/concurrent/atomic/LongAdderDemo.java
 24125	java/lang/invoke/VarHandles/VarHandleTestAccessString.java
 24120	java/net/httpclient/http2/Timeout.java
+24015	java/lang/Thread/virtual/MiscMonitorTests.java#5
 23979	java/nio/Buffer/LimitDirectMemory.java
+23710	java/lang/Thread/virtual/MiscMonitorTests.java#4
 23424	java/lang/invoke/BigArityTest.java
+23335	java/lang/Thread/virtual/MiscMonitorTests.java
+23297	java/lang/Thread/virtual/MiscMonitorTests.java#2
 23286	java/lang/RuntimeTests/loadLibrary/LoadLibraryTest.java
 23282	java/util/Collection/HotPotatoes.java
 23270	java/net/httpclient/RetryPost.java
+23268	java/lang/Thread/virtual/MiscMonitorTests.java#3
 23148	java/util/Arrays/CopyMethods.java
 22927	java/net/DatagramSocket/SendReceiveMaxSize.java
 22788	java/util/BitSet/BSMethods.java
@@ -212,6 +218,8 @@
 18496	java/nio/channels/Selector/Connect.java
 18494	java/net/HttpURLConnection/HostHeaderTest.java
 18471	java/net/Socket/ExceptionText.java
+18331	java/lang/Thread/virtual/stress/NotifiedThenTimedOutWait.java
+18300	java/lang/Thread/virtual/stress/GetStackTraceALotWithTimedWait.java
 18287	java/time/tck/java/time/TCKOffsetTime.java
 18135	java/util/Random/EquiDoublesTest.java
 18085	java/io/Serializable/records/migration/DefaultValuesTest.java
@@ -309,10 +317,14 @@
 14269	java/util/concurrent/Executors/AutoShutdown.java
 14265	java/lang/String/CompactString/SubString.java
 14232	java/util/Locale/LocaleShouldSetFromCLI.java
+14218	java/lang/Thread/virtual/Parking.java
+14206	java/lang/Thread/virtual/Parking.java#4
+14175	java/lang/Thread/virtual/Parking.java#2
 14141	java/util/Locale/CompatWarning.java
 14085	java/lang/String/concat/IntegerMinValue.java
 14069	java/text/Format/DateFormat/Bug6335238.java
 14012	java/util/HashSet/Serialization.java
+13995	java/lang/Thread/virtual/Parking.java#3
 13983	java/lang/module/AutomaticModulesTest.java
 13956	java/lang/invoke/lambda/LambdaStackTrace.java
 13940	java/util/jar/JarInputStream/ExtraFileInMetaInf.java
@@ -3276,6 +3288,7 @@
 1900	java/security/Provider/CaseSensitiveServices.java
 1898	java/security/CodeSource/Implies.java
 1898	java/nio/channels/Selector/ConnectWrite.java
+1898	java/lang/Thread/virtual/stress/LotsOfContendedMonitorEnter.java
 1896	java/lang/StrictMath/CubeRootTests.java
 1896	java/io/FileInputStream/OpsAfterClose.java
 1894	java/util/Formatter/Close.java
@@ -3396,6 +3409,7 @@
 1677	java/nio/channels/DatagramChannel/Refused.java
 1677	java/net/Inet6Address/B4923906.java
 1673	java/nio/file/Path/UriImportExport.java
+1666	java/lang/Thread/virtual/stress/LotsOfContendedMonitorEnter.java#2
 1662	java/util/Base64/Base64GetEncoderTest.java
 1662	java/beans/PropertyEditor/TestEnumClassValue.java
 1659	java/util/Vector/SerializationDeadlock.java
@@ -3414,6 +3428,7 @@
 1627	java/lang/StringBuffer/SetLength.java
 1627	java/io/PushbackInputStream/MarkReset.java
 1624	java/lang/annotation/AnnotationTypeMismatchException/ArrayTypeMismatchTest.java
+1621	java/lang/management/ThreadMXBean/VirtualThreadDeadlocks.java
 1620	java/util/ResourceBundle/Bug4396021.java
 1620	java/lang/StringBuffer/BufferForwarding.java
 1620	java/io/File/IsHidden.java
@@ -3430,6 +3445,7 @@
 1595	java/security/cert/CertPathBuilder/GetInstance.java
 1594	java/security/Provider/Equals.java
 1589	java/nio/channels/Selector/Close.java
+1589	java/lang/management/ThreadMXBean/VirtualThreadDeadlocks.java#2
 1584	java/lang/constant/ConstantDescsTest.java
 1577	java/net/SocketPermission/ActionSpace.java
 1571	java/util/StringTokenizer/Supplementary.java
