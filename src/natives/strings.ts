@@ -3,6 +3,7 @@
 // collapses them. They follow AbstractStringBuilder.append,
 // ensureCapacityNewCoder, newCapacity and String.<init>(AbstractStringBuilder,
 // Void) of the pinned JDK, so buffer growth and string coders match.
+// The jimage string reader is here too.
 
 import { JArray, MAX_HEAP, newArrayData } from "../runtime.ts";
 import type { JClass, JObject } from "../runtime.ts";
@@ -158,7 +159,58 @@ export function concatStrings(t: JThread, pc: number, parts: (JObject | null)[])
   return str;
 }
 
+// ImageStringsReader.stringFromByteBuffer(buffer, offset): the modified UTF-8
+// string at offset, read from the jimage's buffer. javac lists thousands of
+// image locations, and the Java version gets each byte through a ByteBuffer.
+function imageString(t: JThread, args: any[]): JObject {
+  const vm = t.vm;
+  const buf: JObject | null = args[0], offset: number = args[1];
+  if (buf === null) throw new PendingThrow("java/lang/NullPointerException");
+  const limit = buf.f[vm.slotOf("java/nio/Buffer", "limit")] as number;
+  const hb = buf.f[vm.slotOf("java/nio/ByteBuffer", "hb")] as JArray | null;
+  let bytes: ArrayLike<number>, base: number;
+  if (hb) {
+    bytes = hb.a as Int8Array;
+    base = buf.f[vm.slotOf("java/nio/ByteBuffer", "offset")] as number;
+  } else {
+    bytes = vm.mem.u8;
+    base = Number(buf.f[vm.slotOf("java/nio/Buffer", "address")] as bigint);
+  }
+  if (offset < 0) {
+    throw new PendingThrow("java/lang/IndexOutOfBoundsException", `Index ${offset} out of bounds for length ${limit}`);
+  }
+  let end = offset, ascii = true;
+  for (; end < limit && bytes[base + end] !== 0; end++) if (bytes[base + end] & 0x80) ascii = false;
+  if (end === limit) throw new PendingThrow("java/lang/InternalError", "No terminating zero byte for modified UTF-8 byte sequence");
+  slots(vm);
+  if (ascii) {
+    const value = newBytes(end - offset);
+    for (let i = offset; i < end; i++) value[i - offset] = bytes[base + i];
+    const s = vm.newObject(strClass);
+    fill(vm, s, value, 0);
+    return s;
+  }
+  let text = "";
+  for (let i = offset; i < end; i++) {
+    let ch = bytes[base + i] & 0xff;
+    if (ch & 0x80) {
+      let uch = ch & 0x7f, mask = 0x40;
+      while (uch & mask) {
+        ch = bytes[base + ++i] & 0xff;
+        if ((ch & 0xc0) !== 0x80) throw new PendingThrow("java/lang/InternalError", `Bad continuation in modified UTF-8 byte sequence: ${(ch << 24) >> 24}`);
+        uch = ((uch & ~mask) << 6) | (ch & 0x3f);
+        mask <<= 5;
+      }
+      if ((uch & 0xffff) !== uch) throw new PendingThrow("java/lang/InternalError", `UTF-32 char in modified UTF-8 byte sequence: ${uch}`);
+      ch = uch;
+    }
+    text += String.fromCharCode(ch);
+  }
+  return vm.str(text);
+}
+
 export const intrinsics: Natives = {
+  "jdk/internal/jimage/ImageStringsReader.stringFromByteBuffer(Ljava/nio/ByteBuffer;I)Ljava/lang/String;": imageString,
   [`${ASB}.append(Ljava/lang/String;)L${ASB};`]: appendString,
   "java/lang/StringBuilder.append(Ljava/lang/String;)Ljava/lang/StringBuilder;": appendString,
   "java/lang/String.<init>(Ljava/lang/AbstractStringBuilder;Ljava/lang/Void;)V": stringFromBuilder,
