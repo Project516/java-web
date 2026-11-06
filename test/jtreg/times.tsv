@@ -521,6 +521,7 @@
 9654	java/util/List/NestedSubList.java
 9629	java/util/Calendar/CalendarLeapYearRollTest.java
 9610	java/lang/IntegralPrimitiveToString.java
+9609	java/nio/file/WatchService/DeleteInterference.java
 9603	java/text/Collator/RuleBasedCollatorTest.java
 9602	java/util/jar/JarFile/VerifySignedJar.java
 9600	java/lang/Thread/virtual/CarrierThreadInfo.java#4
@@ -3232,6 +3233,7 @@
 1948	java/lang/Boolean/ParseBoolean.java
 1947	java/io/PrintWriter/FailingConstructors.java
 1946	java/lang/Class/attributes/ClassAttributesTest.java
+1945	java/nio/file/attribute/BasicFileAttributeView/UnixSocketFile.java
 1944	java/lang/annotation/AnnotationTypeMismatchException/ArityTypeMismatchTest.java
 1943	java/text/BreakIterator/Bug4912404.java
 1943	java/nio/channels/SocketChannel/Basic.java
