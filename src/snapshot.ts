@@ -137,15 +137,15 @@ class Encoder {
   }
 
   private work: (() => void)[] = [];
-  private undo: { twins: unknown[]; table: number } | null = null;
+  private undo: { twins: unknown[]; table: number; work: number } | null = null;
 
   // enc, or null with nothing recorded when v cannot be saved
   tryEnc(v: any, path: string): any {
-    const undo = (this.undo = { twins: [] as unknown[], table: this.table.length });
+    const undo = (this.undo = { twins: [] as unknown[], table: this.table.length, work: this.work.length });
     try {
       return this.enc(v, path);
     } catch {
-      this.work.length = 0;
+      this.work.length = undo.work;
       for (const k of undo.twins) {
         this.leaves.delete(this.twins.get(k));
         this.twins.delete(k);
@@ -539,7 +539,10 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
     c.nestHost = d.dec(r.nestHost);
     for (const [k, l] of r.links) c.methodMap.get(k)!.link = d.dec(l);
     for (const [k, cache] of r.caches ?? []) c.methodMap.get(k)!.cache = d.dec(cache);
-    for (const [k, src, consts] of r.jit ?? []) restoreJit(vm, c.methodMap.get(k)!, { src, consts: d.dec(consts) });
+    for (const [k, src, consts] of r.jit ?? []) {
+      const m = c.methodMap.get(k);
+      if (m) restoreJit(vm, m, { src, consts: d.dec(consts) });
+    }
   });
   d.flush();
   const v = image.vm;
