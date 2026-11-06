@@ -144,7 +144,7 @@ function fillAttrs(t: JThread, attrs: JObject, p: string, follow = true): number
   syncPath(t, p);
   const st = follow ? t.vm.fs.stat(p) : t.vm.fs.lstat(p);
   if (!st) return ENOENT;
-  fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p));
+  fillStat(t, attrs, st, t.vm.fs.writable(p), fileInode(t, p, st), st.size, st.nlink ?? 1);
   return 0;
 }
 
@@ -273,9 +273,6 @@ export const natives: Natives = {
     syncPath(t, path(t, existing));
     const code = t.vm.fs.link(path(t, existing), path(t, p));
     if (code) unixError(HOST_ERRNO[code] ?? EIO);
-    // both names are one file
-    const ino = fileInode(t, path(t, existing));
-    t.vm.state.get("inodes").set(path(t, p), ino);
   },
   [`${N}chmod0(JI)V`]: (t, [p, mode]) => {
     chmod(t, path(t, p), mode);

@@ -81,7 +81,7 @@ export class NodeBackend implements Backend {
     let st: Stat | null = null;
     try {
       const s = fs.statSync(this.host(p));
-      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777 };
+      st = { dir: s.isDirectory(), size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, ino: s.ino, nlink: s.nlink };
     } catch {
       st = null;
     }
@@ -92,7 +92,7 @@ export class NodeBackend implements Backend {
     try {
       const s = fs.lstatSync(this.host(p));
       if (!s.isSymbolicLink()) return null;
-      return { dir: false, size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, link: s.size };
+      return { dir: false, size: s.size, mtime: s.mtimeMs, mode: s.mode & 0o7777, link: s.size, ino: s.ino, nlink: s.nlink };
     } catch {
       return null;
     }

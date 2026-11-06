@@ -22,6 +22,9 @@ export interface Stat {
   device?: boolean;
   // lstat of a symbolic link: the length of its target, which is also its size
   link?: number;
+  // the host's inode number and link count, so hard links and links to a file share a key
+  ino?: number;
+  nlink?: number;
 }
 
 // The same in every mount layout, so SecureRandom and the like work in the

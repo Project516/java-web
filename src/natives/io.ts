@@ -277,7 +277,8 @@ function table(t: JThread): FdTable {
   return tab;
 }
 
-export function fileInode(t: JThread, path: string): number {
+export function fileInode(t: JThread, path: string, st: Stat | null = t.vm.fs.stat(path)): number {
+  if (st?.ino !== undefined) return st.ino;
   let inodes = t.vm.state.get("inodes") as Map<string, number> | undefined;
   if (!inodes) t.vm.state.set("inodes", (inodes = new Map()));
   const ino = inodes.get(path);
@@ -509,8 +510,8 @@ export function removePath(t: JThread, abs: string): boolean {
 }
 
 function detachFile(t: JThread, f: OpenFile) {
-  f.ino ??= fileInode(t, f.path);
   const stat = t.vm.fs.stat(f.path);
+  f.ino ??= fileInode(t, f.path, stat);
   if (stat) f.detached = { path: f.path, stat, writable: t.vm.fs.writable(f.path) };
 }
 
