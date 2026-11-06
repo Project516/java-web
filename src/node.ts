@@ -40,7 +40,7 @@ export class NodeBackend implements Backend {
     return this.root === "/" ? p : this.root + p;
   }
   openFile(p: string, write: boolean, truncate: boolean, readable: boolean) {
-    const flags = write ? (readable ? fs.constants.O_RDWR : fs.constants.O_WRONLY) | fs.constants.O_CREAT | (truncate ? fs.constants.O_TRUNC : 0) : fs.constants.O_RDONLY;
+    const flags = write ? (readable ? fs.constants.O_RDWR : fs.constants.O_WRONLY) | (truncate ? fs.constants.O_TRUNC : 0) : fs.constants.O_RDONLY;
     let fd: number;
     try {
       const host = this.host(p);
@@ -58,6 +58,7 @@ export class NodeBackend implements Backend {
     }
     return {
       size: () => fs.fstatSync(fd).size,
+      ino: () => fs.fstatSync(fd).ino,
       read: (dst: Uint8Array, off: number, len: number, pos: number) => fs.readSync(fd, dst, off, len, pos),
       write: (src: Uint8Array, pos: number) => {
         let n = 0;

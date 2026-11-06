@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryBackend, VFS } from "../src/fs.ts";
@@ -148,6 +148,40 @@ test("an open host file keeps its inode when its path is deleted and recreated",
       closeFd(t, fd);
     }
     assert.equal(f.contents.pin, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening a host file for writing does not create a missing one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "java-web-nocreate-"));
+  try {
+    assert.throws(() => new NodeBackend(dir, true).openFile("/missing", true, false, false), { code: "ENOENT" });
+    assert.equal(existsSync(join(dir, "missing")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a path that reaches a different inode does not share the open file's contents", async () => {
+  const { openFile, fileOf, closeFd } = await import("../src/natives/io.ts");
+  const dir = mkdtempSync(join(tmpdir(), "java-web-share-"));
+  const fs = new VFS();
+  fs.mount("/", new NodeBackend(dir, true));
+  const t = { vm: { fs, opts: {}, state: new Map(), exited: new Promise(() => {}) } } as unknown as JThread;
+  try {
+    writeFileSync(join(dir, "target"), "old");
+    symlinkSync("target", join(dir, "link"));
+    const first = openFile(t, "/link", false, false, false);
+    renameSync(join(dir, "target"), join(dir, "moved"));
+    writeFileSync(join(dir, "target"), "new");
+    const second = openFile(t, "/link", false, false, false);
+    const bytes = new Uint8Array(3);
+    assert.equal(fileOf(t, second).read(bytes, 0, 3), 3);
+    assert.equal(new TextDecoder().decode(bytes), "new");
+    assert.equal(readFileSync(join(dir, "moved"), "utf8"), "old");
+    closeFd(t, second);
+    closeFd(t, first);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -34,6 +34,7 @@ export const DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/random", "/dev/u
 // Errors carry an errno name in `code`, as Node's do.
 export interface FileHandle {
   size(): number;
+  ino(): number;
   read(dst: Uint8Array, off: number, len: number, pos: number): number;
   write(src: Uint8Array, pos: number): void;
   truncate(size: number): void;
@@ -321,6 +322,7 @@ export class VFS {
     // writes through the handle are changes watchers see, as writes through VFS.write are
     return {
       size: () => h.size(),
+      ino: () => h.ino(),
       read: (dst, off, len, pos) => h.read(dst, off, len, pos),
       close: () => h.close(),
       write: (src, pos) => { h.write(src, pos); this.changed(path, "modify"); },
