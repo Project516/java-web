@@ -1,7 +1,7 @@
 // Bytecode interpreter and the per-thread run loop.
 
 import {
-  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData,
+  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData, sched,
 } from "./runtime.ts";
 import {
   Frame, JThread, JavaThrow, MAX_DIRECT, NativeFrame, PendingThrow, RUNNABLE, TERMINATED, WAITING, fromNative,
@@ -515,6 +515,11 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
 // Counts a taken backward branch; true when the method got compiled and the
 // run loop should switch to the compiled code at the branch target.
 function backedge(t: JThread, f: Frame, pc: number, sp: number): boolean {
+  if (sched.yieldNow) {
+    f.pc = pc;
+    f.sp = sp;
+    return true;
+  }
   const m = f.m;
   if (m.jit === null) {
     if (m.noJit) return false;
@@ -822,7 +827,7 @@ function countEntry(t: JThread, f: Frame) {
 
 // Runs t for up to budget instructions.
 export function runThread(t: JThread, budget: number) {
-  while (budget > 0 && t.state === RUNNABLE) {
+  while (budget > 0 && t.state === RUNNABLE && !sched.yieldNow) {
     const f = t.top;
     if (f === undefined) {
       terminate(t);
