@@ -1147,8 +1147,15 @@ export class JVM {
       this.warmTraceActive = this.fs.beginWarmTrace();
       this.warmTraceClasses = this.classCount;
     }
+    // no warm snapshot will be taken (a restored VM keeps its saved code)
+    if (!this.warmTraceActive && this.keepJit) this.dropJit();
     started();
     yield* this.library.loop(t);
+  }
+
+  private dropJit() {
+    this.keepJit = false;
+    this.jitCode.clear();
   }
 
   libraryIdle(t: JThread) {
@@ -1164,8 +1171,7 @@ export class JVM {
       if (!trace) {
         this.fs.endWarmTrace();
         this.warmTraceActive = false;
-        this.keepJit = false;
-        this.jitCode.clear();
+        this.dropJit();
         this.debug("warm snapshot busy: access record too large");
         return;
       }
@@ -1177,8 +1183,7 @@ export class JVM {
       this.fs.endWarmTrace();
       this.warmTraceActive = false;
       this.warmSaved = true;
-      this.keepJit = false;
-      this.jitCode.clear();
+      this.dropJit();
       for (const c of this.created ?? []) c.bytes = undefined;
       this.created = null;
       this.debug("warm snapshot saved");
@@ -1339,6 +1344,7 @@ export class JVM {
     if (!this.opts.warmSnapshot || !this.libraryStarting) {
       for (const c of this.created ?? []) c.bytes = undefined;
       this.created = null;
+      this.dropJit();
     }
     if (cmd !== undefined) {
       this.props.set("sun.java.command", cmd);
