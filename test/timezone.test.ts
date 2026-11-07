@@ -57,5 +57,6 @@ test("posixOffsetMinutes follows the rule dates", () => {
   assert.equal(posixOffsetMinutes("AAA5BBB,M13.2.0,M11.1.0", 0), null);
   assert.equal(posixOffsetMinutes("AAA5BBB,M3.6.0,M11.1.0", 0), null);
   assert.equal(posixOffsetMinutes("AAA5BBB,M3.2.0/x,M11.1.0", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,M3.2.0/2/3,M11.1.0", 0), null);
   assert.equal(posixOffsetMinutes("AAA5BBB,J0,J300", 0), null);
 });

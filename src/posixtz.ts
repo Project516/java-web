@@ -13,7 +13,9 @@ function seconds(s: string): number {
 
 // Seconds from the start of the year (local wall clock) to a rule's day and time
 function ruleSeconds(rule: string, year: number): number | null {
-  const [day, time = "2"] = rule.split("/");
+  const parts = rule.split("/");
+  if (parts.length > 2) return null;
+  const [day, time = "2"] = parts;
   if (!TIME.test(time)) return null;
   const at = seconds(time);
   const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
