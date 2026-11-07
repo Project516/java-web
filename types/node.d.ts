@@ -4,6 +4,8 @@
 export interface NodeRunOptions {
   classpath: string[];
   mainClass?: string;
+  // "module" or "module/class" from the module path in props (jdk.module.path)
+  mainModule?: string;
   jar?: string;
   args?: string[];
   // system properties

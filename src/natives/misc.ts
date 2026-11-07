@@ -276,7 +276,7 @@ export function platformProperties(vm: JVM): (string | null)[] {
     p.get("java.io.tmpdir") ?? "/tmp",
     "\n",
     "UTF-8", // native.encoding
-    "javascript", "Linux", "6.0",
+    "javascript", "Linux", vm.opts.osVersion ?? "6.0",
     ":",
     null, null, null, // socks
     "UTF-8", "UTF-8", "UTF-8", // stderr, stdin, stdout encoding

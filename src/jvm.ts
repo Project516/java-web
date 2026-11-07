@@ -65,6 +65,10 @@ export interface JvmOptions {
   assertions?: Assertions;
   // run class files that use this release's preview features
   enablePreview?: boolean;
+  // class bytes on the -Xbootclasspath/a path, and the path entry that holds them
+  bootClassPath?: (name: string) => { bytes: Uint8Array; location: string } | null;
+  // os.version; the kernel release where there is one
+  osVersion?: string;
   // sockets and name lookup; defaults to loopback sockets inside the VM
   net?: NetBackend;
   // what InetAddress.getLocalHost() reports
@@ -97,7 +101,7 @@ export interface JvmOptions {
 const RESUMED = Object.freeze({ kind: "resume" }) as unknown as Request;
 
 // LauncherHelper launch modes
-export const LM_CLASS = 1, LM_JAR = 2;
+export const LM_CLASS = 1, LM_JAR = 2, LM_MODULE = 3;
 
 const intrinsicClasses = new Set(Object.keys(intrinsics).map((k) => k.slice(0, k.indexOf("."))));
 
@@ -880,6 +884,16 @@ export class JVM {
     this.throwNew(t, "java/lang/InternalError", e instanceof Error ? e.message : String(e));
   }
 
+  // Every live thread's Java stack, for kill -QUIT on a stuck program
+  dumpAllStacks() {
+    console.error(`Full thread dump ${this.props.get("java.vm.name") ?? "java-web"}:`);
+    for (const t of this.threads) {
+      if (t.state === TERMINATED) continue;
+      console.error(`\n"${t.name}" ${t.state === RUNNABLE ? "runnable" : "waiting"}`);
+      this.dumpStack(t);
+    }
+  }
+
   dumpStack(t: JThread) {
     for (let i = t.frames.length - 1; i >= 0; i--) {
       const f = t.frames[i];
@@ -1167,6 +1181,10 @@ export class JVM {
       failed(e instanceof Error ? e : new Error(String(e)));
       return;
     }
+    if (this.exitCode !== null) {
+      failed(new Error(`VM exited during startup with ${this.exitCode}`));
+      return;
+    }
     if (this.opts.warmSnapshot && this.libraryStarting && this.snapshots) {
       this.warmTraceActive = this.fs.beginWarmTrace();
       this.warmTraceClasses = this.classCount;
@@ -1260,8 +1278,12 @@ export class JVM {
         "java/lang/invoke/MemberName", "java/lang/invoke/MethodHandleNatives",
       ]) yield* init(n);
       this.debug("initPhase2");
-      const rc = yield t.call(boot("java/lang/System").methodMap.get("initPhase2(ZZ)I")!, 1, 1);
-      if (rc !== 0) throw new Error(`initPhase2 failed: ${rc}`);
+      // HotSpot prints a failed boot layer to stdout, without a stack trace, and exits
+      const rc = yield t.call(boot("java/lang/System").methodMap.get("initPhase2(ZZ)I")!, 0, 0);
+      if (rc !== 0) {
+        this.halt(1);
+        return;
+      }
       this.debug("initPhase3");
       yield t.call(boot("java/lang/System").methodMap.get("initPhase3()V")!);
       this.debug("vm started in", Date.now() - this.startTime, "ms");
@@ -1355,6 +1377,7 @@ export class JVM {
     if (!restored) {
       if (cmd !== undefined) this.props.set("sun.java.command", "");
       yield* this.bootGen(t);
+      if (this.exitCode !== null) return;
       // a snapshot is only a cache: failing to make or keep one never fails the run
       if (snaps) {
         try {
@@ -1382,6 +1405,7 @@ export class JVM {
   private *mainGen(t: JThread, mode: number, what: string, args: string[], restored: boolean): NativeGen {
     const boot = (n: string) => this.loadBootOrFail(n);
     yield* this.startGen(t, restored);
+    if (this.exitCode !== null) return;
     let code = 0;
     try {
       const helper = boot("sun/launcher/LauncherHelper");

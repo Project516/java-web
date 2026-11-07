@@ -18,6 +18,7 @@ npx @project516/java-web [options] -jar app.jar [args]
 | `-ea`, `-da`, `-esa` and the rest | assertions, as with `java` |
 | `--enable-preview` | preview features |
 | `--add-exports`, `--add-opens`, `--add-reads`, `--add-modules`, `--module-path`, `-p` | module options, as with `java` |
+| `-m`, `--module module[/class]` | run a main class from a module on the module path |
 | `--locale-data` | locales other than English (see [support.md](support.md#locales)) |
 | `-Xmx` | the maximum heap reported by `Runtime.maxMemory()` (at most 1g, rounded up to 2 MB steps, below 2m an error). Under Node, java-web checks measured heap use periodically during allocation and throws `OutOfMemoryError: Java heap space` when live use stays over the cap after collection. Without an exposed garbage collector, it checks after estimated allocations exceed the cap. Pages set the cap with `maxHeap` ([browser.md](browser.md)). |
 | `--max-rss MB` | exit when resident memory passes this (default 2048) |
@@ -25,6 +26,9 @@ npx @project516/java-web [options] -jar app.jar [args]
 | `--debug` | log VM events |
 
 Other `-X` and HotSpot-only options are ignored.
+
+`kill -QUIT` on a running command prints every thread's stack to stderr, as
+HotSpot does, and the program goes on. `JW_DUMP_STACKS=10` does it every 10 seconds.
 
 ## From JS
 
@@ -43,7 +47,7 @@ const code = await runNode({
 The package ships TypeScript declarations (`dist/node.d.ts`). `runNode`
 resolves to the exit code. Its options:
 
-- `classpath`, `mainClass` or `jar`, `args`, `props` (system properties)
+- `classpath`, `mainClass`, `mainModule` (`module/class`, with `jdk.module.path` in `props`) or `jar`, `args`, `props` (system properties)
 - `stdout`, `stderr` (byte callbacks; default the process's), `input` (fixed stdin bytes)
 - `env` (what `System.getenv()` returns; default the host's environment)
 - `natives`: Java `native` methods in JS, as in the browser ([browser.md](browser.md))
