@@ -111,8 +111,8 @@ const intrinsicClasses = new Set(Object.keys(intrinsics).map((k) => k.slice(0, k
 // snapshot is dropped, so a new VM with the same options boots.
 export class SnapshotError extends Error {}
 
-// properties under which boot reads application files, which a key does not cover
-const BOOT_READS_APP = /^(java\.system\.class\.loader|jdk\.module\.(path|upgrade\.path|patch\.\d+))$/;
+// properties under which the VM reads application files that a snapshot key does not cover
+const BOOT_READS_APP = /^(java\.system\.class\.loader|jdk\.boot\.class\.path\.append|jdk\.module\.(path|upgrade\.path|patch\.\d+))$/;
 
 const YIELD = (() => {
   if (typeof setImmediate === "function") return (fn: () => void) => setImmediate(fn);
