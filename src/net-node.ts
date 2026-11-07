@@ -157,6 +157,7 @@ export class NodeNet implements NetBackend {
     else this.unixClients.set(path, [entry]);
     return this.connectTo(s, { path: shortUnixPath(path) }, () => {
       s.remotePath = path;
+      s.peerInVm = [...this.live].some((l) => l.localPath === path && (l.impl as TcpImpl | null)?.srv);
     }, () => {
       const list = this.unixClients.get(path);
       const i = list?.indexOf(entry) ?? -1;
@@ -186,7 +187,9 @@ export class NodeNet implements NetBackend {
         } else {
           c.unix = true;
           c.localPath = s.localPath;
-          if (unixPath) c.remotePath = this.unixClients.get(unixPath)?.shift()?.name ?? "";
+          const client = unixPath ? this.unixClients.get(unixPath)?.shift() : undefined;
+          c.remotePath = client?.name ?? "";
+          c.peerInVm = client !== undefined;
         }
         this.attach(c, ns);
         s.backlog.push(c);

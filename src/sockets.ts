@@ -129,6 +129,8 @@ export class Sock {
   pipe = false;
   // the in-VM peer of a loopback stream or pipe
   peer: Sock | null = null;
+  // a host Unix socket whose other end is in this VM
+  peerInVm = false;
   // multicast groups joined, by address
   groups = new Set<string>();
   // backend state

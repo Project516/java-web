@@ -192,7 +192,10 @@ function extendedOptions(): Natives {
   out[`${L}setIpDontFragment0(IZZ)V`] = (t, [fd, v, v6]) => { bound(t, fd).setOption(v6 ? IPV6 : IP, v6 ? 23 : 10, v ? 2 : 0); };
   out[`${L}getIpDontFragment0(IZ)Z`] = (t, [fd, v6]) => (bound(t, fd).option(v6 ? IPV6 : IP, v6 ? 23 : 10, 0) === 2 ? 1 : 0);
   out[`${L}getSoPeerCred0(I)J`] = (t, [fd]) => {
-    if (!bound(t, fd).connected) throw new PendingThrow("java/net/SocketException", strerror(ENOTCONN));
+    const s = bound(t, fd);
+    if (!s.connected) throw new PendingThrow("java/net/SocketException", strerror(ENOTCONN));
+    // a peer in this VM is this process; a host peer's ids are unknown, -1 as Linux gives without credentials
+    if (!s.peer && !s.peerInVm) return -1n;
     const p = (globalThis as any).process;
     return (BigInt(p?.getuid?.() ?? 0) << 32n) | BigInt(p?.getgid?.() ?? 0);
   };
