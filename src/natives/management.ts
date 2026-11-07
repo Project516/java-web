@@ -1,9 +1,8 @@
 // java.management natives: what HotSpot's JMM interface (services/management.cpp)
 // reports, for a VM with green threads on the JS engine's collector. Memory
-// managers and pools have the names HotSpot gives them with the Serial
-// collector, which it picks for a heap of java-web's size. Heap usage is the JS
-// heap's; collections are the explicit System.gc() calls, which HotSpot counts
-// as full collections.
+// managers and pools have the names HotSpot gives them with G1, its default
+// collector. Heap usage is the JS heap's; collections are the explicit
+// System.gc() calls, which HotSpot counts as full collections.
 
 import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP } from "../runtime.ts";
 import type { JMethod } from "../runtime.ts";
@@ -139,15 +138,16 @@ function procValue(file: string, label: string, field = 1): number {
 const orElse = (x: number, fallback: number) => (Number.isFinite(x) ? x : fallback);
 const KB = 1024;
 
-// The VM options java-web can state, as HotSpot reports them with the Serial collector
+// The VM options java-web can state, as HotSpot reports them with G1
 const FLAGS: { name: string; value: boolean | number; writeable: boolean }[] = [
   { name: "HeapDumpOnOutOfMemoryError", value: false, writeable: true },
   { name: "LockingMode", value: 2, writeable: false },
   { name: "MaxHeapSize", value: MAX_HEAP, writeable: false },
   { name: "PrintConcurrentLocks", value: false, writeable: true },
   { name: "UseCompressedOops", value: true, writeable: false },
+  { name: "UseG1GC", value: true, writeable: false },
   { name: "UseParallelGC", value: false, writeable: false },
-  { name: "UseSerialGC", value: true, writeable: false },
+  { name: "UseSerialGC", value: false, writeable: false },
 ];
 
 const TH = "java/lang/Thread";
@@ -553,6 +553,7 @@ export const natives: Natives = {
   [`${P}getMemoryManagers0()[Ljava/lang/management/MemoryManagerMXBean;`]: function* (t, [self]): NativeGen {
     const b: Beans = yield* beans(t);
     const name = POOLS[b.pools.indexOf(self)].name;
+    // HotSpot lists a pool's managers last added first
     return t.vm.newObjectArray("java/lang/management/MemoryManagerMXBean", b.managers.filter((_, i) => MANAGERS[i].pools.includes(name)).reverse());
   },
   [`${P}setPoolUsageSensor(Lsun/management/Sensor;)V`]: () => undefined,
