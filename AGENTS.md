@@ -75,6 +75,13 @@ Node, which is how the tests run.
 - `project516-review-bot` reviews every PR. Merge only once its review of the
   head commit has every finding fixed or answered on its thread. When it
   cannot read the whole diff, a subagent reviews the files it skipped
+- Commit messages and PR titles follow Conventional Commits:
+  `type(scope): summary`, one sentence. Types: `feat`, `fix`, `perf`,
+  `refactor`, `test`, `docs`, `ci`, `build`, `chore`. The scope is optional
+  and names the area (`jit`, `net`, `fs`, `zip`, `jtreg`). Mark a change that
+  breaks the page API or the package layout with `!` (`feat!: ...`). PRs merge
+  by squash, so the PR title becomes the commit on `master`. PR bodies follow
+  `.github/pull_request_template.md`
 
 ## Glossary
 
