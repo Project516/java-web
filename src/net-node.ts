@@ -5,6 +5,7 @@ import * as dns from "node:dns";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
+import * as path from "node:path";
 import { DGRAM_RCVBUF, HIGH_WATER, MAX_DGRAM, Sock } from "./sockets.ts";
 import type { Endpoint, NetBackend, NetIf } from "./sockets.ts";
 import * as E from "./sockets.ts";
@@ -57,6 +58,8 @@ interface TcpImpl {
 
 interface UdpImpl {
   ds?: dgram.Socket;
+  // the address the socket was bound to before a connect gave it a source address
+  boundLocal?: Endpoint;
   // sends the host socket has not finished, which a close must wait for
   pending?: number;
   closing?: boolean;
@@ -68,6 +71,14 @@ function reset(ns: net.Socket) {
   ns.on("error", () => {});
   if (ns.remoteAddress) ns.resetAndDestroy();
   else ns.destroy();
+}
+
+// A socket address holds 107 bytes of path; a long absolute path under the working
+// directory goes in relative, as a program that binds a relative name does.
+function shortUnixPath(p: string): string {
+  if (Buffer.byteLength(p) <= 107) return p;
+  const rel = path.relative(process.cwd(), p);
+  return Buffer.byteLength(rel) < Buffer.byteLength(p) ? rel : p;
 }
 
 export class NodeNet implements NetBackend {
@@ -129,14 +140,21 @@ export class NodeNet implements NetBackend {
 
   readonly hostUnix = true;
 
+  // The names clients of this VM bound before connecting to a path, in connect order. A host
+  // socket cannot tell its peer's name, so an accepted socket takes the next one.
+  private unixClients = new Map<string, string[]>();
+
   bindUnix(s: Sock, path: string) {
-    return this.listenOn(s, { path }, () => {
+    return this.listenOn(s, { path: shortUnixPath(path) }, () => {
       s.localPath = path;
-    });
+    }, path);
   }
 
   connectUnix(s: Sock, path: string) {
-    return this.connectTo(s, { path }, () => {
+    const names = this.unixClients.get(path);
+    if (names) names.push(s.localPath);
+    else this.unixClients.set(path, [s.localPath]);
+    return this.connectTo(s, { path: shortUnixPath(path) }, () => {
       s.remotePath = path;
     });
   }
@@ -148,7 +166,7 @@ export class NodeNet implements NetBackend {
   }
 
   // Listens with the given net options; s collects what connects.
-  private listenOn(s: Sock, options: net.ListenOptions, bound: (srv: net.Server) => void): Promise<number> {
+  private listenOn(s: Sock, options: net.ListenOptions, bound: (srv: net.Server) => void, unixPath?: string): Promise<number> {
     return new Promise((resolve) => {
       const srv = net.createServer({ allowHalfOpen: true });
       srv.once("error", (e) => resolve(errnoOf(e)));
@@ -162,6 +180,7 @@ export class NodeNet implements NetBackend {
         } else {
           c.unix = true;
           c.localPath = s.localPath;
+          if (unixPath) c.remotePath = this.unixClients.get(unixPath)?.shift() ?? "";
         }
         this.attach(c, ns);
         s.backlog.push(c);
@@ -285,9 +304,22 @@ export class NodeNet implements NetBackend {
     const ds = (s.impl as UdpImpl | null)?.ds;
     if (!ds) return Promise.resolve(E.EBADF);
     return new Promise((resolve) => {
+      // Linux lets a connected datagram socket connect again; Node wants it disconnected first
+      if (s.connected) {
+        try { ds.disconnect(); } catch { /* not connected */ }
+      }
       ds.once("connect", () => {
         s.connected = true;
         s.remote = { addr: ep.addr.slice(), port: ep.port };
+        // connecting gives a wildcard-bound socket the source address the route picks
+        try {
+          const a = ds.address();
+          const im = s.impl as UdpImpl;
+          if (a.family === "IPv4" && s.local && E.isWildcard(s.local.addr)) {
+            im.boundLocal ??= s.local;
+            s.local = { addr: parseIp(a.address), port: a.port };
+          }
+        } catch { /* keeps the bound address */ }
         resolve(0);
       });
       try {
@@ -301,7 +333,7 @@ export class NodeNet implements NetBackend {
   // Linux forgets the port of a socket that disconnects, so bind it again to keep it.
   async disconnect(s: Sock) {
     const ds = (s.impl as UdpImpl | null)?.ds;
-    const local = s.local;
+    const local = (s.impl as UdpImpl | null)?.boundLocal ?? s.local;
     s.connected = false;
     s.remote = null;
     if (!ds || !local) return 0;

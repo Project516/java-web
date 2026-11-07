@@ -128,3 +128,7 @@ Locales other than English need `cheerpjInit({ localeData: true })`, or
 - IPv4 only. Not supported: IPv6, asynchronous channels
   (`AsynchronousSocketChannel`), SCTP, ICMP (`isReachable` is true for the
   host's own addresses only) and inherited channels.
+- `jdk.net` is in the image. Its socket options (TCP keep-alive time, interval
+  and probes, quick ack, don't fragment, peer credentials) keep their values on
+  the socket and do not reach a host socket. TCP urgent data (`sendUrgentData`,
+  `MSG_OOB`) is not supported: Node cannot send or read it.

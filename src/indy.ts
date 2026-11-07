@@ -140,6 +140,16 @@ function* defineHidden(vm: JVM, t: JThread, caller: JClass, w: ClassWriter): Nat
 
 // ---- LambdaMetafactory -----------------------------------------------------
 
+// -Djdk.invoke.LambdaMetafactory.dumpProxyClassFiles: the JDK's own dumper writes the class
+function* dumpLambda(vm: JVM, t: JThread, c: JClass, bytes: Uint8Array): NativeGen {
+  const factory = vm.loadBootOrFail("java/lang/invoke/InnerClassLambdaMetafactory");
+  if (factory.state !== INITIALIZED) yield* vm.initGen(t, factory);
+  const array = vm.newArray(vm.primClass("B"), bytes.length);
+  (array.a as Int8Array).set(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.length));
+  yield t.callVirtual(vm.getStatic(factory, "lambdaProxyClassFileDumper"), "dumpClass", "(Ljava/lang/String;Ljava/lang/Class;[B)V",
+    vm.str(c.cf!.name), vm.mirror(c), array);
+}
+
 function* spinLambda(vm: JVM, t: JThread, caller: JClass, name: string, factoryDesc: string, args: BsmArg[], alt: boolean): NativeGen {
   const sam = args[0], impl = args[1], inst = args[2];
   if (sam.kind !== "mt" || impl.kind !== "mh" || inst.kind !== "mt") return null;
@@ -223,6 +233,7 @@ function* spinLambda(vm: JVM, t: JThread, caller: JClass, name: string, factoryD
     m.ret(samRet);
   }
   const c: JClass = yield* defineHidden(vm, t, caller, w);
+  if (vm.props.has("jdk.invoke.LambdaMetafactory.dumpProxyClassFiles")) yield* dumpLambda(vm, t, c, w.toBytes());
   // HotSpot's lambda classes have neither; its call sites build the instance
   const factoryMethod = c.methodMap.get("get$Lambda" + factoryDesc)!;
   c.vmMembers = new Set([factoryMethod, ...c.fields.filter((f) => f.name === "INSTANCE")]);

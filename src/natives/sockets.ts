@@ -171,6 +171,38 @@ export function socketError(errno: number, msg?: string): PendingThrow {
 }
 
 const ioError = (errno: number) => new PendingThrow("java/io/IOException", strerror(errno));
+// jdk.net's ExtendedSocketOptions on Linux, kept with the socket's options; the host sockets
+// do not take the values. Linux's defaults are 7200 s, 75 s and 9 probes.
+function extendedOptions(): Natives {
+  const L = "jdk/net/LinuxSocketOptions.";
+  const TCP = 6, IP = 0, IPV6 = 41;
+  const bound = (t: JThread, fd: number) => {
+    const s = socksOf(t.vm.state).get(fd);
+    if (!s) throw new PendingThrow("java/net/SocketException", strerror(EBADF));
+    return s;
+  };
+  const out: Natives = {};
+  for (const [name, opt, dflt] of [["TcpKeepAliveProbes", 6, 9], ["TcpKeepAliveTime", 4, 7200], ["TcpKeepAliveIntvl", 5, 75]] as const) {
+    out[`${L}set${name}0(II)V`] = (t, [fd, v]) => { bound(t, fd).setOption(TCP, opt, v); };
+    out[`${L}get${name}0(I)I`] = (t, [fd]) => bound(t, fd).option(TCP, opt, dflt);
+  }
+  out[`${L}setQuickAck0(IZ)V`] = (t, [fd, v]) => { bound(t, fd).setOption(TCP, 12, v); };
+  out[`${L}getQuickAck0(I)Z`] = (t, [fd]) => bound(t, fd).option(TCP, 12, 1);
+  // IP_MTU_DISCOVER: 2 is "do not fragment"
+  out[`${L}setIpDontFragment0(IZZ)V`] = (t, [fd, v, v6]) => { bound(t, fd).setOption(v6 ? IPV6 : IP, v6 ? 23 : 10, v ? 2 : 0); };
+  out[`${L}getIpDontFragment0(IZ)Z`] = (t, [fd, v6]) => (bound(t, fd).option(v6 ? IPV6 : IP, v6 ? 23 : 10, 0) === 2 ? 1 : 0);
+  out[`${L}getSoPeerCred0(I)J`] = (t, [fd]) => {
+    if (!bound(t, fd).connected) throw new PendingThrow("java/net/SocketException", strerror(ENOTCONN));
+    const p = (globalThis as any).process;
+    return (BigInt(p?.getuid?.() ?? 0) << 32n) | BigInt(p?.getgid?.() ?? 0);
+  };
+  out[`${L}keepAliveOptionsSupported0()Z`] = () => 1;
+  out[`${L}quickAckSupported0()Z`] = () => 1;
+  out[`${L}incomingNapiIdSupported0()Z`] = () => 1;
+  out[`${L}getIncomingNapiId0(I)I`] = (t, [fd]) => { bound(t, fd); return 0; };
+  return out;
+}
+
 // what the native methods the JDK declares with `throws UnixException` throw
 const unixError = (errno: number) => new PendingThrow("sun/nio/fs/UnixException", null, { desc: "(I)V", args: [errno] });
 const connectionReset = () => new PendingThrow("sun/net/ConnectionResetException", "Connection reset");
@@ -647,7 +679,8 @@ export const natives: Natives = {
   },
   [`${N}connect0(ZLjava/io/FileDescriptor;Ljava/net/InetAddress;I)I`]: function* (t, [, fd, ia, port]): NativeGen {
     const s = sockOf(t, fd);
-    if (s.connected || s.connecting) throw socketError(106);
+    // a datagram socket may connect again
+    if (s.stream && (s.connected || s.connecting)) throw socketError(106);
     const e = yield* done(t.vm.net.connect(s, { addr: inetBytes(t, ia), port }), t);
     if (e && e !== 115) throw socketError(e);
     if (s.connecting) {
@@ -798,6 +831,8 @@ export const natives: Natives = {
   [`${NSA}offsetSin6ScopeId()I`]: () => 24,
   [`${NSA}offsetSin6FlowInfo()I`]: () => 4,
 
+  ...extendedOptions(),
+
   "sun/nio/ch/UnixDomainSockets.init()Z": () => 1,
   "sun/nio/ch/UnixDomainSockets.socket0()I": (t) => {
     const s = new Sock("stream");
@@ -806,8 +841,10 @@ export const natives: Natives = {
   },
   "sun/nio/ch/UnixDomainSockets.bind0(Ljava/io/FileDescriptor;[B)V": function* (t, [fd, path]): NativeGen {
     const s = sockOf(t, fd);
-    const p = unixFile(t, path);
     if (s.localPath) throw socketError(EINVAL);
+    // an empty path is the unnamed address; Linux binds it to an abstract name Java reports as unnamed
+    if (path.a.length === 0) return;
+    const p = unixFile(t, path);
     if (!t.vm.net.hostUnix) {
       if (t.vm.fs.stat(p)) throw socketError(EADDRINUSE);
       if (!t.vm.fs.write(p, new Uint8Array(0))) throw socketError(EACCES);

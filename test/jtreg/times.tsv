@@ -58,6 +58,7 @@
 94523	java/util/Calendar/CalendarTestScripts/JapaneseRollTests.java
 94008	java/net/httpclient/http2/ConnectionFlowControlTest.java
 93744	java/net/httpclient/ThrowingSubscribersSanity.java
+93697	java/util/ResourceBundle/modules/basic/BasicTest.java
 93525	java/util/zip/DeInflate.java
 93198	java/lang/Long/ToString.java
 92855	java/lang/System/LoggerFinder/internal/backend/LoggerFinderBackendTest.java
@@ -118,6 +119,7 @@
 68035	java/time/test/java/time/format/TestUnicodeExtension.java
 67944	java/lang/System/LoggerFinder/internal/BootstrapLogger/BootstrapLoggerTest.java
 67847	java/net/httpclient/HttpClientAuthRetryLimitTest.java
+67392	java/util/ResourceBundle/modules/visibility/VisibilityTest.java
 67326	java/security/KeyStore/TestKeyStoreBasic.java
 65745	java/net/Socket/asyncClose/AsyncClose.java
 65693	java/security/MessageDigest/ThreadSafetyTest.java
@@ -129,7 +131,11 @@
 63402	java/beans/Performance/Test4058433.java
 63310	java/net/Socket/Timeouts.java
 63072	java/nio/channels/FileChannel/CleanerTest.java
+62928	java/lang/ScopedValue/StressStackOverflow.java#2
 62820	java/lang/invoke/VarHandles/VarHandleTestMethodTypeFloat.java
+62650	java/lang/ScopedValue/StressStackOverflow.java#4
+62535	java/lang/ScopedValue/StressStackOverflow.java#3
+62481	java/lang/ScopedValue/StressStackOverflow.java
 60333	java/util/TimeZone/Bug8149452.java
 60194	java/lang/ProcessBuilder/Basic.java#3
 59689	java/security/cert/CertPathValidator/OCSP/OCSPTimeout.java
@@ -177,6 +183,7 @@
 48574	java/lang/ClassLoader/getResource/modules/ResourcesTest.java
 48410	java/net/httpclient/NoBodyPartOne.java
 48315	java/util/concurrent/ConcurrentQueues/ConcurrentQueueLoops.java
+48147	java/lang/ClassLoader/getResource/GetResource.java
 48118	java/net/httpclient/SplitResponseSSLKeepAliveAsync.java
 47953	java/net/httpclient/FlowAdapterSubscriberTest.java
 47612	java/text/Format/ListFormat/TestListFormat.java
@@ -261,7 +268,6 @@
 29918	java/awt/geom/Path2D/Path2DGrow.java
 29810	java/io/Serializable/records/SerialPersistentFieldsTest.java
 29515	java/nio/charset/coders/BashStreams.java
-29451	java/lang/System/LoggerFinder/modules/LoggerInImageTest.java
 29314	java/net/httpclient/RedirectTimeoutTest.java
 29301	java/net/httpclient/SplitResponseAsync.java
 29246	java/lang/invoke/VarHandles/VarHandleTestByteArrayAsChar.java
@@ -273,7 +279,6 @@
 28950	java/lang/Thread/virtual/stress/LotsOfUncontendedMonitorEnter.java#3
 28778	java/time/tck/java/time/TCKLocalDate.java
 28753	java/security/misc/TestDefaultRandom.java
-28642	java/lang/System/LoggerFinder/modules/JDKLoggerForImageTest.java
 28540	javax/crypto/CipherSpi/CipherByteBufferOverwriteTest.java
 28495	java/io/Serializable/failureAtomicity/FailureAtomicity.java
 28339	java/net/InetAddress/HostsFileOrderingTest.java
@@ -282,6 +287,7 @@
 28213	java/security/Signature/SignatureGetInstance.java
 28119	java/net/httpclient/websocket/PendingTextPingClose.java
 28060	java/lang/invoke/VarHandles/LazyInitializingTest.java
+27650	java/lang/reflect/Proxy/ProxyTest.java
 27517	java/util/Calendar/SupplementalJapaneseEraTestRun.java
 27487	java/security/SignedObject/Correctness.java
 27422	java/lang/Double/ParseDouble.java
@@ -289,7 +295,6 @@
 26897	java/nio/channels/SocketChannel/AdaptorStreams.java
 26886	java/text/BreakIterator/BreakIteratorTest.java
 26853	java/nio/channels/FileChannel/ClosedByInterrupt.java
-26828	java/lang/System/LoggerFinder/modules/NamedLoggerForImageTest.java
 26649	java/lang/Thread/virtual/stress/NotifiedThenTimedOutWait.java#2
 26581	java/lang/Character/CheckProp.java
 26478	java/nio/channels/Selector/ChangingInterests.java
@@ -298,7 +303,6 @@
 26329	java/text/Format/DateFormat/SimpleDateFormatPatternTest.java
 26157	java/lang/ProcessHandle/OnExitTest.java
 26112	java/lang/Thread/virtual/stress/GetStackTraceALotWhenBlocking.java
-26064	java/lang/System/LoggerFinder/modules/UnnamedLoggerForImageTest.java
 25951	java/lang/invoke/lambda/LambdaFileEncodingSerialization.java
 25826	java/util/Arrays/largeMemory/ParallelPrefix.java
 25808	java/lang/invoke/ClassValueTest.java
@@ -333,6 +337,7 @@
 23148	java/util/Arrays/CopyMethods.java
 23144	java/net/httpclient/HttpsTunnelTest.java
 22927	java/net/DatagramSocket/SendReceiveMaxSize.java
+22902	java/lang/reflect/Proxy/ProxyClassAccessTest.java
 22788	java/util/BitSet/BSMethods.java
 22720	java/beans/XMLEncoder/javax_swing_JTree.java
 22505	java/lang/String/LiteralReplace.java
@@ -345,6 +350,7 @@
 22095	java/text/Format/NumberFormat/CurrencyFormat.java
 22081	java/util/concurrent/StructuredTaskScope/StressCancellation.java
 22047	java/text/Format/CompactNumberFormat/TestFormatToCharacterIterator.java
+21905	java/util/ResourceBundle/modules/cache/CacheTest.java
 21801	javax/crypto/CryptoPermissions/TestUnlimited.java
 21721	java/time/tck/java/time/TCKZoneOffset.java
 21680	java/net/httpclient/HttpResponseConnectionLabelTest.java
@@ -445,6 +451,7 @@
 17075	java/util/jar/Manifest/ValueUtf8Coding.java
 17022	java/lang/String/concat/ImplicitStringConcatShapes.java
 17019	java/net/Authenticator/B8034170.java
+16990	java/lang/ClassLoader/GetSystemPackage.java
 16936	java/util/Date/DateGregorianCalendarTest.java
 16910	java/lang/invoke/VarHandles/VarHandleTestAccessBoolean.java
 16901	java/util/Scanner/ScanTest.java
@@ -479,11 +486,13 @@
 16032	java/lang/ClassLoader/getResource/automaticmodules/Driver.java
 16017	java/lang/String/CompactString/GetChars.java
 15982	java/time/tck/java/time/format/TCKOffsetPrinterParser.java
+15954	java/lang/System/LoggerFinder/modules/NamedLoggerForJDKTest.java
 15943	java/io/Serializable/records/BadCanonicalCtrTest.java
 15941	java/net/DatagramSocket/SetGetSendBufferSize.java
 15916	java/net/MulticastSocket/SetLoopbackOption.java
 15887	java/security/KeyPairGenerator/GenerateRSAKeyPair.java
 15852	java/lang/String/CompactString/Replace.java
+15828	java/lang/System/LoggerFinder/modules/UnnamedLoggerForJDKTest.java
 15733	java/util/ServiceLoader/NoInterferenceTest.java
 15733	java/net/httpclient/PathSubscriber/BodyHandlerOfFileTest.java
 15671	java/util/Calendar/CalendarDisplayNamesTest.java
@@ -497,6 +506,7 @@
 15483	java/net/httpclient/HttpResponseLimitingTest.java
 15430	java/net/httpclient/DebugLoggerTest.java
 15391	java/io/Serializable/serialFilter/SerialFactoryExample.java
+15381	java/lang/invoke/lambda/LogGeneratedClassesTest.java
 15377	java/lang/String/CompactString/OffsetByCodePoints.java
 15344	java/text/Format/CompactNumberFormat/TestCNFRounding.java
 15316	java/security/KeyPairGenerator/Failover.java
@@ -508,6 +518,7 @@
 15079	java/security/KeyAgreement/NegativeTest.java
 15076	java/io/Serializable/serialFilter/MixedFiltersTest.java
 15072	java/util/concurrent/atomic/DoubleAdderDemo.java
+15044	java/lang/System/LoggerFinder/modules/JDKLoggerForJDKTest.java
 15028	java/util/IdentityHashMap/Capacity.java
 15019	java/lang/Character/CharacterName.java
 15015	java/lang/ClassLoader/GetDotResource.java
@@ -554,6 +565,7 @@
 13956	java/lang/invoke/lambda/LambdaStackTrace.java
 13940	java/util/jar/JarInputStream/ExtraFileInMetaInf.java
 13932	java/beans/PropertyEditor/TestShortClassNull.java
+13889	java/net/Socket/AsyncShutdown.java
 13827	java/net/httpclient/CancelledResponse2.java
 13767	java/io/Serializable/unshared/Write.java
 13748	java/beans/XMLEncoder/javax_swing_JButton.java
@@ -589,7 +601,6 @@
 13237	java/io/Serializable/arraySuidConflict/Write.java
 13230	java/lang/StableValue/StableValueFactoriesTest.java
 13228	java/beans/PropertyEditor/TestLongTypeNull.java
-13208	java/util/ResourceBundle/modules/unnamed/UnNamedTest.java
 13207	java/security/KeyStore/ProbeKeystores.java
 13143	java/text/Format/CompactNumberFormat/TestCompactPatternsValidity.java
 13140	java/net/URLClassLoader/definePackage/SplitPackage.java
@@ -673,7 +684,6 @@
 11776	java/lang/invoke/LoopCombinatorTest.java
 11764	java/time/tck/java/time/chrono/TCKIsoChronology.java
 11758	java/awt/geom/Path2D/NonFiniteTests.java
-11741	java/util/ResourceBundle/modules/layer/LayerTest.java
 11731	java/io/Serializable/enum/missingConstant/Write.java
 11718	java/nio/channels/DatagramChannel/AdaptorAsyncCloseAfterReceive.java
 11718	java/io/Serializable/records/SerialVersionUIDTest.java
@@ -777,6 +787,7 @@
 10249	java/beans/XMLEncoder/javax_swing_BoxLayout.java
 10232	java/net/httpclient/PlainProxyConnectionTest.java
 10227	java/util/concurrent/Future/DefaultMethods.java
+10178	java/lang/System/LoggerFinder/modules/JDKLoggerForImageTest.java
 10171	java/io/File/GetAbsolutePath.java
 10140	java/beans/XMLEncoder/java_sql_Timestamp.java
 10139	java/text/Format/NumberFormat/Bug6278616.java
@@ -792,6 +803,7 @@
 9978	java/util/TimeZone/Bug6329116.java
 9965	java/text/Format/DateFormat/Bug6530336.java
 9956	java/util/Currency/CNPGetDisplayName.java
+9951	java/lang/System/LoggerFinder/modules/LoggerInImageTest.java
 9914	java/util/Collections/FindSubList.java
 9912	java/util/Calendar/CalendarLeapYearAddTest.java
 9911	java/beans/XMLEncoder/Test6437265.java
@@ -813,9 +825,11 @@
 9654	java/util/List/NestedSubList.java
 9654	java/text/Collator/KoreanTest.java
 9642	java/awt/geom/Path2D/FillPPathTest.java
+9629	java/lang/System/LoggerFinder/modules/UnnamedLoggerForImageTest.java
 9629	java/util/Calendar/CalendarLeapYearRollTest.java
 9610	java/lang/IntegralPrimitiveToString.java
 9609	java/nio/file/WatchService/DeleteInterference.java
+9603	java/lang/System/LoggerFinder/modules/NamedLoggerForImageTest.java
 9603	java/text/Collator/RuleBasedCollatorTest.java
 9602	java/util/jar/JarFile/VerifySignedJar.java
 9600	java/lang/Thread/virtual/CarrierThreadInfo.java#4
@@ -876,8 +890,10 @@
 8976	java/lang/String/concat/ImplicitStringConcat.java
 8973	java/util/BitSet/ImmutableBitSet.java
 8965	java/time/tck/java/time/format/TCKDateTimeFormatters.java
+8946	java/util/ResourceBundle/modules/layer/LayerTest.java
 8920	java/net/Socket/setReuseAddress/Restart.java
 8903	jdk/nio/zipfs/CopyMoveTests.java
+8898	java/util/ResourceBundle/modules/casesensitive/CaseInsensitiveNameClash.java
 8896	java/util/Calendar/bug4409072.java
 8892	java/nio/channels/etc/MemorySegments.java
 8889	java/util/Locale/ExpectedAdapterTypes.java
@@ -891,6 +907,7 @@
 8848	java/net/SocketInputStream/SocketTimeout.java
 8837	java/lang/String/CompactString/CharAt.java
 8805	java/util/TimeZone/TimeZoneTest.java
+8793	java/util/ResourceBundle/modules/unnamed/UnNamedTest.java
 8782	java/util/zip/ZipFile/ReadAfterClose.java
 8766	java/util/Locale/LegacyCodesClassInvariant.java
 8763	java/security/SecureRandom/Serialize.java
@@ -959,6 +976,7 @@
 8319	java/util/Collections/CheckedMapBash.java
 8318	java/util/Map/BasicSerialization.java
 8309	java/net/httpclient/HttpRequestNewBuilderTest.java
+8303	java/lang/Class/forName/modules/TestDriver.java
 8299	java/lang/StrictMath/Atan2Tests.java
 8284	java/util/Calendar/ResolutionTest.java
 8257	java/time/tck/java/time/chrono/serial/TCKChronoLocalDateSerialization.java
@@ -978,6 +996,7 @@
 8130	java/lang/String/CompactString/Equals.java
 8130	java/beans/PropertyEditor/TestByteTypeNull.java
 8122	java/beans/Introspector/8159696/UnloadClassBeanInfo.java
+8112	java/util/TimeZone/CustomTzIDCheckDST.java
 8111	java/io/Serializable/serialver/nested/NestedTest.java
 8107	java/io/Serializable/records/BasicRecordSer.java
 8100	java/util/Calendar/NonLenientTest.java
@@ -1112,6 +1131,7 @@
 7293	java/util/Calendar/bug4514831.java
 7292	java/util/Properties/InitialCapacity.java
 7284	java/lang/management/ThreadMXBean/ThreadInfoArray.java
+7283	java/lang/ModuleTests/access/AccessTest.java
 7278	java/beans/PropertyEditor/TestEnumClassJava.java
 7277	javax/crypto/NullCipher/TestNPE.java
 7276	java/beans/PropertyEditor/TestShortTypeJava.java
@@ -1212,6 +1232,7 @@
 6797	java/net/httpclient/http2/ImplicitPushCancel.java
 6785	java/lang/invoke/VarHandles/accessibility/TestFieldLookupAccessibility.java
 6779	java/text/Format/DecimalFormat/EqualityTest.java
+6777	java/lang/invoke/lambda/LambdaAsm.java
 6772	java/time/tck/java/time/format/TCKDateTimeTextPrinting.java
 6760	java/nio/channels/unixdomain/IOExchanges.java
 6754	java/awt/geom/Path2D/GetBounds2DPrecisionTest.java
@@ -1243,6 +1264,7 @@
 6640	java/text/Collator/EnglishTest.java
 6633	java/util/RandomAccess/Basic.java
 6631	java/nio/channels/AsynchronousSocketChannel/CompletionHandlerRelease.java
+6631	java/nio/channels/DatagramChannel/AdaptorConnect.java
 6630	java/security/cert/CertPathValidator/nameConstraintsRFC822/ValidateCertPath.java
 6626	java/nio/channels/etc/LocalSocketAddressType.java
 6626	java/lang/StringBuffer/Comparison.java
@@ -1390,6 +1412,7 @@
 6017	java/beans/XMLEncoder/java_util_Collections_SynchronizedList.java
 6010	java/text/Format/CompactNumberFormat/TestPlurals.java
 6009	java/io/InputStreamReader/StatefulDecoderNearEOF.java
+6008	java/nio/MappedByteBuffer/MapSyncFail.java
 5998	java/io/Reader/ReadIntoZeroLengthArray.java
 5987	java/net/DatagramSocket/DatagramSocketExample.java
 5987	java/lang/invoke/defineHiddenClass/TypeDescriptorTest.java
@@ -1532,6 +1555,7 @@
 5490	javax/xml/jaxp/XPath/8015978/XPathNegativeZero.java
 5483	java/time/tck/java/time/format/TCKSignStyle.java
 5477	java/util/Arrays/SetAllTest.java
+5476	java/lang/annotation/typeAnnotations/BadCPIndex.java
 5474	java/nio/channels/FileLock/Overlaps.java
 5472	java/util/Properties/ConcurrentLoadAndStoreXML.java
 5472	java/text/Format/DateFormat/DateFormatRoundTripTest.java
@@ -1965,6 +1989,7 @@
 4057	java/lang/invoke/LambdaFormTest.java
 4052	java/lang/Long/BitTwiddle.java
 4052	java/beans/Introspector/Test6963811.java
+4052	java/nio/channels/unixdomain/Bind.java
 4049	java/io/Reader/TransferTo.java
 4048	java/io/Serializable/writeReplace/WriteReplace.java
 4048	java/io/BufferedReader/ReadLineSync.java
@@ -2056,6 +2081,7 @@
 3862	java/beans/XMLEncoder/java_awt_MenuShortcut.java
 3860	java/util/ResourceBundle/Test4300693.java
 3859	java/beans/XMLEncoder/java_lang_reflect_Method.java
+3859	java/nio/channels/unixdomain/SocketOptions.java
 3858	java/time/tck/java/time/MockSimplePeriod.java
 3857	java/util/logging/HigherResolutionTimeStamps/LogRecordWithNanosAPI.java
 3852	java/beans/XMLEncoder/javax_swing_border_EtchedBorder.java
@@ -2126,6 +2152,7 @@
 3754	java/beans/Introspector/Test4948761.java
 3752	javax/crypto/CryptoPermissions/CryptoPolicyFallback.java
 3752	java/beans/XMLEncoder/java_awt_Cursor.java
+3751	java/nio/channels/DatagramChannel/Sender.java
 3750	java/io/OutputStreamWriter/Encode.java
 3749	java/lang/annotation/typeAnnotations/ConstructorReceiverTest.java
 3748	java/io/FilePermission/Correctness.java
@@ -2320,6 +2347,7 @@
 3489	java/net/MulticastSocket/MulticastAddresses.java
 3487	java/lang/invoke/FilterArgumentsTest.java
 3486	java/net/Socket/LinkLocal.java
+3485	java/lang/System/OsVersionTest.java
 3482	java/util/concurrent/TimeUnit/Basic.java
 3481	java/io/OutputStream/WriteParams.java
 3480	java/net/InetSocketAddress/B6469803.java
@@ -2966,6 +2994,7 @@
 2687	java/io/charStreams/StringConvert.java
 2686	java/util/EnumSet/LargeEnumIteratorRemoveResilience.java
 2684	java/io/Serializable/classDescFlagConflict/Read.java
+2684	java/lang/ProcessBuilder/SkipTest.java
 2680	java/io/RandomAccessFile/Seek.java
 2677	java/util/zip/ZipInputStream/Constructor.java
 2677	java/text/AttributedString/TestAttributedStringCtor.java
@@ -2978,6 +3007,7 @@
 2670	java/io/Serializable/partialClassDesc/PartialClassDesc.java
 2670	java/io/PrintStream/ClearErrorStream.java
 2670	java/beans/XMLDecoder/4676532/Test4676532.java
+2669	java/net/SocketOption/TcpKeepAliveTest.java
 2668	java/security/cert/CertificateFactory/ReturnStream.java
 2668	java/net/URLConnection/contentHandler/UserContentHandler.java
 2667	java/security/BasicPermission/MixedBasicPermissions.java
@@ -3250,6 +3280,7 @@
 2382	java/util/ResourceBundle/Control/Bug6530694.java
 2381	java/io/InputStreamReader/GrowAfterEOF.java
 2380	java/nio/channels/Selector/WakeupEmpty.java
+2375	java/lang/management/MemoryMXBean/MemoryTest.java#5
 2369	java/util/ArrayList/SubListModCount.java
 2369	java/text/BreakIterator/Bug4932583.java
 2369	java/net/MulticastSocket/TimeToLive.java
@@ -3278,6 +3309,7 @@
 2351	java/nio/channels/FileChannel/ScatteringRead.java
 2350	java/lang/reflect/Modifier/toStringTest.java
 2347	java/net/DatagramSocket/ImplicitBind.java
+2346	java/lang/management/OperatingSystemMXBean/GetSystemLoadAverage.java
 2345	java/beans/PropertyEditor/TestBooleanClassValue.java
 2343	java/lang/Math/Expm1Tests.java
 2336	java/security/cert/X509Certificate/GetUnparseableExtensions.java
@@ -3602,6 +3634,7 @@
 1982	java/util/ResourceBundle/Bug6572242.java
 1981	java/security/cert/URICertStoreParameters/TestBasic.java
 1980	java/io/PipedOutputStream/DeadReader.java
+1980	java/lang/invoke/DumpMethodHandleInternals.java
 1979	java/util/Properties/BlankLines.java
 1979	java/net/InetSocketAddress/B4849451.java
 1979	java/lang/Class/getModifiers/ResolveFrom.java
@@ -3810,6 +3843,7 @@
 1641	java/util/logging/LoggingNIOChange.java
 1641	java/net/URL/HashCode.java
 1637	javax/xml/jaxp/transform/8004476/XPathExFuncTest.java
+1637	java/lang/reflect/Proxy/ProxyModuleMapping.java
 1627	java/lang/StringBuffer/SetLength.java
 1627	java/io/PushbackInputStream/MarkReset.java
 1624	java/lang/annotation/AnnotationTypeMismatchException/ArrayTypeMismatchTest.java

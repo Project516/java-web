@@ -4,6 +4,7 @@ import { INITIALIZED } from "../runtime.ts";
 import type { JArray, JClass, JObject } from "../runtime.ts";
 import { PendingThrow } from "../thread.ts";
 import type { JThread, NativeGen } from "../thread.ts";
+import { posixOffsetMinutes } from "../posixtz.ts";
 import { ipv4Literal, isLoopback, isWildcard, sameAddr } from "../sockets.ts";
 import type { Endpoint, NetIf } from "../sockets.ts";
 import type { Natives } from "./util.ts";
@@ -145,17 +146,19 @@ export const natives: Natives = {
   "java/net/Inet6AddressImpl.getHostByAddr([B)Ljava/lang/String;": (t, [, addr]) => hostByAddr(t, addr),
   "java/net/Inet6AddressImpl.isReachable0([BII[BII)Z": (t, [, addr]) => reachable(t, addr),
 
+  // TZ names the zone as in libc; a value that is no zone ID (a POSIX rule such as
+  // "MEZ-1MESZ,M3.5.0,M10.5.0/3") makes Java ask for the current GMT offset
   "java/util/TimeZone.getSystemTimeZoneID(Ljava/lang/String;)Ljava/lang/String;": (t) => {
-    let id = "UTC";
+    const tz = t.vm.opts.env?.TZ?.replace(/^:/, "");
     try {
-      id = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      return t.vm.str(Intl.DateTimeFormat(undefined, tz ? { timeZone: tz } : undefined).resolvedOptions().timeZone || "UTC");
     } catch {
-      // no Intl time zone support
+      return t.vm.str(tz || "UTC");
     }
-    return t.vm.str(id);
   },
   "java/util/TimeZone.getSystemGMTOffsetID()Ljava/lang/String;": (t) => {
-    const off = -new Date().getTimezoneOffset();
+    const tz = t.vm.opts.env?.TZ?.replace(/^:/, "");
+    const off = (tz ? posixOffsetMinutes(tz, Date.now()) : null) ?? -new Date().getTimezoneOffset();
     const a = Math.abs(off);
     const pad = (n: number) => String(n).padStart(2, "0");
     return t.vm.str(`GMT${off < 0 ? "-" : "+"}${pad(Math.floor(a / 60))}:${pad(a % 60)}`);

@@ -65,6 +65,12 @@ export interface JvmOptions {
   assertions?: Assertions;
   // run class files that use this release's preview features
   enablePreview?: boolean;
+  // class bytes from --patch-module for a boot loader module, which win over the image's
+  bootPatch?: (module: string, name: string) => Uint8Array | null;
+  // class bytes on the -Xbootclasspath/a path, and the path entry that holds them
+  bootClassPath?: (name: string) => { bytes: Uint8Array; location: string } | null;
+  // os.version; the kernel release where there is one
+  osVersion?: string;
   // sockets and name lookup; defaults to loopback sockets inside the VM
   net?: NetBackend;
   // what InetAddress.getLocalHost() reports
@@ -97,7 +103,7 @@ export interface JvmOptions {
 const RESUMED = Object.freeze({ kind: "resume" }) as unknown as Request;
 
 // LauncherHelper launch modes
-export const LM_CLASS = 1, LM_JAR = 2;
+export const LM_CLASS = 1, LM_JAR = 2, LM_MODULE = 3;
 
 const intrinsicClasses = new Set(Object.keys(intrinsics).map((k) => k.slice(0, k.indexOf("."))));
 
@@ -131,6 +137,10 @@ export class JVM {
   private readonly image: JImage | null;
   // package -> module, for boot classes
   readonly bootPackages = new Map<string, string>();
+  // packages of modules defined at run time for the boot loader, such as a Proxy's dynamic module
+  readonly bootModulePackages = new Map<string, JObject>();
+  // packages of classes loaded from -Xbootclasspath/a, with the path entry they came from
+  readonly bootAppendPackages = new Map<string, string>();
   // Module objects defined to the boot loader, by name
   readonly bootModules = new Map<string, JObject>();
   bootUnnamedModule: JObject | null = null;
@@ -197,10 +207,12 @@ export class JVM {
     // Locale data is left out as --limit-modules would leave it, unless asked
     // for, or named by --add-modules (by name or as ALL-SYSTEM). A limit given
     // by the caller keeps it only if it names it, since no module requires it.
+    // With a module path it stays in: a limit would hide the modules the main
+    // module requires.
     const addmods = [...this.props].filter(([k]) => k.startsWith("jdk.module.addmods.")).flatMap(([, v]) => v.split(","));
     const limit = this.props.get("jdk.module.limitmods");
     const noLocales = this.image !== null && (limit !== undefined ? !limit.split(",").includes("jdk.localedata")
-      : !opts.localeData && !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata"));
+      : !opts.localeData && !this.props.has("jdk.module.path") && !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata"));
     const present = new Map<string, boolean>();
     for (const line of new TextDecoder().decode(index).split("\n")) {
       const sp = line.indexOf(" ");
@@ -250,8 +262,19 @@ export class JVM {
     }
     const i = name.lastIndexOf("/");
     const module = this.bootPackages.get(i < 0 ? "" : name.slice(0, i));
-    if (!module) return null;
-    const bytes = this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
+    // once the boot layer is defined, a module left out of it (--limit-modules) has no classes
+    if (module && this.bootModules.has("java.base") && !this.bootModules.has(module)) return null;
+    let bytes: Uint8Array | null | undefined;
+    if (module) {
+      bytes = this.opts.bootPatch?.(module, name) ?? (this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`));
+    }
+    else {
+      const found = this.opts.bootClassPath?.(name);
+      if (found) {
+        bytes = found.bytes;
+        this.bootAppendPackages.set(i < 0 ? "" : name.slice(0, i), found.location);
+      }
+    }
     if (!bytes) return null;
     const cf = parseClass(bytes);
     const superclass = cf.superName ? this.loadBootOrFail(cf.superName) : null;
@@ -715,7 +738,7 @@ export class JVM {
       const mod = this.bootPackages.get(c.packageName);
       // a module not defined yet: defineModule0 sets it later, as HotSpot does
       if (mod) return this.bootModules.get(mod) ?? null;
-      return this.bootUnnamedModule;
+      return this.bootModulePackages.get(c.packageName) ?? this.bootUnnamedModule;
     }
     const named = this.loaderData(c.loader).modules.get(c.packageName);
     if (named) return named;
@@ -878,6 +901,16 @@ export class JVM {
     console.error("jvm: internal error in", t.name, e);
     this.dumpStack(t);
     this.throwNew(t, "java/lang/InternalError", e instanceof Error ? e.message : String(e));
+  }
+
+  // Every live thread's Java stack, for kill -QUIT on a stuck program
+  dumpAllStacks() {
+    console.error(`Full thread dump ${this.props.get("java.vm.name") ?? "java-web"}:`);
+    for (const t of this.threads) {
+      if (t.state === TERMINATED) continue;
+      console.error(`\n"${t.name}" ${t.state === RUNNABLE ? "runnable" : "waiting"}`);
+      this.dumpStack(t);
+    }
   }
 
   dumpStack(t: JThread) {
@@ -1167,6 +1200,10 @@ export class JVM {
       failed(e instanceof Error ? e : new Error(String(e)));
       return;
     }
+    if (this.exitCode !== null) {
+      failed(new Error(`VM exited during startup with ${this.exitCode}`));
+      return;
+    }
     if (this.opts.warmSnapshot && this.libraryStarting && this.snapshots) {
       this.warmTraceActive = this.fs.beginWarmTrace();
       this.warmTraceClasses = this.classCount;
@@ -1260,8 +1297,12 @@ export class JVM {
         "java/lang/invoke/MemberName", "java/lang/invoke/MethodHandleNatives",
       ]) yield* init(n);
       this.debug("initPhase2");
-      const rc = yield t.call(boot("java/lang/System").methodMap.get("initPhase2(ZZ)I")!, 1, 1);
-      if (rc !== 0) throw new Error(`initPhase2 failed: ${rc}`);
+      // HotSpot prints a failed boot layer to stdout, without a stack trace, and exits
+      const rc = yield t.call(boot("java/lang/System").methodMap.get("initPhase2(ZZ)I")!, 0, 0);
+      if (rc !== 0) {
+        this.halt(1);
+        return;
+      }
       this.debug("initPhase3");
       yield t.call(boot("java/lang/System").methodMap.get("initPhase3()V")!);
       this.debug("vm started in", Date.now() - this.startTime, "ms");
@@ -1355,6 +1396,7 @@ export class JVM {
     if (!restored) {
       if (cmd !== undefined) this.props.set("sun.java.command", "");
       yield* this.bootGen(t);
+      if (this.exitCode !== null) return;
       // a snapshot is only a cache: failing to make or keep one never fails the run
       if (snaps) {
         try {
@@ -1382,6 +1424,7 @@ export class JVM {
   private *mainGen(t: JThread, mode: number, what: string, args: string[], restored: boolean): NativeGen {
     const boot = (n: string) => this.loadBootOrFail(n);
     yield* this.startGen(t, restored);
+    if (this.exitCode !== null) return;
     let code = 0;
     try {
       const helper = boot("sun/launcher/LauncherHelper");

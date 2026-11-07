@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 out=build/jdk
-modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.security.jgss,jdk.unsupported,jdk.zipfs,jdk.localedata,jdk.management,jdk.internal.md,javaweb.tls}
+modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.security.jgss,jdk.unsupported,jdk.zipfs,jdk.localedata,jdk.management,jdk.net,jdk.nio.mapmode,jdk.internal.md,javaweb.tls}
 
 # Builds from one pinned JDK release so every machine makes the same image.
 # Renovate bumps the release.
@@ -124,6 +124,12 @@ fi
 mkdir -p "$out/lib/fonts"
 cp "$font_home/ttf/DejaVuSans.ttf" "$out/lib/fonts/"
 cp "$font_home/LICENSE" "$out/legal/java.desktop/dejavu-fonts.txt"
+
+# Programs look for bin/java under java.home. ProcessBuilder starts the VM's
+# own java for this path; run from a host shell, it starts the java-web command.
+mkdir -p "$out/bin"
+printf '#!/bin/sh\nexec java-web "$@"\n' > "$out/bin/java"
+chmod 755 "$out/bin/java"
 
 # a digest of the whole image, which boot snapshots are made for
 (cd "$out" && node -e '

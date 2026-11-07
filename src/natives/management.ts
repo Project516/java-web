@@ -19,25 +19,27 @@ import { continuationEntry } from "./continuation.ts";
 import { fillElement } from "./lang.ts";
 import type { Natives } from "./util.ts";
 
+// the memory managers and pools of HotSpot's default collector, G1
 const MANAGERS = [
   { name: "CodeCacheManager", gc: false, pools: ["CodeHeap 'profiled nmethods'", "CodeHeap 'non-nmethods'", "CodeHeap 'non-profiled nmethods'"] },
   { name: "Metaspace Manager", gc: false, pools: ["Metaspace", "Compressed Class Space"] },
-  { name: "Copy", gc: true, pools: ["Eden Space", "Survivor Space"] },
-  { name: "MarkSweepCompact", gc: true, pools: ["Eden Space", "Survivor Space", "Tenured Gen"] },
+  { name: "G1 Young Generation", gc: true, pools: ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"] },
+  { name: "G1 Concurrent GC", gc: true, pools: ["G1 Old Gen"] },
+  { name: "G1 Old Generation", gc: true, pools: ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"] },
 ];
 // in HotSpot's order, with whether each supports usage and collection thresholds
 const POOLS = [
   { name: "CodeHeap 'non-nmethods'", heap: false, usage: true, collection: false },
   { name: "Metaspace", heap: false, usage: true, collection: false },
-  { name: "Tenured Gen", heap: true, usage: true, collection: true },
   { name: "CodeHeap 'profiled nmethods'", heap: false, usage: true, collection: false },
-  { name: "Eden Space", heap: true, usage: false, collection: true },
-  { name: "Survivor Space", heap: true, usage: false, collection: true },
   { name: "Compressed Class Space", heap: false, usage: true, collection: false },
+  { name: "G1 Eden Space", heap: true, usage: false, collection: true },
+  { name: "G1 Old Gen", heap: true, usage: true, collection: true },
+  { name: "G1 Survivor Space", heap: true, usage: false, collection: true },
   { name: "CodeHeap 'non-profiled nmethods'", heap: false, usage: true, collection: false },
 ];
-const FULL_GC = "MarkSweepCompact";
-const OLD = "Tenured Gen";
+const FULL_GC = "G1 Old Generation";
+const OLD = "G1 Old Gen";
 
 interface Beans {
   pools: JObject[];
@@ -551,7 +553,7 @@ export const natives: Natives = {
   [`${P}getMemoryManagers0()[Ljava/lang/management/MemoryManagerMXBean;`]: function* (t, [self]): NativeGen {
     const b: Beans = yield* beans(t);
     const name = POOLS[b.pools.indexOf(self)].name;
-    return t.vm.newObjectArray("java/lang/management/MemoryManagerMXBean", b.managers.filter((_, i) => MANAGERS[i].pools.includes(name)));
+    return t.vm.newObjectArray("java/lang/management/MemoryManagerMXBean", b.managers.filter((_, i) => MANAGERS[i].pools.includes(name)).reverse());
   },
   [`${P}setPoolUsageSensor(Lsun/management/Sensor;)V`]: () => undefined,
   [`${P}setPoolCollectionSensor(Lsun/management/Sensor;)V`]: () => undefined,

@@ -45,6 +45,10 @@ function findProgram(command: string, cwd: string, parentPath: string | undefine
   return Object.assign(new Error(denied ? "EACCES" : "ENOENT"), { code: denied ? "EACCES" : "ENOENT", errno: denied ? -13 : -2 });
 }
 
+// A child's output waits in memory up to this many bytes before the child is held back. The JDK
+// reads what is left in a pipe when a child exits, so the output is better read than left in the pipe.
+const HELD = 1 << 24;
+
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];
   private length = 0;
@@ -65,7 +69,7 @@ class Pipe implements ProcessPipe {
     input.on("data", (chunk: Buffer) => {
       this.chunks.push(new Uint8Array(chunk));
       this.length += chunk.length;
-      if (this.length >= 65536) for (const stream of this.inputs) stream.pause();
+      if (this.length >= HELD) for (const stream of this.inputs) stream.pause();
       this.notify();
     });
     let done = false;
@@ -93,7 +97,7 @@ class Pipe implements ProcessPipe {
       copied += take;
     }
     this.length -= n;
-    if (this.length < 32768) for (const stream of this.inputs) stream.resume();
+    if (this.length < HELD / 2) for (const stream of this.inputs) stream.resume();
     return n;
   }
   write(bytes: Uint8Array): Promise<string | null> {
@@ -249,7 +253,12 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         merged?.writer.destroy();
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
-        const exited = new Promise<number>((resolve) => child.once("exit", (code, signal) => resolve(status(code, signal))));
+        // After exit the output still on its way is read before the VM hears of it: on close, or a
+        // moment after exit when a grandchild keeps a pipe open
+        const exited = new Promise<number>((resolve) => {
+          child.once("exit", (code, signal) => { setTimeout(() => resolve(status(code, signal)), 250); });
+          child.once("close", (code, signal) => resolve(status(code, signal)));
+        });
         const created: number[] = [];
         for (let i = 0; i < 3; i++) {
           if (i === 2 && redirectError) {
