@@ -17,6 +17,11 @@ public class VirtualInline {
     static int guarded(Base b, int d) {
         try { return b.checked(d); } catch (ArithmeticException e) { return -1; }
     }
+    // a handler keeps this out of inlining, so its call site is a top-level one
+    static int top(Base b) {
+        try { return b.h(); } catch (RuntimeException e) { return -1; }
+    }
+    static int viaRegion(Base b) { return b.viaH(); }
 
     public static void main(String[] args) {
         Base[] all = { new Sq(), new Tall(), new Zero() };
@@ -41,6 +46,10 @@ public class VirtualInline {
         }
         for (int i = 0; i < 20000; i++) sum += direct(all[2]) + iface(all[2]);
         for (int i = 0; i < 100; i++) sum += direct(all[i % 3]) + iface(all[i % 3]);
+        System.out.println(sum);
+        // receiver classes change after top and viaRegion compile
+        for (int i = 0; i < 2000; i++) sum += top(all[0]) + viaRegion(all[0]);
+        for (int i = 0; i < 300; i++) sum += top(all[1 + i % 2]) + viaRegion(all[1 + i % 2]);
         System.out.println(sum);
     }
 }
