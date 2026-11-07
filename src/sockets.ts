@@ -596,6 +596,7 @@ export class LoopbackNet implements NetBackend {
     const b = new Sock("stream");
     b.unix = true;
     b.localPath = l.localPath;
+    b.remotePath = s.localPath;
     b.connected = true;
     b.peer = s;
     s.peer = b;
