@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { moduleFlag, runNode } from "../src/node.ts";
+import { moduleFlag, nodeVm, runNode } from "../src/node.ts";
+import { LM_CLASS } from "../src/jvm.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -83,6 +84,18 @@ test("-Xmx caps an allocation under the command", () => {
   // x64 HotSpot rounds the heap up to 2 MB steps
   const max = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...args, "max"], { encoding: "utf8" });
   assert.match(max.stdout, /^max 18874368$/m);
+});
+
+// the error is thrown even when the hook that reports it fails
+test("an OutOfMemoryError survives a failing hook", async () => {
+  const classes = join(root, "build", "test-oom");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "oom", "OutOfMemoryCaught.java")]);
+  const ref = spawnSync(hotspot("java"), ["-cp", classes, "OutOfMemoryCaught"], { encoding: "utf8" });
+  const stdout: Uint8Array[] = [];
+  const vm = nodeVm({ classpath: [classes], snapshotDir: null, stdout: (b) => stdout.push(b) });
+  vm.opts.onOutOfMemory = () => { throw new Error("hook failed"); };
+  const code = await vm.run(LM_CLASS, "OutOfMemoryCaught", []);
+  assert.deepEqual({ stdout: Buffer.concat(stdout).toString("utf8"), code }, { stdout: ref.stdout, code: ref.status });
 });
 
 // ulimit -f makes the host refuse writes past 4 KB; SIGXFSZ ignored, they fail with EFBIG

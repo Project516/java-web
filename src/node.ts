@@ -529,7 +529,7 @@ function snapshotCache(dir: string, build: string) {
   };
 }
 
-function nodeVm(o: LauncherOptions): JVM {
+export function nodeVm(o: LauncherOptions): JVM {
   exposeGc();
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));

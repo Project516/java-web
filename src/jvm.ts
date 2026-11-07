@@ -886,7 +886,11 @@ export class JVM {
   private reportOutOfMemory(msg: string | null) {
     if (this.oomReported || !this.opts.onOutOfMemory) return;
     this.oomReported = true;
-    this.opts.onOutOfMemory(msg);
+    try {
+      this.opts.onOutOfMemory(msg);
+    } catch {
+      // the error is still thrown
+    }
   }
 
   // native: the native method throwing it, shown in its stack trace
