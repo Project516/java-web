@@ -55,6 +55,8 @@ Node, which is how the tests run.
   `src/net-node.ts` host sockets, DNS and interfaces for Node
 - `src/node.ts` Node entry, over `build/jdk` or, built as `dist/node.js`, the
   packaged image (`src/image.ts`); `scripts/build-jdk.sh` builds `build/jdk`
+- `src/bootpath.ts` class files on the `-Xbootclasspath/a` and `--patch-module` paths;
+  `src/posixtz.ts` POSIX `TZ` rules such as `MEZ-1MESZ,M3.5.0,M10.5.0/3`
 - `src/http-proxy.ts` the browser's virtual HTTP proxy (`fetch`); `scripts/tls/` the
   `javaweb.tls` pass-through TLS provider it relies on for `https:`
 
