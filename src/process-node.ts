@@ -48,8 +48,10 @@ function findProgram(command: string, cwd: string, parentPath: string | undefine
   return Object.assign(new Error(denied ? "EACCES" : "ENOENT"), { code: denied ? "EACCES" : "ENOENT", errno: denied ? -13 : -2 });
 }
 
-// A child's output waits in memory up to a host pipe's capacity before the child is held back
-const HELD = 65536;
+// A child's output waits in memory up to this many bytes before the child is held back. More than a
+// pipe holds, since a java-web child cannot close its host stdout: a parent that reads stdout to its
+// end before stderr would otherwise wait on a child held back on stderr.
+const HELD = 1 << 24;
 
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];
@@ -261,9 +263,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         merged?.writer.destroy();
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
-        // The JDK takes what is left in a child's pipes when it exits, so that output, at most a
-        // pipe's capacity, is read before the VM hears of the exit. A grandchild can keep a pipe
-        // open, so this waits only a moment.
+        // The JDK takes what is left in a child's pipes when it exits, so that output is read before
+        // the VM hears of the exit. A grandchild can keep a pipe open, so this waits only a moment.
         const pipes: Pipe[] = [];
         const outputs = [merged ? merged.reader : child.stdout, merged ? null : child.stderr].filter((s): s is Readable => s !== null);
         const exited = new Promise<number>((resolve) => {
