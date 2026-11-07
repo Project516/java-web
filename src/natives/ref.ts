@@ -12,10 +12,13 @@ import type { Natives } from "./util.ts";
 
 const R = "java/lang/ref/Reference";
 
+// A held function is a collect() probe.
+type Held = WeakRef<JObject> | (() => void);
+
 interface RefState {
   pending: JObject[];
   waiters: (() => void)[];
-  registry: FinalizationRegistry<WeakRef<JObject>>;
+  registry: FinalizationRegistry<Held>;
   weak: JClass;
   phantom: JClass;
 }
@@ -29,7 +32,8 @@ function refs(vm: JVM): RefState {
       // Holds the reference weakly: as in HotSpot, a reference that is itself
       // unreachable is never enqueued, and holding it would keep its referent
       // alive whenever the reference's other fields lead back to it.
-      registry: new FinalizationRegistry((held: WeakRef<JObject>) => {
+      registry: new FinalizationRegistry((held: Held) => {
+        if (typeof held === "function") return held();
         const ref = held.deref();
         if (!ref || !(ref.x instanceof WeakRef)) return;
         ref.x = null;
@@ -53,6 +57,23 @@ function clear(t: JThread, r: JObject) {
   if (r.x instanceof WeakRef) refs(t.vm).registry.unregister(r);
   r.x = null;
   t.vm.setField(r, R, "referent", null);
+}
+
+const PROBE_MS = 50;
+// Runs a collection and resolves once the engine has run the callbacks it
+// queued: they come in later tasks, and a probe in the same registry arrives
+// with them. The timer only bounds the wait.
+export function collect(vm: JVM, gc: () => void): Promise<void> {
+  const s = refs(vm);
+  return new Promise<void>((done) => {
+    probe(s, done);
+    gc();
+    setTimeout(done, PROBE_MS);
+  });
+}
+// Its own frame: a temporary in the caller's frame would keep the probe alive.
+function probe(s: RefState, done: () => void) {
+  s.registry.register({}, done);
 }
 
 // A weak or phantom reference restored from a snapshot: watch its referent

@@ -7,6 +7,7 @@ import { normalize } from "../fs.ts";
 import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData } from "../runtime.ts";
 import type { Monitor } from "../runtime.ts";
 import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
+import { collect } from "./ref.ts";
 import {
   Frame, JThread, JavaThrow, PendingThrow, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_SLEEPING, STATUS_TIMED_WAITING,
   STATUS_WAITING, TERMINATED,
@@ -384,7 +385,7 @@ export const natives: Natives = {
     // values popped off an operand stack are not roots in HotSpot
     for (const th of t.vm.threads) for (const f of th.frames) if (f instanceof Frame && f.stack) f.stack.fill(undefined, f.sp);
     const t0 = performance.now();
-    gc();
+    yield t.block(collect(t.vm, gc));
     stats.ms += performance.now() - t0;
   },
   "java/lang/Shutdown.beforeHalt()V": () => undefined,
