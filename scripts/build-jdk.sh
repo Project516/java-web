@@ -126,9 +126,17 @@ cp "$font_home/ttf/DejaVuSans.ttf" "$out/lib/fonts/"
 cp "$font_home/LICENSE" "$out/legal/java.desktop/dejavu-fonts.txt"
 
 # Programs look for bin/java under java.home. ProcessBuilder starts the VM's
-# own java for this path; run from a host shell, it starts the java-web command.
+# own java for this path; run from a host shell, it starts the java-web command,
+# or the checkout the image was built in.
 mkdir -p "$out/bin"
-printf '#!/bin/sh\nexec java-web "$@"\n' > "$out/bin/java"
+cat > "$out/bin/java" <<'SH'
+#!/bin/sh
+command -v java-web >/dev/null 2>&1 && exec java-web "$@"
+root=$(cd "$(dirname "$(readlink -f "$0")")/../../.." && pwd)
+[ -f "$root/src/node.ts" ] && exec node "$root/src/node.ts" "$@"
+echo "java: the java-web command is not on PATH" >&2
+exit 127
+SH
 chmod 755 "$out/bin/java"
 
 # a digest of the whole image, which boot snapshots are made for
