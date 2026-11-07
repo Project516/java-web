@@ -12,6 +12,7 @@ public class SymlinkTargetReplaced {
       Path link = dir.resolve("link" + size);
       byte[] old = new byte[size];
       old[0] = 1;
+      old[1] = 3;
       Files.write(target, old);
       Files.createSymbolicLink(link, target);
       try (InputStream held = new FileInputStream(link.toFile())) {
@@ -19,6 +20,7 @@ public class SymlinkTargetReplaced {
         Files.move(target, dir.resolve("moved" + size));
         byte[] fresh = new byte[size + 3];
         fresh[0] = 2;
+        fresh[1] = 4;
         Files.write(target, fresh);
         try (InputStream again = new FileInputStream(link.toFile())) {
           int first = again.read();

@@ -48,8 +48,10 @@ public class VirtualInline {
         for (int i = 0; i < 100; i++) sum += direct(all[i % 3]) + iface(all[i % 3]);
         System.out.println(sum);
         // receiver classes change after top and viaRegion compile
-        for (int i = 0; i < 2000; i++) sum += top(all[0]) + viaRegion(all[0]);
-        for (int i = 0; i < 300; i++) sum += top(all[1 + i % 2]) + viaRegion(all[1 + i % 2]);
-        System.out.println(sum);
+        // each receiver and call path summed apart, so swapped results cannot cancel
+        long[] tops = new long[3], regions = new long[3];
+        for (int i = 0; i < 2000; i++) { tops[0] += top(all[0]); regions[0] += viaRegion(all[0]); }
+        for (int i = 0; i < 300; i++) { int k = 1 + i % 2; tops[k] += top(all[k]); regions[k] += viaRegion(all[k]); }
+        for (int k = 0; k < 3; k++) System.out.println(tops[k] + " " + regions[k]);
     }
 }
