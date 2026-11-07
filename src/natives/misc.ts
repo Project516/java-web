@@ -239,7 +239,14 @@ Object.assign(unsafe, {
   [`${U}ensureClassInitialized0(Ljava/lang/Class;)V`]: (t: JThread, [, c]: any[]) => t.vm.initGen(t, t.vm.classOf(c)),
   [`${U}arrayBaseOffset0(Ljava/lang/Class;)I`]: () => ARRAY_BASE_OFFSET,
   [`${U}arrayIndexScale0(Ljava/lang/Class;)I`]: (t: JThread, [, c]: any[]) => indexScale(t.vm.classOf(c)),
-  [`${U}getLoadAverage0([DI)I`]: () => -1,
+  [`${U}getLoadAverage0([DI)I`]: (_t, [, a, n]) => {
+    // the host's 1, 5 and 15 minute averages under Node; none in a browser
+    const load: number[] | undefined = (globalThis as any).process?.getBuiltinModule?.("node:os")?.loadavg();
+    if (!load || process.platform === "win32") return -1;
+    const count = Math.min(n, 3, (a as JArray).a.length);
+    for (let i = 0; i < count; i++) (a as JArray).a[i] = load[i];
+    return count;
+  },
   [`${U}getUncompressedObject(J)Ljava/lang/Object;`]: () => null,
   [`${U}throwException(Ljava/lang/Throwable;)V`]: (_t: JThread, [, e]: any[]) => { throw new JavaThrow(nonNull(e)); },
   [`${U}allocateInstance(Ljava/lang/Class;)Ljava/lang/Object;`]: function* (t: JThread, [, m]: any[]): NativeGen {
