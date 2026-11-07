@@ -2,7 +2,7 @@
 // what HotSpot prints, with the same exit code.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -96,6 +96,30 @@ test("an OutOfMemoryError survives a failing hook", async () => {
   vm.opts.onOutOfMemory = () => { throw new Error("hook failed"); };
   const code = await vm.run(LM_CLASS, "OutOfMemoryCaught", []);
   assert.deepEqual({ stdout: Buffer.concat(stdout).toString("utf8"), code }, { stdout: ref.stdout, code: ref.status });
+});
+
+// the commands run even though the header cannot be written to the closed stdout
+test("OutOfMemoryError commands run when stdout is closed", { skip: process.platform !== "linux" }, async () => {
+  const classes = join(root, "build", "test-oom");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "oom", "OutOfMemoryCaught.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-oom-"));
+  const closedStdout = (cmd: string, args: string[]) => new Promise<void>((resolve) => {
+    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+    p.stdout!.destroy();
+    p.on("close", () => resolve());
+  });
+  try {
+    const marker = join(dir, "marker");
+    const flags = [`-XX:OnOutOfMemoryError=touch ${marker}`, "-cp", classes, "OutOfMemoryCaught"];
+    await closedStdout(hotspot("java"), flags);
+    const ref = existsSync(marker);
+    rmSync(marker, { force: true });
+    await closedStdout(process.execPath, [join(root, "src", "node.ts"), ...flags]);
+    assert.equal(ref, true);
+    assert.equal(existsSync(marker), true);
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
 });
 
 // ulimit -f makes the host refuse writes past 4 KB; SIGXFSZ ignored, they fail with EFBIG

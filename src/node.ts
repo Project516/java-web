@@ -407,7 +407,13 @@ function onOutError(this: NodeJS.WriteStream) {
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
 // runs each through /bin/sh, with %p the process id, before throwing.
 function runOnOutOfMemory(commands: string[], message: string | null, out: ((b: Uint8Array) => void) | undefined, fd: number, java: string[]) {
-  const say = (line: string) => out ? out(new TextEncoder().encode(line + "\n")) : fs.writeSync(fd, line + "\n");
+  // as HotSpot's fprintf: a failed write does not stop the commands
+  const say = (line: string) => {
+    try {
+      if (out) out(new TextEncoder().encode(line + "\n"));
+      else fs.writeSync(fd, line + "\n");
+    } catch { /* output closed */ }
+  };
   say(`#\n# java.lang.OutOfMemoryError: ${message ?? "null"}`);
   for (const raw of commands) {
     say(`# -XX:OnOutOfMemoryError="${raw}"`);
