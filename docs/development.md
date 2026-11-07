@@ -69,9 +69,14 @@ HotSpot with default options (for example `vm.continuations` is true and
 `vm.debug` is false); a test that needs more is skipped.
 
 `test/jtreg/passing.txt` lists the tests CI runs, with `--only-passing`.
-`--shard k/n` splits them into n shards of about equal run time, using each
-test's time on java-web from `test/jtreg/times.tsv` (the median for a test
-not in it). Each CI shard uploads its `build/jtreg/times.tsv` as an artifact.
+A pull request runs the tests its changes need (`scripts/jtreg/select.ts`): a
+change to a file the tests load runs the test directories the table there maps
+it to plus every tenth listed test, while a change to any other loaded file or
+to a workflow runs them all. Tests added to `passing.txt` or `locale-data.txt`
+run alone, and a change to `times.tsv` alone runs nothing. `--shard k/n` splits
+the selected tests into n shards of about equal run time, using each test's
+time on java-web from `test/jtreg/times.tsv` (the median for a test not in it).
+Each CI shard uploads its `build/jtreg/times.tsv` as an artifact.
 To refresh the file from a run, download those artifacts and merge them in:
 a test's new time replaces its old one, and tests the run left out keep theirs.
 
