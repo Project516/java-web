@@ -162,7 +162,7 @@ compile loads over a thousand) and no library handles are live. Later library
 starts with the same class path restore that image, after checking that the
 files, missing paths and directory listings those calls used are unchanged. In
 Chromium, the first javac compile after it takes about half the time of one
-after a boot snapshot. An image is about 21 MB; it holds the JS the JIT
+after a boot snapshot. An image is about 20 MB; it holds the JS the JIT
 generated for the methods compiled so far, and a restored method compiles that
 code on its first call. IndexedDB keeps the 2 most recent warm images separately
 from boot snapshots. With `debug: true`, the console says whether a VM was
