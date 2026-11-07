@@ -88,9 +88,9 @@ class Pipe implements ProcessPipe {
     input.once("error", end);
   }
   private notify() { for (const wake of this.wake.splice(0)) wake(); }
-  // Takes in everything while a child that exited has its output read
+  // While a child that exited has its output read, takes in what its pipe still holds
   hold(on: boolean) {
-    this.limit = on ? HELD : Infinity;
+    this.limit = on ? HELD : HELD + (1 << 20);
     for (const stream of this.inputs) on && this.length >= HELD ? stream.pause() : stream.resume();
   }
   async read(dst: Uint8Array, off: number, len: number): Promise<number> {
