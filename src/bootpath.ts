@@ -9,25 +9,34 @@ type Jar = { buf: Buffer; entries: Map<string, { method: number; size: number; a
 function readJar(file: string): Jar | null {
   let buf: Buffer;
   try { buf = fs.readFileSync(file); } catch { return null; }
-  let end = buf.length - 22;
-  while (end >= 0 && buf.readUInt32LE(end) !== 0x06054b50) end--;
-  if (end < 0) return null;
-  const entries = new Map<string, { method: number; size: number; at: number }>();
-  let p = buf.readUInt32LE(end + 16);
-  for (let n = buf.readUInt16LE(end + 10); n > 0 && buf.readUInt32LE(p) === 0x02014b50; n--) {
-    const nameLen = buf.readUInt16LE(p + 28);
-    entries.set(buf.toString("utf8", p + 46, p + 46 + nameLen), { method: buf.readUInt16LE(p + 10), size: buf.readUInt32LE(p + 20), at: buf.readUInt32LE(p + 42) });
-    p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  // a jar that cannot be read has no classes, as a malformed one on HotSpot's path
+  try {
+    let end = buf.length - 22;
+    while (end >= 0 && buf.readUInt32LE(end) !== 0x06054b50) end--;
+    if (end < 0) return null;
+    const entries = new Map<string, { method: number; size: number; at: number }>();
+    let p = buf.readUInt32LE(end + 16);
+    for (let n = buf.readUInt16LE(end + 10); n > 0 && buf.readUInt32LE(p) === 0x02014b50; n--) {
+      const nameLen = buf.readUInt16LE(p + 28);
+      entries.set(buf.toString("utf8", p + 46, p + 46 + nameLen), { method: buf.readUInt16LE(p + 10), size: buf.readUInt32LE(p + 20), at: buf.readUInt32LE(p + 42) });
+      p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+    }
+    return { buf, entries };
+  } catch {
+    return null;
   }
-  return { buf, entries };
 }
 
 function fromJar(jar: Jar, name: string): Uint8Array | null {
   const e = jar.entries.get(name);
   if (!e) return null;
-  const start = e.at + 30 + jar.buf.readUInt16LE(e.at + 26) + jar.buf.readUInt16LE(e.at + 28);
-  const data = jar.buf.subarray(start, start + e.size);
-  return e.method === 0 ? data : e.method === 8 ? inflateRawSync(data) : null;
+  try {
+    const start = e.at + 30 + jar.buf.readUInt16LE(e.at + 26) + jar.buf.readUInt16LE(e.at + 28);
+    const data = jar.buf.subarray(start, start + e.size);
+    return e.method === 0 ? data : e.method === 8 ? inflateRawSync(data) : null;
+  } catch {
+    return null;
+  }
 }
 
 // entries is the colon-separated -Xbootclasspath/a value
