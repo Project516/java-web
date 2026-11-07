@@ -40,7 +40,7 @@ const notLoaded = /\.md$|^docs\/|^LICENSE|^renovate\.json$|^\.coderabbit|^types\
 
 // The test directories a change to a loaded file can affect. A file not here
 // runs every test, so only add one when its effect is known and narrow.
-const zipTests = ["java/util/zip", "java/util/jar", "jdk/nio/zipfs"];
+const zipTests = ["java/util/zip", "java/util/jar", "jdk/nio/zipfs", "java/net/URLClassLoader"];
 const netTests = ["java/net", "java/nio/channels", "javax/net", "sun/net"];
 const ioTests = ["java/io", "java/nio", ...zipTests, "java/util/prefs",
   "java/lang/ProcessBuilder", "java/lang/Process", "java/lang/RuntimeTests"];
@@ -83,9 +83,11 @@ function select(base: string | undefined): string[] | "all" {
   let dirs: string[] | undefined;
   for (const file of git("diff", "--name-only", "--no-renames", `${base}...HEAD`).split("\n").filter(Boolean)) {
     if (file === passingFile || file === localeFile) {
-      // the tests it adds
+      // the tests it adds, and listed tests that leave locale-data.txt and so run differently
       for (const l of git("diff", "-U0", `${base}...HEAD`, "--", file).split("\n")) {
-        if (l.startsWith("+") && !l.startsWith("+++") && !l.startsWith("+#") && l.slice(1).trim()) filters.add(l.slice(1).trim());
+        const id = l.slice(1).trim();
+        if (!id || id.startsWith("#") || l.startsWith("+++") || l.startsWith("---")) continue;
+        if (l.startsWith("+") || (l.startsWith("-") && file === localeFile && listed.includes(id))) filters.add(id);
       }
       continue;
     }
