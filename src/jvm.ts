@@ -730,7 +730,7 @@ export class JVM {
       const mod = this.bootPackages.get(c.packageName);
       // a module not defined yet: defineModule0 sets it later, as HotSpot does
       if (mod) return this.bootModules.get(mod) ?? null;
-      return this.bootUnnamedModule;
+      return this.bootModulePackages.get(c.packageName) ?? this.bootUnnamedModule;
     }
     const named = this.loaderData(c.loader).modules.get(c.packageName);
     if (named) return named;
