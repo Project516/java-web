@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createConnection, createServer, type Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
+import { getSystemErrorMap } from "node:util";
 import { JArray } from "./runtime.ts";
 import { PendingThrow } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
@@ -26,26 +27,54 @@ const drained = (output: Writable) => output.writableNeedDrain
   ? new Promise<void>((resolve) => { output.once("drain", resolve); output.once("close", resolve); })
   : undefined;
 
-// execvp as the JDK's launcher does it: the parent's PATH, ":/bin:/usr/bin" when it has none,
-// and EACCES in place of ENOENT when a match was not executable.
-function findProgram(command: string, cwd: string, parentPath: string | undefined): string | NodeJS.ErrnoException {
-  if (command === "") return Object.assign(new Error("ENOENT"), { code: "ENOENT", errno: -2 });
+// The search follows the JDK. With a child environment of its own, JDK_execvpe continues past
+// ELOOP; when the child inherits the environment, the JDK calls glibc's execvp, which stops there.
+const JDK_NEXT = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ESTALE", "ENODEV", "ETIMEDOUT"]);
+const GLIBC_NEXT = new Set(["ENOENT", "ENOTDIR", "ESTALE", "ENODEV", "ETIMEDOUT"]);
+
+// glibc's strerror text for the errors a search can stop on
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: "No such file or directory", EACCES: "Permission denied", ENOTDIR: "Not a directory",
+  ELOOP: "Too many levels of symbolic links", ENAMETOOLONG: "File name too long", ESTALE: "Stale file handle",
+  ENODEV: "No such device", ETIMEDOUT: "Connection timed out", EIO: "Input/output error",
+  ENOMEM: "Cannot allocate memory", EPERM: "Operation not permitted", ENOEXEC: "Exec format error",
+};
+
+function failure(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code, errno: -(os.constants.errno as Record<string, number>)[code] });
+}
+
+// A directory or an unreadable match is EACCES, reported when nothing else is found.
+function findProgram(command: string, cwd: string, parentPath: string | undefined, inherited: boolean): string | NodeJS.ErrnoException {
+  if (command === "") return failure("ENOENT");
   if (command.includes("/")) return command;
+  const next = inherited ? GLIBC_NEXT : JDK_NEXT;
   let denied = false;
-  for (const dir of (parentPath ?? ":/bin:/usr/bin").split(":")) {
+  let last = failure("ENOENT");
+  for (const dir of (parentPath ?? (inherited ? "/bin:/usr/bin" : ":/bin:/usr/bin")).split(":")) {
     const candidate = dir ? `${dir}/${command}` : `./${command}`;
     const full = path.resolve(cwd, candidate);
+    let error: NodeJS.ErrnoException;
     try {
-      if (!fs.statSync(full).isFile()) denied = true;
-      else {
+      if (fs.statSync(full).isFile()) {
         fs.accessSync(full, fs.constants.X_OK);
         return candidate;
       }
+      error = failure("EACCES");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EACCES") denied = true;
+      error = e as NodeJS.ErrnoException;
     }
+    last = error;
+    if (error.code === "EACCES") denied = true;
+    else if (!next.has(error.code ?? "")) return error;
   }
-  return Object.assign(new Error(denied ? "EACCES" : "ENOENT"), { code: denied ? "EACCES" : "ENOENT", errno: denied ? -13 : -2 });
+  return denied ? failure("EACCES") : last;
+}
+
+// the JDK's wording, with its trailing space
+function execFailure(error: NodeJS.ErrnoException): string {
+  const text = ERRNO_TEXT[error.code ?? ""] ?? getSystemErrorMap().get(error.errno ?? 0)?.[1] ?? "unknown error";
+  return `Exec failed, error: ${-error.errno!} (${text}) `;
 }
 
 // A child's output waits in memory up to this many bytes before the child is held back. More than a
@@ -255,9 +284,9 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
           stdio[1] = stdio[2] = merged.writer;
         } else if (redirectError) stdio[2] = stdio[1];
         const cwd = dir ? decode(dir) : t.vm.opts.cwd;
-        const program = java ? command : findProgram(command, cwd ?? process.cwd(), (t.vm.opts.env ?? process.env).PATH);
+        const program = java ? command : findProgram(command, cwd ?? process.cwd(), (t.vm.opts.env ?? process.env).PATH, envBlock === null);
         if (typeof program !== "string") {
-          throw new PendingThrow("java/io/IOException", program.code === "EACCES" ? "error=13, Permission denied" : "error=2, No such file or directory");
+          throw new PendingThrow("java/io/IOException", execFailure(program));
         }
         const child = spawn(program, args, { cwd, env, stdio: stdio as [any, any, any] });
         merged?.writer.destroy();

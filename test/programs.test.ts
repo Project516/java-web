@@ -188,6 +188,48 @@ test("env option replaces the host environment", async () => {
   assert.equal(code, 0);
 });
 
+// A directory or an unreadable match is EACCES when nothing else is found. ELOOP stops the
+// search when the child inherits the environment and does not when it has its own.
+test("PATH lookup as the JDK's launcher", { skip: process.platform !== "linux" }, async () => {
+  const classes = join(root, "build", "test-path");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "process", "PathLookup.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-path-"));
+  try {
+    const exec = join(dir, "exec");
+    mkdirSync(join(dir, "dirs", "dirtool"), { recursive: true });
+    mkdirSync(join(dir, "plain"));
+    writeFileSync(join(dir, "plain", "noexec"), "", { mode: 0o644 });
+    symlinkSync(join(dir, "loop"), join(dir, "loop"));
+    mkdirSync(exec);
+    writeFileSync(join(exec, "dirtool"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    writeFileSync(join(exec, "loopy"), "#!/bin/sh\nexit 4\n", { mode: 0o755 });
+    const file = join(dir, "file");
+    writeFileSync(file, "");
+    const lookup = async (PATH: string, args: string[]) => {
+      const ref = spawnSync(hotspot("java"), ["-cp", classes, "PathLookup", ...args], { env: { PATH }, encoding: "utf8" });
+      const stdout: Uint8Array[] = [];
+      const code = await runNode({ classpath: [classes], mainClass: "PathLookup", args, env: { PATH }, stdout: (b) => stdout.push(b) });
+      assert.deepEqual({ stdout: Buffer.concat(stdout).toString("utf8"), code }, { stdout: ref.stdout, code: ref.status });
+      return ref.stdout;
+    };
+    const eacces = "Exec failed, error: 13 (Permission denied) ";
+    const enoent = "Exec failed, error: 2 (No such file or directory) ";
+    const eloop = "Exec failed, error: 40 (Too many levels of symbolic links) ";
+    assert.equal(
+      await lookup([join(dir, "dirs"), join(dir, "plain"), exec, join(dir, "missing")].join(":"), ["dirtool", "noexec", "absent"]),
+      `dirtool exit 3\nnoexec ${eacces}\nabsent ${enoent}\n`,
+    );
+    assert.equal(
+      await lookup([join(dir, "loop"), join(dir, "plain"), exec, join(dir, "missing")].join(":"), ["-env", "dirtool", "noexec", "absent"]),
+      `dirtool exit 3\nnoexec ${eacces}\nabsent ${enoent}\n`,
+    );
+    assert.equal(await lookup([join(dir, "loop"), exec].join(":"), ["dirtool"]), `dirtool ${eloop}\n`);
+    assert.equal(await lookup(file, ["absent"]), "absent Exec failed, error: 20 (Not a directory) \n");
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+
 // jdk.localedata loads only when asked for; without it other locales format as English.
 test("locale data", async () => {
   const classes = join(root, "build", "test-locales");
