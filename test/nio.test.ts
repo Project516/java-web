@@ -163,6 +163,33 @@ test("opening a host file for writing does not create a missing one", () => {
   }
 });
 
+test("an open still succeeds when its inode pin cannot be taken", async () => {
+  const { openFile, fileOf, closeFd } = await import("../src/natives/io.ts");
+  const dir = mkdtempSync(join(tmpdir(), "java-web-nopin-"));
+  class NoHandles extends NodeBackend {
+    override openFile(): never {
+      throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
+    }
+  }
+  const fs = new VFS();
+  fs.mount("/", new NoHandles(dir, true));
+  const t = { vm: { fs, opts: {}, state: new Map(), exited: new Promise(() => {}) } } as unknown as JThread;
+  try {
+    writeFileSync(join(dir, "file"), "data");
+    for (const write of [false, true]) {
+      const fd = openFile(t, "/file", write, false, false);
+      const f = fileOf(t, fd);
+      assert.equal(f.contents.pin, undefined);
+      const byte = new Uint8Array(1);
+      assert.equal(f.read(byte, 0, 1), 1);
+      assert.equal(byte[0], "d".charCodeAt(0));
+      closeFd(t, fd);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a path that reaches a different inode does not share the open file's contents", async () => {
   const { openFile, fileOf, closeFd } = await import("../src/natives/io.ts");
   const dir = mkdtempSync(join(tmpdir(), "java-web-share-"));

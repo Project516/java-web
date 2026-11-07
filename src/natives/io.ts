@@ -390,7 +390,8 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
 }
 
 // Only a writable host tree can lose the file while it is open, and only one
-// that reports inode numbers can reuse them.
+// that reports inode numbers can reuse them. Best effort: if no handle can be
+// taken (EMFILE), the open still succeeds, as it does on HotSpot.
 function pinInode(t: JThread, c: Contents, abs: string, write: boolean, readable: boolean) {
   const fs = t.vm.fs;
   if (c.ino === undefined || !fs.canOpenFile(abs, true)) return;
