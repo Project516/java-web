@@ -806,8 +806,10 @@ export const natives: Natives = {
   },
   "sun/nio/ch/UnixDomainSockets.bind0(Ljava/io/FileDescriptor;[B)V": function* (t, [fd, path]): NativeGen {
     const s = sockOf(t, fd);
-    const p = unixFile(t, path);
     if (s.localPath) throw socketError(EINVAL);
+    // an empty path is the unnamed address; Linux binds it to an abstract name Java reports as unnamed
+    if (path.a.length === 0) return;
+    const p = unixFile(t, path);
     if (!t.vm.net.hostUnix) {
       if (t.vm.fs.stat(p)) throw socketError(EADDRINUSE);
       if (!t.vm.fs.write(p, new Uint8Array(0))) throw socketError(EACCES);
