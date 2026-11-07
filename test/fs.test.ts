@@ -18,6 +18,29 @@ test("renaming a file onto a directory leaves both intact", () => {
   assert.deepEqual(fs.read("/other"), new Uint8Array([1]));
 });
 
+// an entry whose signature cannot be read is reported, not taken as unchanged
+test("unknown host signatures are reported and never deduplicated", () => {
+  const vfs = new VFS();
+  const host = new MemoryBackend();
+  host.mkdir("/d");
+  let fire: (name: string, event: "create" | "modify" | "delete") => void = () => {};
+  Object.assign(host, {
+    watch: (_path: string, onEvent: typeof fire) => { fire = onEvent; return () => {}; },
+    signature: () => undefined,
+  });
+  vfs.mount("/", host);
+  const seen: string[] = [];
+  vfs.watchChanges((path, event) => seen.push(`${path} ${event}`));
+  const stop = vfs.watchDirectory("/d");
+  assert.equal(vfs.write("/d/x", new Uint8Array([1])), true);
+  fire("x", "modify");
+  fire("x", "modify");
+  fire("", "delete");
+  assert.equal(vfs.write("/d/y", new Uint8Array([1])), true);
+  assert.deepEqual(seen, ["/d/x create", "/d/x modify", "/d/x modify", "/d delete", "/d/y create"]);
+  stop();
+});
+
 test("host path resolution leaves other mounts and memory paths lexical", () => {
   const fs = new VFS();
   const host = new MemoryBackend();

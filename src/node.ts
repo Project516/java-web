@@ -270,9 +270,13 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
-  signature(p: string) {
-    const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
-    return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
+  signature(p: string): string | undefined {
+    try {
+      const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
+      return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
+    } catch {
+      return undefined;
+    }
   }
   setMtime(p: string, ms: number, noFollow = false, atimeMs?: number) {
     try {

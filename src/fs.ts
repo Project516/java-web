@@ -83,8 +83,8 @@ export interface Backend {
   realpath?(path: string): string | null;
   // reports changes others make to a directory's entries (name "" is the directory itself); returns what stops it
   watch?(path: string, onEvent: (name: string, event: "create" | "modify" | "delete") => void): (() => void) | null;
-  // changes whenever the entry's content or times do, or is "" when it is missing
-  signature?(path: string): string;
+  // changes whenever the entry's content or times do, "" when it is missing, undefined when it cannot be read
+  signature?(path: string): string | undefined;
 }
 
 export interface WarmTrace {
@@ -240,16 +240,21 @@ export class VFS {
     this.warmChanged?.add(path);
     if (this.hostWatches.size === 0) return;
     const watch = this.hostWatches.get(parentOf(path));
-    if (watch) watch.own.set(path.slice(path.lastIndexOf("/") + 1), this.signature(path));
+    if (!watch) return;
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const signature = this.signature(path);
+    if (signature === undefined) watch.own.delete(name);
+    else watch.own.set(name, signature);
   }
 
   // Host directories being watched: the entries as the VM last left them, so
   // that only changes others make reach watchers a second time.
   private hostWatches = new Map<string, { stop: () => void; refs: number; own: Map<string, string> }>();
 
-  private signature(path: string): string {
+  private signature(path: string): string | undefined {
     const r = this.resolve(path);
-    return (r && r[0].signature?.(r[1])) ?? "";
+    if (!r) return "";
+    return r[0].signature ? r[0].signature(r[1]) : "";
   }
 
   // Starts reporting what others do to a directory on a host backend, as
@@ -281,7 +286,8 @@ export class VFS {
     const watch = this.hostWatches.get(dir);
     if (!watch) return;
     const path = name === "" ? dir : (dir === "/" ? "" : dir) + "/" + name;
-    if (name !== "" && watch.own.get(name) === this.signature(path)) return;
+    const signature = name === "" ? undefined : this.signature(path);
+    if (signature !== undefined && watch.own.get(name) === signature) return;
     for (const watcher of this.watchers) watcher(path, event);
   }
 
