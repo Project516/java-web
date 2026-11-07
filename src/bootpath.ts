@@ -47,3 +47,15 @@ export function bootClassPath(entries: string | undefined): ((name: string) => {
     return null;
   };
 }
+
+// --patch-module module=path:path, as the jdk.module.patch.N properties hold it
+export function bootPatches(props: Record<string, string> | undefined): ((module: string, name: string) => Uint8Array | null) | undefined {
+  const paths = new Map<string, string[]>();
+  for (const [k, v] of Object.entries(props ?? {})) {
+    const eq = v.indexOf("=");
+    if (/^jdk\.module\.patch\.\d+$/.test(k) && eq > 0) paths.set(v.slice(0, eq), [...(paths.get(v.slice(0, eq)) ?? []), v.slice(eq + 1)]);
+  }
+  if (paths.size === 0) return undefined;
+  const finders = new Map([...paths].map(([module, list]) => [module, bootClassPath(list.join(":"))!]));
+  return (module, name) => finders.get(module)?.(name)?.bytes ?? null;
+}

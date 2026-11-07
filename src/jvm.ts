@@ -65,6 +65,8 @@ export interface JvmOptions {
   assertions?: Assertions;
   // run class files that use this release's preview features
   enablePreview?: boolean;
+  // class bytes from --patch-module for a boot loader module, which win over the image's
+  bootPatch?: (module: string, name: string) => Uint8Array | null;
   // class bytes on the -Xbootclasspath/a path, and the path entry that holds them
   bootClassPath?: (name: string) => { bytes: Uint8Array; location: string } | null;
   // os.version; the kernel release where there is one
@@ -261,7 +263,9 @@ export class JVM {
     const i = name.lastIndexOf("/");
     const module = this.bootPackages.get(i < 0 ? "" : name.slice(0, i));
     let bytes: Uint8Array | null | undefined;
-    if (module) bytes = this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
+    if (module) {
+      bytes = this.opts.bootPatch?.(module, name) ?? (this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`));
+    }
     else {
       const found = this.opts.bootClassPath?.(name);
       if (found) {

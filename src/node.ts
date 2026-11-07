@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bootClassPath } from "./bootpath.ts";
+import { bootClassPath, bootPatches } from "./bootpath.ts";
 import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
@@ -576,6 +576,7 @@ function nodeVm(o: LauncherOptions): JVM {
     assertions: o.assertions && parseAssertions(o.assertions),
     enablePreview: o.enablePreview,
     bootClassPath: bootClassPath(o.props?.["jdk.boot.class.path.append"]),
+    bootPatch: bootPatches(o.props),
     osVersion: os.release(),
     net: o.net ?? (o.fetch ? undefined : new NodeNet()),
     fetch: o.fetch,

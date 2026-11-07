@@ -53,11 +53,15 @@ public class Hidden { public static String hello() { return "hello from " + Hidd
   }
 }
 `);
+  mkdirSync(join(dir, "patchsrc", "java", "lang"), { recursive: true });
+  writeFileSync(join(dir, "patchsrc", "java", "lang", "PatchedX.java"), "package java.lang;\npublic class PatchedX { public static String hi() { return \"patched \" + PatchedX.class.getModule().getName(); } }\n");
+  writeFileSync(join(classes, "UsePatch.java"), "public class UsePatch { public static void main(String[] a) throws Exception { System.out.println(Class.forName(\"java.lang.PatchedX\").getMethod(\"hi\").invoke(null)); } }\n");
   writeFileSync(join(classes, "Plain.java"), "public class Plain { public static void main(String[] a) { System.out.println(\"plain \" + Plain.class.getModule().isNamed()); } }\n");
   execFileSync(hotspot("javac"), ["-d", join(mods, "lib"), join(lib, "module-info.java"), join(lib, "lib", "Lib.java")]);
   execFileSync(hotspot("javac"), ["-d", join(mods, "app"), "-p", mods, join(m, "module-info.java"), join(m, "app", "Main.java")]);
   execFileSync(hotspot("javac"), ["-d", join(dir, "boot"), join(dir, "boot", "bp", "Hidden.java")]);
-  execFileSync(hotspot("javac"), ["-d", classes, "-cp", join(dir, "boot"), join(classes, "Plain.java"), join(classes, "UseBoot.java")]);
+  execFileSync(hotspot("javac"), ["-d", join(dir, "patch"), "--patch-module", `java.base=${join(dir, "patchsrc")}`, join(dir, "patchsrc", "java", "lang", "PatchedX.java")]);
+  execFileSync(hotspot("javac"), ["-d", classes, "-cp", join(dir, "boot"), join(classes, "Plain.java"), join(classes, "UseBoot.java"), join(classes, "UsePatch.java")]);
   execFileSync(hotspot("jar"), ["cf", join(dir, "boot.jar"), "-C", join(dir, "boot"), "bp", "-C", join(dir, "boot"), "res.txt"]);
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -76,6 +80,7 @@ for (const [name, args] of [
   ["--limit-modules", () => ["--limit-modules", "java.base", "-cp", classes, "Plain"]],
   ["-Xbootclasspath/a with a directory", () => [`-Xbootclasspath/a:${join(dir, "boot")}`, "-cp", classes, "UseBoot"]],
   ["-Xbootclasspath/a with a jar", () => [`-Xbootclasspath/a:${join(dir, "boot.jar")}`, "-cp", classes, "UseBoot"]],
+  ["--patch-module of a boot loader module", () => ["--patch-module", `java.base=${join(dir, "patch")}`, "-cp", classes, "UsePatch"]],
   ["no such module", () => ["-p", mods, "-m", "missing/x.Main"]],
 ] as [string, () => string[]][]) {
   test(name, () => {
