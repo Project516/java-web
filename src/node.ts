@@ -749,7 +749,11 @@ export function main(argv: string[]) {
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
     else if (a === "-m" || a === "--module" || a.startsWith("--module=")) {
-      o.mainModule = a.startsWith("--module=") ? a.slice(9) : argv[++i];
+      o.mainModule = a.startsWith("--module=") ? a.slice(9) : argv[++i] ?? "";
+      if (!o.mainModule) {
+        console.error(`Error: ${a.startsWith("--module=") ? "--module=" : a} requires module name`);
+        process.exit(1);
+      }
       o.props!["jdk.module.main"] = o.mainModule.split("/")[0];
       i++;
       break;

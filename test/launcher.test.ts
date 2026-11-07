@@ -83,6 +83,8 @@ for (const [name, args] of [
   ["-Xbootclasspath/a with a jar", () => [`-Xbootclasspath/a:${join(dir, "boot.jar")}`, "-cp", classes, "UseBoot"]],
   ["--patch-module of a boot loader module", () => ["--patch-module", `java.base=${join(dir, "patch")}`, "-cp", classes, "UsePatch"]],
   ["no such module", () => ["-p", mods, "-m", "missing/x.Main"]],
+  ["-m without a module", () => ["-m"]],
+  ["--module= without a module", () => ["--module="]],
 ] as [string, () => string[]][]) {
   test(name, () => {
     const a = args();
