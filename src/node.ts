@@ -270,9 +270,13 @@ export class NodeBackend implements Backend {
       return null;
     }
   }
-  signature(p: string) {
-    const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
-    return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
+  signature(p: string): string | undefined {
+    try {
+      const s = fs.lstatSync(this.host(p), { bigint: true, throwIfNoEntry: false });
+      return s ? `${s.ino}:${s.size}:${s.mtimeNs}` : "";
+    } catch {
+      return undefined;
+    }
   }
   setMtime(p: string, ms: number, noFollow = false, atimeMs?: number) {
     try {
@@ -407,7 +411,13 @@ function onOutError(this: NodeJS.WriteStream) {
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
 // runs each through /bin/sh, with %p the process id, before throwing.
 function runOnOutOfMemory(commands: string[], message: string | null, out: ((b: Uint8Array) => void) | undefined, fd: number, java: string[]) {
-  const say = (line: string) => out ? out(new TextEncoder().encode(line + "\n")) : fs.writeSync(fd, line + "\n");
+  // as HotSpot's fprintf: a failed write does not stop the commands
+  const say = (line: string) => {
+    try {
+      if (out) out(new TextEncoder().encode(line + "\n"));
+      else fs.writeSync(fd, line + "\n");
+    } catch { /* output closed */ }
+  };
   say(`#\n# java.lang.OutOfMemoryError: ${message ?? "null"}`);
   for (const raw of commands) {
     say(`# -XX:OnOutOfMemoryError="${raw}"`);
@@ -529,7 +539,7 @@ function snapshotCache(dir: string, build: string) {
   };
 }
 
-function nodeVm(o: LauncherOptions): JVM {
+export function nodeVm(o: LauncherOptions): JVM {
   exposeGc();
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));

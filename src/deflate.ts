@@ -260,10 +260,15 @@ export class Deflate {
     if (this.wrap && !this.headerDone) this.dictId = adler32(1, d) >>> 0;
     if (this.level === 0 || this.ended) return true;
     this.alloc();
-    this.resetHistory();
+    // symbols already taken keep their block; its bytes are overwritten, so it cannot be stored
+    const pending = this.nsym > 0;
+    this.head.fill(0);
+    this.matchLen = this.prevLen = MIN_MATCH - 1;
+    this.matchAvail = false;
     const t = d.length > WSIZE ? d.subarray(d.length - WSIZE) : d;
     this.win.set(t, 0);
-    this.strstart = this.blockStart = t.length;
+    this.strstart = t.length;
+    this.blockStart = pending ? -1 : t.length;
     let p = 0;
     for (; p + 2 < t.length; p++) this.insertAt(p);
     this.hashed = p;

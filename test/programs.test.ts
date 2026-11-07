@@ -2,12 +2,13 @@
 // what HotSpot prints, with the same exit code.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { moduleFlag, runNode } from "../src/node.ts";
+import { moduleFlag, nodeVm, runNode } from "../src/node.ts";
+import { LM_CLASS } from "../src/jvm.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -83,6 +84,42 @@ test("-Xmx caps an allocation under the command", () => {
   // x64 HotSpot rounds the heap up to 2 MB steps
   const max = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...args, "max"], { encoding: "utf8" });
   assert.match(max.stdout, /^max 18874368$/m);
+});
+
+// the error is thrown even when the hook that reports it fails
+test("an OutOfMemoryError survives a failing hook", async () => {
+  const classes = join(root, "build", "test-oom");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "oom", "OutOfMemoryCaught.java")]);
+  const ref = spawnSync(hotspot("java"), ["-cp", classes, "OutOfMemoryCaught"], { encoding: "utf8" });
+  const stdout: Uint8Array[] = [];
+  const vm = nodeVm({ classpath: [classes], snapshotDir: null, stdout: (b) => stdout.push(b) });
+  vm.opts.onOutOfMemory = () => { throw new Error("hook failed"); };
+  const code = await vm.run(LM_CLASS, "OutOfMemoryCaught", []);
+  assert.deepEqual({ stdout: Buffer.concat(stdout).toString("utf8"), code }, { stdout: ref.stdout, code: ref.status });
+});
+
+// the commands run even though the header cannot be written to the closed stdout
+test("OutOfMemoryError commands run when stdout is closed", { skip: process.platform !== "linux" }, async () => {
+  const classes = join(root, "build", "test-oom");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "oom", "OutOfMemoryCaught.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-oom-"));
+  const closedStdout = (cmd: string, args: string[]) => new Promise<void>((resolve) => {
+    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+    p.stdout!.destroy();
+    p.on("close", () => resolve());
+  });
+  try {
+    const marker = join(dir, "marker");
+    const flags = [`-XX:OnOutOfMemoryError=touch ${marker}`, "-cp", classes, "OutOfMemoryCaught"];
+    await closedStdout(hotspot("java"), flags);
+    const ref = existsSync(marker);
+    rmSync(marker, { force: true });
+    await closedStdout(process.execPath, [join(root, "src", "node.ts"), ...flags]);
+    assert.equal(ref, true);
+    assert.equal(existsSync(marker), true);
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
 });
 
 // ulimit -f makes the host refuse writes past 4 KB; SIGXFSZ ignored, they fail with EFBIG
@@ -186,6 +223,58 @@ test("env option replaces the host environment", async () => {
   const code = await runNode({ classpath: [out], mainClass: "Environment", env: { GREETING: "hi", PATH: "/bin" }, stdout: (b) => stdout.push(b) });
   assert.equal(Buffer.concat(stdout).toString("utf8"), "[GREETING, PATH]\n/bin\nnull\nEnvironment\n");
   assert.equal(code, 0);
+});
+
+// both raise a lower soft limit to the hard one at startup, and report the raised value
+test("open file limit as HotSpot reports it", { skip: process.platform !== "linux" }, () => {
+  const classes = join(root, "build", "test-limit");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "process", "FileLimit.java")]);
+  const under = ([cmd, ...args]: string[]) => spawnSync("prlimit", ["--nofile=4096:", cmd, ...args, "-cp", classes, "FileLimit"], { encoding: "utf8" });
+  const ref = under([hotspot("java")]);
+  const got = under([process.execPath, join(root, "src", "node.ts")]);
+  assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+});
+
+// A directory or an unreadable match is EACCES when nothing else is found. ELOOP stops the
+// search when the child inherits the environment and does not when it has its own.
+test("PATH lookup as the JDK's launcher", { skip: process.platform !== "linux" }, async () => {
+  const classes = join(root, "build", "test-path");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "process", "PathLookup.java")]);
+  const dir = mkdtempSync(join(tmpdir(), "java-web-path-"));
+  try {
+    const exec = join(dir, "exec");
+    mkdirSync(join(dir, "dirs", "dirtool"), { recursive: true });
+    mkdirSync(join(dir, "plain"));
+    writeFileSync(join(dir, "plain", "noexec"), "", { mode: 0o644 });
+    symlinkSync(join(dir, "loop"), join(dir, "loop"));
+    mkdirSync(exec);
+    writeFileSync(join(exec, "dirtool"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    writeFileSync(join(exec, "loopy"), "#!/bin/sh\nexit 4\n", { mode: 0o755 });
+    const file = join(dir, "file");
+    writeFileSync(file, "");
+    const lookup = async (PATH: string, args: string[]) => {
+      const ref = spawnSync(hotspot("java"), ["-cp", classes, "PathLookup", ...args], { env: { PATH }, encoding: "utf8" });
+      const stdout: Uint8Array[] = [];
+      const code = await runNode({ classpath: [classes], mainClass: "PathLookup", args, env: { PATH }, stdout: (b) => stdout.push(b) });
+      assert.deepEqual({ stdout: Buffer.concat(stdout).toString("utf8"), code }, { stdout: ref.stdout, code: ref.status });
+      return ref.stdout;
+    };
+    const eacces = "Exec failed, error: 13 (Permission denied) ";
+    const enoent = "Exec failed, error: 2 (No such file or directory) ";
+    const eloop = "Exec failed, error: 40 (Too many levels of symbolic links) ";
+    assert.equal(
+      await lookup([join(dir, "dirs"), join(dir, "plain"), exec, join(dir, "missing")].join(":"), ["dirtool", "noexec", "absent"]),
+      `dirtool exit 3\nnoexec ${eacces}\nabsent ${enoent}\n`,
+    );
+    assert.equal(
+      await lookup([join(dir, "loop"), join(dir, "plain"), exec, join(dir, "missing")].join(":"), ["-env", "dirtool", "noexec", "absent"]),
+      `dirtool exit 3\nnoexec ${eacces}\nabsent ${enoent}\n`,
+    );
+    assert.equal(await lookup([join(dir, "loop"), exec].join(":"), ["dirtool"]), `dirtool ${eloop}\n`);
+    assert.equal(await lookup(file, ["absent"]), "absent Exec failed, error: 20 (Not a directory) \n");
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
 });
 
 // jdk.localedata loads only when asked for; without it other locales format as English.
