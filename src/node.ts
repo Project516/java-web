@@ -777,7 +777,13 @@ export function main(argv: string[]) {
   }
   // Collecting first: node's exit teardown can deadlock while it frees very
   // large array buffers (seen on x64 CI runners with a few hundred MB left).
-  Promise.resolve().then(() => runNode(o)).then((code) => (globalThis.gc?.(), process.exit(code)), (e) => {
+  Promise.resolve().then(() => runNode(o)).then(async (code) => {
+    globalThis.gc?.();
+    // output a pipe has not taken yet goes out before the process does
+    const flushed = [process.stdout, process.stderr].map((s) => new Promise<void>((done) => { s.write("", () => done()); }));
+    await Promise.race([Promise.all(flushed), new Promise((done) => setTimeout(done, 10000).unref())]);
+    process.exit(code);
+  }, (e) => {
     console.error(`java-web: ${(e as Error).message}`);
     process.exit(1);
   });
