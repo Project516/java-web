@@ -34,9 +34,26 @@ public class Main {
   }
 }
 `);
+  mkdirSync(classes, { recursive: true });
+  mkdirSync(join(dir, "boot", "bp"), { recursive: true });
+  writeFileSync(join(dir, "boot", "bp", "Hidden.java"), `package bp;
+public class Hidden { public static String hello() { return "hello from " + Hidden.class.getClassLoader() + " " + Hidden.class.getModule().isNamed(); } }
+`);
+  writeFileSync(join(dir, "boot", "res.txt"), "resource\n");
+  writeFileSync(join(classes, "UseBoot.java"), `public class UseBoot {
+  public static void main(String[] a) throws Exception {
+    System.out.println(bp.Hidden.hello());
+    System.out.println(Class.forName("bp.Hidden", false, null).getName());
+    System.out.println(ClassLoader.getSystemResource("res.txt") != null);
+    System.out.println(Package.getPackage("bp") != null);
+  }
+}
+`);
   writeFileSync(join(classes, "Plain.java"), "public class Plain { public static void main(String[] a) { System.out.println(\"plain \" + Plain.class.getModule().isNamed()); } }\n");
   execFileSync(hotspot("javac"), ["-d", join(mods, "app"), join(m, "module-info.java"), join(m, "app", "Main.java")]);
-  execFileSync(hotspot("javac"), ["-d", classes, join(classes, "Plain.java")]);
+  execFileSync(hotspot("javac"), ["-d", join(dir, "boot"), join(dir, "boot", "bp", "Hidden.java")]);
+  execFileSync(hotspot("javac"), ["-d", classes, "-cp", join(dir, "boot"), join(classes, "Plain.java"), join(classes, "UseBoot.java")]);
+  execFileSync(hotspot("jar"), ["cf", join(dir, "boot.jar"), "-C", join(dir, "boot"), "bp", "-C", join(dir, "boot"), "res.txt"]);
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -52,6 +69,8 @@ for (const [name, args] of [
   ["-m, a nested -m child", () => ["-p", mods, "-m", "app/app.Main", "child"]],
   ["--add-modules on the class path", () => ["--module-path", mods, "--add-modules", "app", "-cp", classes, "Plain"]],
   ["--limit-modules", () => ["--limit-modules", "java.base", "-cp", classes, "Plain"]],
+  ["-Xbootclasspath/a with a directory", () => [`-Xbootclasspath/a:${join(dir, "boot")}`, "-cp", classes, "UseBoot"]],
+  ["-Xbootclasspath/a with a jar", () => [`-Xbootclasspath/a:${join(dir, "boot.jar")}`, "-cp", classes, "UseBoot"]],
   ["no such module", () => ["-p", mods, "-m", "missing/x.Main"]],
 ] as [string, () => string[]][]) {
   test(name, () => {

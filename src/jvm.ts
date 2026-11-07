@@ -135,6 +135,10 @@ export class JVM {
   private readonly image: JImage | null;
   // package -> module, for boot classes
   readonly bootPackages = new Map<string, string>();
+  // packages of modules defined at run time for the boot loader, such as a Proxy's dynamic module
+  readonly bootModulePackages = new Map<string, JObject>();
+  // packages of classes loaded from -Xbootclasspath/a, with the path entry they came from
+  readonly bootAppendPackages = new Map<string, string>();
   // Module objects defined to the boot loader, by name
   readonly bootModules = new Map<string, JObject>();
   bootUnnamedModule: JObject | null = null;
@@ -254,8 +258,15 @@ export class JVM {
     }
     const i = name.lastIndexOf("/");
     const module = this.bootPackages.get(i < 0 ? "" : name.slice(0, i));
-    if (!module) return null;
-    const bytes = this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
+    let bytes: Uint8Array | null | undefined;
+    if (module) bytes = this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`);
+    else {
+      const found = this.opts.bootClassPath?.(name);
+      if (found) {
+        bytes = found.bytes;
+        this.bootAppendPackages.set(i < 0 ? "" : name.slice(0, i), found.location);
+      }
+    }
     if (!bytes) return null;
     const cf = parseClass(bytes);
     const superclass = cf.superName ? this.loadBootOrFail(cf.superName) : null;

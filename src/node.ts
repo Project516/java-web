@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { bootClassPath } from "./bootpath.ts";
 import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
@@ -574,6 +575,7 @@ function nodeVm(o: LauncherOptions): JVM {
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
     enablePreview: o.enablePreview,
+    bootClassPath: bootClassPath(o.props?.["jdk.boot.class.path.append"]),
     osVersion: os.release(),
     net: o.net ?? (o.fetch ? undefined : new NodeNet()),
     fetch: o.fetch,
@@ -751,6 +753,7 @@ export function main(argv: string[]) {
       i++;
       break;
     }
+    else if (a.startsWith("-Xbootclasspath/a:")) o.props!["jdk.boot.class.path.append"] = a.slice(18);
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (javaChild && a.startsWith("-")) {
       console.error(`Unrecognized option: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);

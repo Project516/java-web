@@ -436,10 +436,12 @@ export const natives: Natives = {
   },
 
   "jdk/internal/loader/BootLoader.getSystemPackageNames()[Ljava/lang/String;": (t) =>
-    t.vm.newObjectArray("java/lang/String", [...t.vm.bootPackages.keys()].map((p) => t.vm.str(p))),
+    t.vm.newObjectArray("java/lang/String", [...t.vm.bootPackages.keys(), ...t.vm.bootAppendPackages.keys()].map((p) => t.vm.str(p))),
   "jdk/internal/loader/BootLoader.getSystemPackageLocation(Ljava/lang/String;)Ljava/lang/String;": (t, [n]) => {
-    const mod = t.vm.bootPackages.get(t.vm.jsString(n));
-    return mod ? t.vm.str(`jrt:/${mod}`) : null;
+    const pkg = t.vm.jsString(n);
+    const mod = t.vm.bootPackages.get(pkg);
+    const appended = t.vm.bootAppendPackages.get(pkg);
+    return mod ? t.vm.str(`jrt:/${mod}`) : appended ? t.vm.str(appended) : null;
   },
   "jdk/internal/loader/BootLoader.setBootLoaderUnnamedModule0(Ljava/lang/Module;)V": (t, [m]) => {
     t.vm.bootUnnamedModule = m;
