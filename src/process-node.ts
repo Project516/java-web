@@ -19,6 +19,9 @@ export const ENV_CHANNEL = "JAVA_WEB_ENV";
 export const javaChild = (entry: string, jdk: string, packaged: boolean) =>
   [process.execPath, entry, "--java-child", ...(packaged ? [] : ["--jdk", jdk])];
 
+const ended = (input: Readable) => input.readableEnded || input.destroyed
+  ? Promise.resolve()
+  : new Promise<void>((resolve) => { input.once("end", resolve); input.once("close", resolve); input.once("error", resolve); });
 const drained = (output: Writable) => output.writableNeedDrain
   ? new Promise<void>((resolve) => { output.once("drain", resolve); output.once("close", resolve); })
   : undefined;
@@ -45,9 +48,8 @@ function findProgram(command: string, cwd: string, parentPath: string | undefine
   return Object.assign(new Error(denied ? "EACCES" : "ENOENT"), { code: denied ? "EACCES" : "ENOENT", errno: denied ? -13 : -2 });
 }
 
-// A child's output waits in memory up to this many bytes before the child is held back. The JDK
-// reads what is left in a pipe when a child exits, so the output is better read than left in the pipe.
-const HELD = 1 << 24;
+// A child's output waits in memory up to a host pipe's capacity before the child is held back
+const HELD = 65536;
 
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];
@@ -58,6 +60,7 @@ class Pipe implements ProcessPipe {
   private output: Writable | null;
   private forwarding = false;
   private wake: (() => void)[] = [];
+  private limit = HELD;
   constructor(input: Readable | null, output: Writable | null) {
     this.output = output;
     if (input) this.attach(input);
@@ -69,7 +72,7 @@ class Pipe implements ProcessPipe {
     input.on("data", (chunk: Buffer) => {
       this.chunks.push(new Uint8Array(chunk));
       this.length += chunk.length;
-      if (this.length >= HELD) for (const stream of this.inputs) stream.pause();
+      if (this.length >= this.limit) for (const stream of this.inputs) stream.pause();
       this.notify();
     });
     let done = false;
@@ -83,6 +86,11 @@ class Pipe implements ProcessPipe {
     input.once("error", end);
   }
   private notify() { for (const wake of this.wake.splice(0)) wake(); }
+  // Takes in everything while a child that exited has its output read
+  hold(on: boolean) {
+    this.limit = on ? HELD : Infinity;
+    for (const stream of this.inputs) on && this.length >= HELD ? stream.pause() : stream.resume();
+  }
   async read(dst: Uint8Array, off: number, len: number): Promise<number> {
     while (!this.length && !this.ended) await new Promise<void>((resolve) => this.wake.push(resolve));
     if (!this.length) return -1;
@@ -253,11 +261,21 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         merged?.writer.destroy();
         const status = (code: number | null, signal: NodeJS.Signals | null) =>
           code ?? 128 + ((os.constants.signals as Record<string, number>)[signal ?? ""] ?? 0);
-        // After exit the output still on its way is read before the VM hears of it: on close, or a
-        // moment after exit when a grandchild keeps a pipe open
+        // The JDK takes what is left in a child's pipes when it exits, so that output, at most a
+        // pipe's capacity, is read before the VM hears of the exit. A grandchild can keep a pipe
+        // open, so this waits only a moment.
+        const pipes: Pipe[] = [];
+        const outputs = [merged ? merged.reader : child.stdout, merged ? null : child.stderr].filter((s): s is Readable => s !== null);
         const exited = new Promise<number>((resolve) => {
-          child.once("exit", (code, signal) => { setTimeout(() => resolve(status(code, signal)), 250); });
-          child.once("close", (code, signal) => resolve(status(code, signal)));
+          child.once("exit", (code, signal) => {
+            for (const pipe of pipes) pipe.hold(false);
+            const done = () => {
+              for (const pipe of pipes) pipe.hold(true);
+              resolve(status(code, signal));
+            };
+            setTimeout(done, 250);
+            void Promise.all(outputs.map(ended)).then(done);
+          });
         });
         const created: number[] = [];
         for (let i = 0; i < 3; i++) {
@@ -265,6 +283,7 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
             descriptors[i] = -1;
           } else if (descriptors[i] < 0) {
             const pipe = new Pipe(i === 0 ? null : i === 1 && merged ? merged.reader : child.stdio[i] as Readable, i === 0 ? child.stdio[i] as Writable : null);
+            if (i > 0) pipes.push(pipe);
             descriptors[i] = addProcessPipe(t, pipe);
             created.push(descriptors[i]);
           } else {
