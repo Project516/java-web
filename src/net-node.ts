@@ -5,6 +5,7 @@ import * as dns from "node:dns";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
+import * as path from "node:path";
 import { DGRAM_RCVBUF, HIGH_WATER, MAX_DGRAM, Sock } from "./sockets.ts";
 import type { Endpoint, NetBackend, NetIf } from "./sockets.ts";
 import * as E from "./sockets.ts";
@@ -72,6 +73,14 @@ function reset(ns: net.Socket) {
   else ns.destroy();
 }
 
+// A socket address holds 107 bytes of path; a long absolute path under the working
+// directory goes in relative, as a program that binds a relative name does.
+function shortUnixPath(p: string): string {
+  if (Buffer.byteLength(p) <= 107) return p;
+  const rel = path.relative(process.cwd(), p);
+  return Buffer.byteLength(rel) < Buffer.byteLength(p) ? rel : p;
+}
+
 export class NodeNet implements NetBackend {
   private live = new Set<Sock>();
 
@@ -131,14 +140,21 @@ export class NodeNet implements NetBackend {
 
   readonly hostUnix = true;
 
+  // The names clients of this VM bound before connecting to a path, in connect order. A host
+  // socket cannot tell its peer's name, so an accepted socket takes the next one.
+  private unixClients = new Map<string, string[]>();
+
   bindUnix(s: Sock, path: string) {
-    return this.listenOn(s, { path }, () => {
+    return this.listenOn(s, { path: shortUnixPath(path) }, () => {
       s.localPath = path;
-    });
+    }, path);
   }
 
   connectUnix(s: Sock, path: string) {
-    return this.connectTo(s, { path }, () => {
+    const names = this.unixClients.get(path);
+    if (names) names.push(s.localPath);
+    else this.unixClients.set(path, [s.localPath]);
+    return this.connectTo(s, { path: shortUnixPath(path) }, () => {
       s.remotePath = path;
     });
   }
@@ -150,7 +166,7 @@ export class NodeNet implements NetBackend {
   }
 
   // Listens with the given net options; s collects what connects.
-  private listenOn(s: Sock, options: net.ListenOptions, bound: (srv: net.Server) => void): Promise<number> {
+  private listenOn(s: Sock, options: net.ListenOptions, bound: (srv: net.Server) => void, unixPath?: string): Promise<number> {
     return new Promise((resolve) => {
       const srv = net.createServer({ allowHalfOpen: true });
       srv.once("error", (e) => resolve(errnoOf(e)));
@@ -164,6 +180,7 @@ export class NodeNet implements NetBackend {
         } else {
           c.unix = true;
           c.localPath = s.localPath;
+          if (unixPath) c.remotePath = this.unixClients.get(unixPath)?.shift() ?? "";
         }
         this.attach(c, ns);
         s.backlog.push(c);
