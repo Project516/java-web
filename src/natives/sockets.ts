@@ -679,7 +679,8 @@ export const natives: Natives = {
   },
   [`${N}connect0(ZLjava/io/FileDescriptor;Ljava/net/InetAddress;I)I`]: function* (t, [, fd, ia, port]): NativeGen {
     const s = sockOf(t, fd);
-    if (s.connected || s.connecting) throw socketError(106);
+    // a datagram socket may connect again
+    if (s.stream && (s.connected || s.connecting)) throw socketError(106);
     const e = yield* done(t.vm.net.connect(s, { addr: inetBytes(t, ia), port }), t);
     if (e && e !== 115) throw socketError(e);
     if (s.connecting) {

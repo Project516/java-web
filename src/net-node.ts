@@ -57,6 +57,8 @@ interface TcpImpl {
 
 interface UdpImpl {
   ds?: dgram.Socket;
+  // the address the socket was bound to before a connect gave it a source address
+  boundLocal?: Endpoint;
   // sends the host socket has not finished, which a close must wait for
   pending?: number;
   closing?: boolean;
@@ -285,9 +287,22 @@ export class NodeNet implements NetBackend {
     const ds = (s.impl as UdpImpl | null)?.ds;
     if (!ds) return Promise.resolve(E.EBADF);
     return new Promise((resolve) => {
+      // Linux lets a connected datagram socket connect again; Node wants it disconnected first
+      if (s.connected) {
+        try { ds.disconnect(); } catch { /* not connected */ }
+      }
       ds.once("connect", () => {
         s.connected = true;
         s.remote = { addr: ep.addr.slice(), port: ep.port };
+        // connecting gives a wildcard-bound socket the source address the route picks
+        try {
+          const a = ds.address();
+          const im = s.impl as UdpImpl;
+          if (a.family === "IPv4" && s.local && E.isWildcard(s.local.addr)) {
+            im.boundLocal ??= s.local;
+            s.local = { addr: parseIp(a.address), port: a.port };
+          }
+        } catch { /* keeps the bound address */ }
         resolve(0);
       });
       try {
@@ -301,7 +316,7 @@ export class NodeNet implements NetBackend {
   // Linux forgets the port of a socket that disconnects, so bind it again to keep it.
   async disconnect(s: Sock) {
     const ds = (s.impl as UdpImpl | null)?.ds;
-    const local = s.local;
+    const local = (s.impl as UdpImpl | null)?.boundLocal ?? s.local;
     s.connected = false;
     s.remote = null;
     if (!ds || !local) return 0;
