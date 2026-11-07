@@ -28,7 +28,10 @@ java-web targets headless Java: console apps, libraries and javac.
   fails with "Function not implemented". Files on host file systems have the
   host's inode numbers and link counts, and the modes `open` and `mkdir` ask
   for, less the process's umask. In-memory files get synthetic inode numbers, a
-  link count of 1 and default modes.
+  link count of 1 and default modes. A `SecureDirectoryStream` works on its
+  directory's path, so if another process moves the directory and puts a new
+  one at that path, it acts on the new one; on HotSpot it keeps acting on the
+  directory it opened.
 - `-XX:OnOutOfMemoryError` runs its commands under Node only, and `StackWalker`
   has no live locals or operands. A virtual thread unmounts when it parks,
   blocks on a monitor or waits in `Object.wait`, holding its monitors, as in
