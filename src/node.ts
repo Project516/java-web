@@ -6,7 +6,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
-import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { VFS } from "./fs.ts";
@@ -432,6 +431,8 @@ function buildId(vfs: VFS, packaged: boolean): string | null {
   if (packaged) return typeof JAVA_WEB_BUILD === "string" ? JAVA_WEB_BUILD : null;
   const image = vfs.read("/jdk/lib/image.sha256");
   if (!image) return null;
+  // loaded here, as it takes about 15 ms and a packaged start needs no digest
+  const { createHash } = process.getBuiltinModule("node:crypto");
   const h = createHash("sha256").update(image);
   if (typeof JAVA_WEB_BUILD === "string") return h.update(JAVA_WEB_BUILD).digest("hex");
   // unbundled, this file runs as src/node.ts, next to the rest of the VM's sources
@@ -442,10 +443,21 @@ function buildId(vfs: VFS, packaged: boolean): string | null {
   return h.digest("hex");
 }
 
+// A file name for a key: four FNV-1a lanes, 128 bits. An image holds its full
+// key, so a collision only costs a boot.
+function fingerprint(key: string): string {
+  const lanes = [0x811c9dc5, 0x9747b28c, 0x2545f491, 0xc2b2ae35], primes = [0x01000193, 0x01000197, 0x0100019b, 0x010001a3];
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    for (let k = 0; k < 4; k++) lanes[k] = Math.imul(lanes[k] ^ c, primes[k]);
+  }
+  return lanes.map((h) => (h >>> 0).toString(16).padStart(8, "0")).join("");
+}
+
 // Boot snapshots kept in dir, one file per key. A key's snapshot is taken the
 // second time it boots, so one-off setups leave only an empty marker.
 function snapshotCache(dir: string, build: string) {
-  const name = (key: string) => path.join(dir, createHash("sha256").update(key).digest("hex").slice(0, 32));
+  const name = (key: string) => path.join(dir, fingerprint(key));
   const file = (key: string) => name(key) + ".snap";
   const warmFile = (key: string) => name(key) + ".warm";
   // keeps the most recently used of each kind
