@@ -758,7 +758,10 @@ export function main(argv: string[]) {
       i++;
       break;
     }
-    else if (a.startsWith("-Xbootclasspath/a:")) o.props!["jdk.boot.class.path.append"] = a.slice(18);
+    else if (a.startsWith("-Xbootclasspath/a:")) {
+      const prev = o.props!["jdk.boot.class.path.append"];
+      o.props!["jdk.boot.class.path.append"] = prev ? `${prev}:${a.slice(18)}` : a.slice(18);
+    }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (javaChild && a.startsWith("-")) {
       console.error(`Unrecognized option: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);

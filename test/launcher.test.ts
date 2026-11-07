@@ -81,6 +81,7 @@ for (const [name, args] of [
   ["--limit-modules", () => ["--limit-modules", "java.base", "-cp", classes, "Plain"]],
   ["-Xbootclasspath/a with a directory", () => [`-Xbootclasspath/a:${join(dir, "boot")}`, "-cp", classes, "UseBoot"]],
   ["-Xbootclasspath/a with a jar", () => [`-Xbootclasspath/a:${join(dir, "boot.jar")}`, "-cp", classes, "UseBoot"]],
+  ["-Xbootclasspath/a twice", () => [`-Xbootclasspath/a:${join(dir, "boot")}`, `-Xbootclasspath/a:${join(dir, "patch")}`, "-cp", classes, "UseBoot"]],
   ["--patch-module of a boot loader module", () => ["--patch-module", `java.base=${join(dir, "patch")}`, "-cp", classes, "UsePatch"]],
   ["no such module", () => ["-p", mods, "-m", "missing/x.Main"]],
   ["-m without a module", () => ["-m"]],
