@@ -16,13 +16,15 @@ export interface CpEntry {
   b: number;
 }
 
-// Utf8 and numeric values live in values. Other entries keep a and b as two
-// u16 in one word of ab.
+// Numeric values live in values. Other entries keep a and b as two u16 in one
+// word of ab. A Utf8 entry keeps the offset of its bytes in ab, and its string
+// in values once something asks for it.
 export interface ConstantPool {
   length: number;
   values: (string | number | bigint | undefined)[];
   tags: Uint8Array;
   ab: Uint32Array;
+  bytes: Uint8Array;
 }
 
 export interface ExceptionEntry {
@@ -32,15 +34,52 @@ export interface ExceptionEntry {
   catchType: number;
 }
 
-export interface Code {
-  maxStack: number;
-  maxLocals: number;
-  code: Uint8Array;
-  handlers: ExceptionEntry[];
-  // pairs of (start pc, line), sorted by pc
-  lines: number[] | null;
+export class Code {
+  readonly maxStack: number;
+  readonly maxLocals: number;
+  readonly code: Uint8Array;
+  readonly handlers: ExceptionEntry[];
   // raw LocalVariableTable attribute body, parsed on demand
-  localVars: Uint8Array | null;
+  readonly localVars: Uint8Array | null;
+  // the class's bytes, and where its LineNumberTable bodies start (-1 for none)
+  private bytes: Uint8Array;
+  private linesAt: number;
+  private moreLines: number[] | null;
+  private parsedLines: number[] | null | undefined;
+  constructor(maxStack: number, maxLocals: number, code: Uint8Array, handlers: ExceptionEntry[], bytes: Uint8Array, linesAt: number, moreLines: number[] | null, localVars: Uint8Array | null) {
+    this.maxStack = maxStack;
+    this.maxLocals = maxLocals;
+    this.code = code;
+    this.handlers = handlers;
+    this.bytes = bytes;
+    this.linesAt = linesAt;
+    this.moreLines = moreLines;
+    this.localVars = localVars;
+  }
+  // pairs of (start pc, line), sorted by pc
+  get lines(): number[] | null {
+    if (this.parsedLines !== undefined) return this.parsedLines;
+    let lines: number[] | null = null;
+    if (this.linesAt >= 0) {
+      const r = new Reader(this.bytes);
+      for (const at of [this.linesAt, ...(this.moreLines ?? [])]) {
+        r.pos = at;
+        lines ??= [];
+        for (let n = r.u2(); n > 0; n--) lines.push(r.u2(), r.u2());
+      }
+    }
+    if (lines && lines.length > 2) {
+      let sorted = true;
+      for (let i = 2; i < lines.length; i += 2) if (lines[i] < lines[i - 2]) { sorted = false; break; }
+      if (!sorted) {
+        const pairs: [number, number][] = [];
+        for (let i = 0; i < lines.length; i += 2) pairs.push([lines[i], lines[i + 1]]);
+        pairs.sort((a, b) => a[0] - b[0]);
+        lines = pairs.flat();
+      }
+    }
+    return this.parsedLines = lines;
+  }
 }
 
 export interface Member {
@@ -145,13 +184,28 @@ export function encodeMutf8(s: string): Uint8Array {
   return Uint8Array.from(out);
 }
 
+const NO_ATTRS = new Map<string, Uint8Array>();
+const NO_HANDLERS: ExceptionEntry[] = [];
+
 function readMember(r: Reader, cp: ClassFile["cp"]): Member {
   const access = r.u2();
   const name = utf8(cp, r.u2());
   const desc = utf8(cp, r.u2());
-  const attrs = readAttrs(r, cp);
-  const raw = attrs.get("Code");
-  return { access, name, desc, attrs, code: raw ? readCode(raw, cp) : null };
+  let attrs = NO_ATTRS;
+  let code: Code | null = null;
+  for (let n = r.u2(); n > 0; n--) {
+    const attr = utf8(cp, r.u2());
+    const length = r.u4();
+    if (attr === "Code") {
+      const end = r.pos + length;
+      code = readCode(r, cp);
+      r.pos = end;
+    } else {
+      if (attrs === NO_ATTRS) attrs = new Map();
+      attrs.set(attr, r.slice(length));
+    }
+  }
+  return { access, name, desc, attrs, code };
 }
 
 function readAttrs(r: Reader, cp: ClassFile["cp"]) {
@@ -163,38 +217,38 @@ function readAttrs(r: Reader, cp: ClassFile["cp"]) {
   return attrs;
 }
 
-function readCode(raw: Uint8Array, cp: ClassFile["cp"]): Code {
-  const r = new Reader(raw);
+function readCode(r: Reader, cp: ClassFile["cp"]): Code {
   const maxStack = r.u2();
   const maxLocals = r.u2();
   const code = r.slice(r.u4());
-  const handlers: ExceptionEntry[] = [];
-  for (let n = r.u2(); n > 0; n--) {
+  let n = r.u2();
+  const handlers: ExceptionEntry[] = n === 0 ? NO_HANDLERS : [];
+  for (; n > 0; n--) {
     handlers.push({ start: r.u2(), end: r.u2(), handler: r.u2(), catchType: r.u2() });
   }
-  let lines: number[] | null = null;
+  let linesAt = -1;
+  let moreLines: number[] | null = null;
   let localVars: Uint8Array | null = null;
-  for (const [name, body] of readAttrs(r, cp)) {
-    if (name === "LocalVariableTable") localVars = body;
-    if (name !== "LineNumberTable") continue;
-    const lr = new Reader(body);
-    lines ??= [];
-    for (let n = lr.u2(); n > 0; n--) lines.push(lr.u2(), lr.u2());
+  for (n = r.u2(); n > 0; n--) {
+    const name = utf8(cp, r.u2());
+    const length = r.u4();
+    if (name === "LineNumberTable") {
+      if (linesAt < 0) linesAt = r.pos;
+      else (moreLines ??= []).push(r.pos);
+      r.pos += length;
+    } else {
+      const body = r.slice(length);
+      if (name === "LocalVariableTable") localVars = body;
+    }
   }
-  if (lines && lines.length > 2) {
-    const pairs: [number, number][] = [];
-    for (let i = 0; i < lines.length; i += 2) pairs.push([lines[i], lines[i + 1]]);
-    pairs.sort((a, b) => a[0] - b[0]);
-    lines = pairs.flat();
-  }
-  return { maxStack, maxLocals, code, handlers, lines, localVars };
+  return new Code(maxStack, maxLocals, code, handlers, r.bytes, linesAt, moreLines, localVars);
 }
 
 export function cpEntry(cp: ClassFile["cp"], i: number): CpEntry | undefined {
   const tag = cp.tags[i];
   if (!tag) return undefined;
-  const value = cp.values[i];
-  return { tag, value, a: cp.ab[i] >>> 16, b: cp.ab[i] & 0xffff };
+  if (tag === Tag.Utf8) return { tag, value: utf8(cp, i), a: 0, b: 0 };
+  return { tag, value: cp.values[i], a: cp.ab[i] >>> 16, b: cp.ab[i] & 0xffff };
 }
 
 export function cpTag(cp: ClassFile["cp"], i: number): number { return cp.tags[i]; }
@@ -204,8 +258,10 @@ export function cpValue(cp: ClassFile["cp"], i: number): number | bigint | undef
 
 export function utf8(cp: ClassFile["cp"], i: number): string {
   const s = cp.values[i];
-  if (typeof s !== "string") throw new ClassFormatError(`bad utf8 index ${i}`);
-  return s;
+  if (typeof s === "string") return s;
+  if (cp.tags[i] !== Tag.Utf8) throw new ClassFormatError(`bad utf8 index ${i}`);
+  const at = cp.ab[i], b = cp.bytes;
+  return cp.values[i] = decodeMutf8(b.subarray(at + 2, at + 2 + ((b[at] << 8) | b[at + 1])));
 }
 
 export function className(cp: ClassFile["cp"], i: number): string {
@@ -240,12 +296,13 @@ function parseBody(r: Reader, preview: boolean): ClassFile {
     values: new Array(count),
     tags: new Uint8Array(count),
     ab: new Uint32Array(count),
+    bytes: r.bytes,
   };
   for (let i = 1; i < count; i++) {
     const tag = r.u1();
-    let value: CpEntry["value"], a = 0, b = 0;
+    let value: CpEntry["value"], a = 0, b = 0, start = 0;
     switch (tag) {
-      case Tag.Utf8: value = decodeMutf8(r.slice(r.u2())); break;
+      case Tag.Utf8: start = r.pos; r.pos += 2 + r.view.getUint16(r.pos); break;
       case Tag.Integer: value = r.i4(); break;
       case Tag.Float: value = r.view.getFloat32(r.pos); r.pos += 4; break;
       case Tag.Long: value = r.view.getBigInt64(r.pos); r.pos += 8; break;
@@ -260,7 +317,7 @@ function parseBody(r: Reader, preview: boolean): ClassFile {
     }
     cp.tags[i] = tag;
     if (value !== undefined) cp.values[i] = value;
-    cp.ab[i] = a << 16 | b;
+    cp.ab[i] = tag === Tag.Utf8 ? start : a << 16 | b;
     if (tag === Tag.Long || tag === Tag.Double) i++;
   }
   const access = r.u2();

@@ -127,6 +127,40 @@ function fallback(t: JThread, f: Frame) {
   return SUSPEND;
 }
 
+// An exception in compiled code: the pc of the handler (>= 0); an exit code
+// to take, as -x - 2; or -1 when the frame is gone and the code returns.
+function caught(t: JThread, f: Frame, pc: number, e: unknown): number {
+  const error = (at: number) => {
+    f.direct = false;
+    return -(at * exitCode(1, 0, 0) + EXIT_ERROR) - 2;
+  };
+  if (e instanceof JavaThrow) {
+    const h = hooks.findHandler(t, f, pc, e.obj);
+    if (h >= 0) return h;
+    if (h < -1) return error(pc);
+    hooks.popFrame(t, f);
+    if (f.direct) throw e;
+    hooks.raise(t, e.obj);
+    return -1;
+  }
+  return error(e instanceof PendingThrow && e.pc !== undefined ? e.pc : pc);
+}
+
+// Leaves compiled code through an exit once its frame is spilled.
+function leave(t: JThread, f: Frame, x: number, xe: any): number {
+  switch (x & 7) {
+    case EXIT_FALLBACK: return fallback(t, f);
+    case EXIT_INTERPRET: return viaInterpreter(t, f);
+    case EXIT_RETHROW:
+      t.pushNative(runtime.rethrow(xe.obj), null, "V", false);
+      return 1;
+    case EXIT_ERROR:
+      hooks.handleError(t, xe);
+      return 1;
+  }
+  return 1;
+}
+
 // A call compiled code cannot make directly; not a reason to recompile.
 function viaInterpreter(t: JThread, f: Frame) {
   hooks.interpret(t, f, 1);
@@ -164,6 +198,8 @@ const runtime = {
   concat: concatStrings,
   fallback,
   viaInterpreter,
+  caught,
+  leave,
   basicTarget(t: JThread, mh: JObject | null, pc: number): JMethod {
     if (mh === null) npeAt(pc);
     const form = t.vm.getField(mh, "java/lang/invoke/MethodHandle", "form") as JObject;
@@ -599,7 +635,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const fname = `${m.cls.name}_${m.name}`.replace(/[^A-Za-z0-9_$]/g, "_");
   const out: string[] = [];
   // direct calls pass arguments as parameters and a frame without arrays
-  out.push(`return function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
+  out.push(`return (function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
   out.push(`let pc=f.pc,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
   out.push(`if(L===null){${params.map((p, i) => `${L(i)}=${p};`).join("")}}else{${Array.from({ length: nl }, (_, i) => `${L(i)}=L[${i}];`).join("")}${Array.from({ length: ns }, (_, i) => `${S(i)}=S[${i}];`).join("")}}`);
   out.push(`X:{for(;;){try{switch(pc){`);
@@ -607,16 +643,10 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   // a frame the interpreter left elsewhere steps to the next entry
   out.push(`default:return rt.viaInterpreter(t,f);}}catch(e){`);
   if (g.regions.length) out.push(deoptCatch(g));
-  out.push(`if(e instanceof rt.JavaThrow){const h=H.findHandler(t,f,pc,e.obj);if(h>=0){${S(0)}=e.obj;pc=h;continue;}`);
-  out.push(`if(h< -1){x=pc*${exitCode(1, 0, 0)}+${EXIT_ERROR};xe=e;if(f.direct)f.direct=false;break X;}`);
-  out.push(`H.popFrame(t,f);if(f.direct)throw e;H.raise(t,e.obj);return 1;}`);
-  out.push(`x=(e instanceof rt.PendingThrow&&e.pc!==undefined?e.pc:pc)*${exitCode(1, 0, 0)}+${EXIT_ERROR};xe=e;if(f.direct)f.direct=false;break X;}}}`);
+  out.push(`xs=rt.caught(t,f,pc,e);if(xs>=0){${S(0)}=e.obj;pc=xs;continue;}if(xs<-1){x=-xs-2;xe=e;break X;}return 1;}}}`);
   // the shared exit: spill into the frame's arrays, then leave as x says
   const stack = Array.from({ length: ns }, (_, i) => `case ${ns - i}:S[${ns - i - 1}]=${S(ns - i - 1)};`).join("");
-  out.push(`f.pc=x>>>13;xs=x>>>3&1023;${spillLocals()}switch(xs){${stack}}f.sp=xs;`);
-  out.push(`switch(x&7){case ${EXIT_FALLBACK}:return rt.fallback(t,f);case ${EXIT_INTERPRET}:return rt.viaInterpreter(t,f);` +
-    `case ${EXIT_RETHROW}:t.pushNative(rt.rethrow(xe.obj),null,"V",false);return 1;` +
-    `case ${EXIT_ERROR}:H.handleError(t,xe);return 1;}return 1;}`);
+  out.push(`f.pc=x>>>13;xs=x>>>3&1023;${spillLocals()}switch(xs){${stack}}f.sp=xs;return rt.leave(t,f,x,xe);})`);
   return { src: out.join("\n"), consts };
 }
 

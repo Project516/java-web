@@ -99,6 +99,8 @@ const RESUMED = Object.freeze({ kind: "resume" }) as unknown as Request;
 // LauncherHelper launch modes
 export const LM_CLASS = 1, LM_JAR = 2;
 
+const intrinsicClasses = new Set(Object.keys(intrinsics).map((k) => k.slice(0, k.indexOf("."))));
+
 // Rejects run and startLibrary when a snapshot could not be restored. The
 // snapshot is dropped, so a new VM with the same options boots.
 export class SnapshotError extends Error {}
@@ -333,9 +335,10 @@ export class JVM {
     }
     c.instanceSlots = slot;
     c.template = template;
+    const withIntrinsics = loader === null && intrinsicClasses.has(cf.name);
     const poly = cf.name === "java/lang/invoke/MethodHandle" || cf.name === "java/lang/invoke/VarHandle";
     for (const [i, mm] of cf.methods.entries()) {
-      const intrinsic = loader === null ? intrinsics[`${cf.name}.${mm.name}${mm.desc}`] : undefined;
+      const intrinsic = withIntrinsics ? intrinsics[`${cf.name}.${mm.name}${mm.desc}`] : undefined;
       const m = new JMethod(c, intrinsic ? { ...mm, code: null, access: mm.access | ACC_NATIVE } : mm);
       if (intrinsic) {
         m.native = intrinsic;
