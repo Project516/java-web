@@ -41,8 +41,28 @@ node scripts/jtreg/run.ts <jdk-source> java/lang
 
 `<jdk-source>` is a checkout of `openjdk/jdk25u` at the pinned JDK's tag:
 `jdk-<version>-ga`, where `<version>` is `release=` in `scripts/build-jdk.sh`
-without the `+build` part. A sparse checkout of `test/lib` and the test
-directories is enough.
+without the `+build` part. A sparse checkout of `test/lib`, the test
+directories, the `@library` directories they name and the Unicode and language
+data under `src/java.base/share/data` (`lsrdata`, `unicodedata`) is enough;
+`--only-passing --library-dirs` prints the `@library` directories of the listed
+tests.
+
+The runner follows jtreg where tests rely on it: `test.src.path` holds the test
+directory and its `@library` directories, `${test.main.class}`, `${test.src}`
+and the like are replaced in `@run` lines, the test directory is on the run
+class path when the test's package starts there (for resource files next to a
+test), `@clean` removes the named
+classes between actions, `@run driver` runs as `main`, and `@run build` is a
+`@build`. A test that patches `java.base`, needs a native library, is manual or
+runs in a named module is skipped.
+
+HotSpot always has every locale, but java-web loads the locale data only with
+`--locale-data`, which makes start-up and locale-heavy tests slower (about 15%
+on the `java/text`, `java/util/Locale`, `java/util/Calendar` and
+`java/time/format` tests, and three tests over 5 times slower). So the runner
+passes it only to the tests in `test/jtreg/locale-data.txt`. To find which new
+tests need it, run them with and without the runner's `--locale-data` flag,
+which sets it for every test.
 
 The runner evaluates a test's `@requires` as jtreg does on a release Linux
 HotSpot with default options (for example `vm.continuations` is true and
