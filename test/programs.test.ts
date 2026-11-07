@@ -227,7 +227,9 @@ test("env option replaces the host environment", async () => {
 
 // both raise a lower soft limit to the hard one at startup, and report the raised value
 test("open file limit as HotSpot reports it", { skip: process.platform !== "linux" }, () => {
-  const under = (cmd: string[]) => spawnSync("bash", ["-c", 'ulimit -S -n 4096; exec "$@"', "bash", ...cmd, "-cp", out, "FileLimit"], { encoding: "utf8" });
+  const classes = join(root, "build", "test-limit");
+  execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "process", "FileLimit.java")]);
+  const under = (cmd: string[]) => spawnSync("bash", ["-c", 'ulimit -S -n 4096; exec "$@"', "bash", ...cmd, "-cp", classes, "FileLimit"], { encoding: "utf8" });
   const ref = under([hotspot("java")]);
   const got = under([process.execPath, join(root, "src", "node.ts")]);
   assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
