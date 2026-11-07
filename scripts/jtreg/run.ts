@@ -2,26 +2,31 @@
 //
 //   node scripts/jtreg/run.ts <jdk-source-checkout> [dir or file filters...]
 //        [--jobs 1] [--timeout 120] [--rerun] [--only-passing] [--shard 1/4] [--vm path/to/node.ts] [--cool 75]
+//        [--locale-data] [--library-dirs]
 //
 // Each test is compiled the way jtreg does it, run on HotSpot first (only
 // tests that pass there count), then on java-web in a child process.
 // Results go to build/jtreg/results.jsonl; --only-passing reruns the tests
 // listed in test/jtreg/passing.txt (those under the filters, if any) on
 // java-web alone, and fails if any of them regress. --shard k/n runs the kth
-// of n shards with about equal run time, for parallel CI jobs.
+// of n shards with about equal run time, for parallel CI jobs. Tests listed in
+// test/jtreg/locale-data.txt start java-web with --locale-data (every locale
+// costs start-up and run time, so the others run without it).
 
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { totalmem } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { release, totalmem } from "node:os";
+import { dirname, join, normalize, relative, resolve } from "node:path";
 import { hotspot } from "../hotspot.ts";
 
 const root = join(import.meta.dirname, "..", "..");
 const out = join(root, "build", "jtreg");
 const resultsFile = join(out, "results.jsonl");
 const passingFile = join(root, "test", "jtreg", "passing.txt");
+// tests that need the locales other than English (java-web's --locale-data)
+const localeFile = join(root, "test", "jtreg", "locale-data.txt");
 // how long each listed test takes on java-web, for splitting them into shards
 const timesFile = join(root, "test", "jtreg", "times.tsv");
 
@@ -41,6 +46,9 @@ const rerun = has("--rerun");
 // pause new tests while the CPU is at or above this many degrees C (for small boards)
 const cool = Number(flag("--cool", "0"));
 const onlyPassing = has("--only-passing");
+// --locale-data runs every test with the locale data, to find the tests that need it
+const localeData = has("--locale-data");
+const printLibraryDirs = has("--library-dirs");
 const [shardK, shardN] = flag("--shard", "1/1").split("/").map(Number);
 if (!Number.isInteger(shardK) || !Number.isInteger(shardN) || shardK < 1 || shardK > shardN) {
   console.error("--shard takes k/n with 1 <= k <= n");
@@ -62,6 +70,12 @@ const javaHome = dirname(dirname(realpathSync(hotspot("java"))));
 // property not listed makes the test skip.
 const required: Record<string, string> = {
   "os.family": "linux",
+  "os.name": "Linux",
+  "os.version": release(),
+  "os.simpleArch": process.arch === "arm64" ? "aarch64" : process.arch,
+  "jdk.static": "false",
+  "java.enablePreview": "false",
+  "java.runtime.name": "OpenJDK Runtime Environment",
   "os.arch": process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "amd64" : process.arch,
   "os.maxMemory": String(totalmem()),
   "sun.arch.data.model": "64",
@@ -139,8 +153,8 @@ function requiresHolds(expr: string): boolean {
   return v;
 }
 
-type Kind = "main" | "testng" | "junit" | "compile";
-// a compile action keeps its javac options in opts and its files in args
+type Kind = "main" | "testng" | "junit" | "compile" | "clean";
+// a compile action keeps its javac options in opts and its files in args; a clean action its class names in args
 interface Action { kind: Kind; opts: string[]; main: string; args: string[]; timeout: number }
 interface TestCase {
   id: string;
@@ -232,7 +246,12 @@ function parseFile(file: string): TestCase[] {
           }
           break;
         case "ignore": tc.skip ??= "ignore"; break;
-        case "clean": tc.skip ??= "@clean"; break;
+        case "clean": {
+          // before any other action there is nothing to clean
+          const names = value.split(/\s+/).filter(Boolean);
+          if (tc.runs.length && names.length) tc.runs.push({ kind: "clean", opts: [], main: "", args: names, timeout: 120 });
+          break;
+        }
         case "compile": {
           if (framework) break;
           if (mods.some((x) => !x.startsWith("timeout="))) { tc.skip ??= `@${tag}`; break; }
@@ -251,9 +270,15 @@ function parseFile(file: string): TestCase[] {
         }
         case "run": {
           if (framework) break;
-          const m = value.match(/^(\S+)\s*(.*)$/);
+          const m = value.replaceAll("${test.main.class}", base).match(/^(\S+)\s*(.*)$/);
           if (!m) break;
           const kind = m[1].split("/");
+          // a driver runs in jtreg's own VM; on its own it is a main
+          if (kind[0] === "driver") kind[0] = "main";
+          if (kind[0] === "build") {
+            tc.build.push(...m[2].split(/\s+/).filter(Boolean));
+            break;
+          }
           if (kind[0] !== "main" && kind[0] !== "testng" && kind[0] !== "junit") { tc.skip ??= `@run ${kind[0]}`; break; }
           if (kind.includes("native") || kind.includes("manual")) { tc.skip ??= `@run ${m[1]}`; break; }
           const t = kind.find((k) => k.startsWith("timeout="));
@@ -278,7 +303,7 @@ function parseFile(file: string): TestCase[] {
     const hasAction = tags.some(([t]) => /^(run|compile|build|clean|ignore)(\/|$)/.test(t));
     if (framework) tc.runs = [{ kind: framework, opts: [], main: base, args: [], timeout: 120 }];
     else if (!hasAction) tc.runs.push({ kind: "main", opts: [], main: base, args: [], timeout: 120 });
-    else if (!tc.runs.some((r) => r.kind !== "compile")) tc.skip ??= "no run action";
+    else if (!tc.runs.some((r) => r.kind !== "compile" && r.kind !== "clean")) tc.skip ??= "no run action";
     cases.push(tc);
   }
   return cases;
@@ -404,24 +429,57 @@ async function compile(tc: TestCase, cp: string[]): Promise<string | null> {
       }
     }
   }
+  // a main class from a library, as jtreg builds it implicitly
+  for (const r of tc.runs) {
+    if (r.kind !== "main" || r.main.includes("/")) continue;
+    for (const base of libs) {
+      const f = join(base, r.main.replace(/\./g, "/") + ".java");
+      if (existsSync(f)) { files.push(f); break; }
+    }
+  }
   return javacInto(tc, cp, [], [...new Set(files)]);
 }
 
 async function javacInto(tc: TestCase, cp: string[], opts: string[], files: string[]): Promise<string | null> {
   const libs = tc.libraries.map((l) => libraryDir(tc, l));
   const args = ["-d", classesDir(tc), "-nowarn", "-XDignore.symbol.file", "-sourcepath", [packageRoot(tc), ...libs].join(":"),
-    "-cp", cp.join(":"), ...exportsFlags(tc), ...(tc.preview ? ["--enable-preview", "--release", "25"] : []), ...opts, ...files];
+    "-cp", cp.join(":"), ...exportsFlags(tc), ...(tc.preview ? ["--enable-preview", "-source", "25"] : []), ...opts, ...files];
   const [rc, msg] = (await javac(args)).split("\t");
   return rc === "0" ? null : msg;
 }
 
 function props(tc: TestCase): string[] {
   const dest = classesDir(tc);
+  const srcPath = [tc.dir, ...tc.libraries.map((l) => libraryDir(tc, l))].join(":");
   return [
-    `-Dtest.src=${tc.dir}`, `-Dtest.src.path=${tc.dir}`, `-Dtest.classes=${dest}`, `-Dtest.class.path=${dest}`,
+    `-Dtest.src=${tc.dir}`, `-Dtest.src.path=${srcPath}`, `-Dtest.classes=${dest}`, `-Dtest.class.path=${dest}`,
     `-Dtest.jdk=${javaHome}`, `-Dcompile.jdk=${javaHome}`, `-Dtest.root=${testRoot}`, "-Dtest.vm.opts=", "-Dtest.java.opts=",
     `-Dtest.file=${tc.file}`, `-Dtest.name=${tc.id}`,
   ];
+}
+
+// jtreg's ${...} in @run words (${test.main.class} is already in place)
+function expand(tc: TestCase, word: string): string {
+  const dest = classesDir(tc);
+  const values: Record<string, string> = {
+    "test.src": tc.dir, "test.classes": dest, "test.jdk": javaHome, "compile.jdk": javaHome, "test.root": testRoot,
+  };
+  return word.replace(/\$\{([\w.]+)\}/g, (all, name) => values[name] ?? all);
+}
+
+// jtreg's @clean: the named classes and their nested classes
+function clean(tc: TestCase, names: string[]) {
+  const dest = classesDir(tc);
+  for (const name of names) {
+    const path = join(dest, name.replace(/\.\*$/, "").replace(/\./g, "/"));
+    if (name.endsWith(".*") || name === "*") {
+      for (const f of existsSync(path) ? readdirSync(path) : []) if (f.endsWith(".class")) rmSync(join(path, f));
+    } else {
+      rmSync(path + ".class", { force: true });
+      const dir = dirname(path), base = path.slice(dir.length + 1);
+      for (const f of existsSync(dir) ? readdirSync(dir) : []) if (f.startsWith(base + "$") && f.endsWith(".class")) rmSync(join(dir, f));
+    }
+  }
 }
 
 interface RunResult { ok: boolean; ms: number; timedOut: boolean; tail: string }
@@ -451,6 +509,7 @@ function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<
 async function runCase(tc: TestCase): Promise<Record<string, unknown>> {
   if (tc.skip) return { status: "skip", why: tc.skip };
   const dest = classesDir(tc);
+  rmSync(dest, { recursive: true, force: true });
   const path = [dest, ...(usesFramework(tc) ? await frameworkPath() : [])];
   const err = await compile(tc, path);
   if (err) return { status: "skip", why: `javac: ${err}` };
@@ -462,32 +521,43 @@ async function runCase(tc: TestCase): Promise<Record<string, unknown>> {
     return dir;
   };
   const preview = tc.preview ? ["--enable-preview"] : [];
-  const cp = ["-cp", path.join(":")];
+  // resource files next to a test; a package root above the test dir holds other tests' META-INF
+  const cp = ["-cp", [...path, ...(packageRoot(tc) === tc.dir ? [tc.dir] : [])].join(":")];
   const entry = (a: Action) => a.kind === "main" ? [a.main] : ["TestRunner", a.kind, a.main];
+  const words = (a: Action) => [...a.opts, ...props(tc)].map((w) => expand(tc, w));
+  const argsOf = (a: Action) => a.args.map((w) => expand(tc, w));
   // the whole sequence on one VM, then the other: later runs may depend on files earlier ones left
   let refMs = 0;
   let work = scratch("hotspot");
   // tests in passing.txt already pass on HotSpot
   for (const a of onlyPassing ? [] : tc.runs) {
+    if (a.kind === "clean") { clean(tc, a.args); continue; }
     if (a.kind === "compile") {
       const err = await javacInto(tc, path, a.opts, a.args.map((f) => resolve(tc.dir, f)));
       if (err) return { status: "skip", why: `javac: ${err}` };
       continue;
     }
-    const ref = await exec(hotspot("java"), [...preview, ...exportsFlags(tc), ...a.opts, ...props(tc), ...cp, ...entry(a), ...a.args], work, a.timeout);
+    const ref = await exec(hotspot("java"), [...preview, ...exportsFlags(tc), ...words(a), ...cp, ...entry(a), ...argsOf(a)], work, a.timeout);
     if (!ref.ok) return { status: "skip", why: `fails on HotSpot: ${ref.tail}` };
     refMs += ref.ms;
   }
   let total = 0;
   work = scratch("java-web");
+  if (!onlyPassing && tc.runs.some((a) => a.kind === "clean")) {
+    // the HotSpot sequence cleaned classes the first action needs
+    rmSync(classesDir(tc), { recursive: true, force: true });
+    const err = await compile(tc, path);
+    if (err) return { status: "skip", why: `javac: ${err}` };
+  }
   for (const a of tc.runs) {
+    if (a.kind === "clean") { clean(tc, a.args); continue; }
     // recompile, since a later @compile may have replaced classes the first run used
     if (a.kind === "compile") {
       const err = await javacInto(tc, path, a.opts, a.args.map((f) => resolve(tc.dir, f)));
       if (err) return { status: "skip", why: `javac: ${err}` };
       continue;
     }
-    const ours = await exec("node", [vm, "--jdk", join(root, "build", "jdk"), ...preview, ...exportsFlags(tc), ...a.opts, ...props(tc), ...cp, ...entry(a), ...a.args], work, timeout);
+    const ours = await exec("node", [vm, "--jdk", join(root, "build", "jdk"), ...(localeData || needsLocale.has(tc.id) ? ["--locale-data"] : []), ...preview, ...exportsFlags(tc), ...words(a), ...cp, ...entry(a), ...argsOf(a)], work, timeout);
     total += ours.ms;
     if (!ours.ok) return { status: ours.timedOut ? "timeout" : "fail", ms: total, refMs, why: ours.tail };
   }
@@ -535,11 +605,13 @@ function shard(tests: TestCase[]): TestCase[] {
   return tests.filter((tc) => mine.has(tc));
 }
 
-// test ids in passing.txt
-function listed(): string[] {
-  if (!existsSync(passingFile)) return [];
-  return readFileSync(passingFile, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+// test ids in a list file
+function readList(file: string): string[] {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 }
+const listed = () => readList(passingFile);
+const needsLocale = new Set(readList(localeFile));
 
 mkdirSync(out, { recursive: true });
 let selected: TestCase[];
@@ -558,6 +630,20 @@ if (onlyPassing) {
     const file = tc.id.split("#")[0];
     return ids.has(tc.id) || whole.has(file) || !narrowed.has(file);
   });
+}
+if (printLibraryDirs) {
+  // the checkout directories the selected tests' @library lines name, for a sparse checkout
+  const dirs = new Set<string>();
+  for (const tc of selected) {
+    for (const lib of tc.libraries) {
+      if (lib.startsWith("/")) dirs.add(`test/jdk${lib}`).add(lib.slice(1));
+      else dirs.add(relative(src, resolve(tc.dir, lib)));
+    }
+  }
+  const whole = new Set(["", ".", "test", "test/jdk"]);
+  const found = [...dirs].map((d) => normalize(d).replace(/\/$/, "")).filter((d) => !d.startsWith("..") && !whole.has(d));
+  console.log([...new Set(found)].sort().join("\n"));
+  process.exit(0);
 }
 selected = shard(selected);
 const done = new Set<string>();
