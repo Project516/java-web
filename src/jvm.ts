@@ -262,6 +262,8 @@ export class JVM {
     }
     const i = name.lastIndexOf("/");
     const module = this.bootPackages.get(i < 0 ? "" : name.slice(0, i));
+    // once the boot layer is defined, a module left out of it (--limit-modules) has no classes
+    if (module && this.bootModules.has("java.base") && !this.bootModules.has(module)) return null;
     let bytes: Uint8Array | null | undefined;
     if (module) {
       bytes = this.opts.bootPatch?.(module, name) ?? (this.image ? this.image.read(module, `${name}.class`) : this.fs.read(`${this.opts.javaHome}/modules/${module}/${name}.class`));
