@@ -245,8 +245,8 @@ export function processNatives(entry: string, jdk: string, packaged: boolean, ho
         const i = s.indexOf("=");
         return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
       }));
-      // a host process cannot have a variable with an empty name; the java-web child reads it from here
-      if (java && env && "" in env) {
+      // a name that cannot pass through, or a clash with ENV_CHANNEL, sends the environment in ENV_CHANNEL
+      if (java && env && ("" in env || ENV_CHANNEL in env)) {
         const { "": _, ...rest } = env;
         env = { ...rest, [ENV_CHANNEL]: JSON.stringify(env) };
       }
