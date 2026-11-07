@@ -34,7 +34,10 @@ export class Frame {
 export type Request =
   | { kind: "invoke"; m: JMethod; args: any[] }
   | { kind: "wait"; promise: Promise<any> }
-  | { kind: "resume" };
+  | { kind: "resume" }
+  // unmounts the mounted virtual thread, frames of this native included; it
+  // continues from the yield when the virtual thread is mounted again
+  | { kind: "unmount" };
 
 export type NativeGen = Generator<Request, any, any>;
 
@@ -119,9 +122,12 @@ export class JThread {
   // contended monitor entries, and waits and sleeps, for ThreadInfo
   blockedCount = 0;
   waitedCount = 0;
-  // monitor entries not yet exited, and Continuation.pin() depth
-  held = 0;
+  // Continuation.pin() depth
   pins = 0;
+  // monitors a mounted virtual thread took, which move to the virtual thread when it unmounts
+  owned: JObject[] = [];
+  // set when a mounted virtual thread must unmount instead of blocking on this monitor
+  unmounting: JObject | null = null;
   // the virtual thread mounted on this carrier thread, if any
   mounted: JObject | null = null;
   // Thread.scopedValueCache

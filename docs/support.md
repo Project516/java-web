@@ -30,8 +30,10 @@ java-web targets headless Java: console apps, libraries and javac.
   for, less the process's umask. In-memory files get synthetic inode numbers, a
   link count of 1 and default modes.
 - `-XX:OnOutOfMemoryError` runs its commands under Node only, and `StackWalker`
-  has no live locals or operands. A virtual thread that yields while it
-  holds a monitor stays pinned to its carrier.
+  has no live locals or operands. A virtual thread unmounts when it parks,
+  blocks on a monitor or waits in `Object.wait`, holding its monitors, as in
+  JDK 25. It stays pinned to its carrier while a native frame (such as a class
+  initializer) is on its stack or inside a critical section.
 - `ThreadMXBean` describes threads and finds deadlocks, but has no CPU times
   and no blocked or waited times (contention monitoring is off). Thread dumps
   find a frame's locked monitors from its synchronized blocks as compilers emit

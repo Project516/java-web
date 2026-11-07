@@ -9,6 +9,7 @@ import {
 import type { NativeGen } from "./thread.ts";
 import type { JVM } from "./jvm.ts";
 import { INTERPRET, PUSHED, compileIfHot, hooks, noteBackedge } from "./jit.ts";
+import { unmountNative } from "./natives/continuation.ts";
 
 const MAX_FRAMES = 6000;
 
@@ -592,7 +593,7 @@ function isGenerator(r: any): r is NativeGen {
 
 function lockFrame(t: JThread, f: Frame, o: JObject) {
   f.lock = o;
-  f.needLock = !t.vm.monitorEnter(t, o);
+  f.needLock = !t.vm.tryMonitorEnter(t, o);
 }
 
 function popFrame(t: JThread, f: Frame) {
@@ -795,6 +796,8 @@ function stepNative(t: JThread, f: NativeFrame) {
     } catch (e) {
       handleError(t, e);
     }
+  } else if (req.kind === "unmount") {
+    unmountNative(t);
   } else if (req.kind === "wait") {
     t.state = WAITING;
     req.promise.then(

@@ -10,7 +10,7 @@ import { hotspot } from "../scripts/hotspot.ts";
 const root = join(import.meta.dirname, "..");
 const classes = join(root, "build", "test-warm-snapshot");
 mkdirSync(classes, { recursive: true });
-execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "warm-snapshot", "WarmJavac.java")]);
+execFileSync(hotspot("javac"), ["-d", classes, join(root, "test", "warm-snapshot", "WarmJavac.java"), join(root, "test", "warm-snapshot", "WarmVirtual.java")]);
 
 const dirs: string[] = [];
 after(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -22,19 +22,22 @@ function scratch() {
 }
 
 async function compile(cache: string, source: string, missing: string) {
-  const out = join(cache, "out");
+  return callWarm(cache, "WarmJavac", "compile", [source, missing, join(cache, "out")]);
+}
+
+async function callWarm(cache: string, cls: string, method: string, args: string[]) {
   let log = "";
   let settled: () => void = () => {};
   const done = new Promise<void>((resolve) => (settled = resolve));
   const error = console.error;
-  console.error = (...args: unknown[]) => {
-    log += `${args.join(" ")}\n`;
+  console.error = (...parts: unknown[]) => {
+    log += `${parts.join(" ")}\n`;
     if (/warm snapshot (saved|busy|restored)/.test(log)) settled();
   };
   let vm: Awaited<ReturnType<typeof startLibrary>> | undefined;
   try {
     vm = await startLibrary({ classpath: [classes], snapshotDir: cache, warmSnapshot: true, debug: true });
-    const result = await vm.callStatic("WarmJavac", "compile", [source, missing, out]);
+    const result = await vm.callStatic(cls, method, args);
     // the VM saves after the call has returned, when it goes idle
     await done;
     return { result, log };
@@ -77,4 +80,13 @@ test("library warm snapshots restore and validate reads and missing paths", asyn
   assert.equal(created.result, expected8);
   assert.match(created.log, /warm snapshot missed validation/);
 
+});
+
+test("a library VM that ran virtual threads blocked on monitors declines a warm snapshot and keeps working", async () => {
+  const dir = scratch();
+  const first = await callWarm(dir, "WarmVirtual", "run", []);
+  assert.equal(first.result, "119:15");
+  assert.match(first.log, /warm snapshot busy: snapshot: thread .* is blocked in/);
+  const second = await callWarm(dir, "WarmVirtual", "run", []);
+  assert.equal(second.result, "119:15");
 });

@@ -5,6 +5,8 @@ import { gcStats, javaHeap } from "./management.ts";
 import { assertionsEnabled } from "../assertions.ts";
 import { normalize } from "../fs.ts";
 import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData } from "../runtime.ts";
+import type { Monitor } from "../runtime.ts";
+import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
 import {
   Frame, JThread, JavaThrow, PendingThrow, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_SLEEPING, STATUS_TIMED_WAITING,
   STATUS_WAITING, TERMINATED,
@@ -60,6 +62,7 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const mon = self.mon;
   if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
   checkInterrupt(t);
+  if (t.mounted !== null && canUnmount(t)) return yield* waitUnmounted(t, self, mon, ms);
   const count = mon.count;
   vm.releaseMonitor(mon);
   setThreadStatus(t, ms > 0n ? STATUS_TIMED_WAITING : STATUS_WAITING);
@@ -78,6 +81,45 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   mon.count = count;
   t.waitingOn = null;
   setThreadStatus(t, STATUS_RUNNABLE);
+  checkInterrupt(t);
+}
+
+const VT = "java/lang/VirtualThread";
+// VirtualThread.state values
+const VT_BLOCKING = 12, VT_WAIT = 16, VT_WAITING = 15, VT_TIMED_WAITING = 17, VT_TIMED_WAIT = 18, VT_BLOCKED = 13;
+
+// Object.wait in a mounted virtual thread, which unmounts instead of holding
+// its carrier. A notify moves it to the monitor's entry queue, and the
+// unblocker thread resubmits it once the monitor is released.
+function* waitUnmounted(t: JThread, self: JObject, mon: Monitor, ms: bigint): NativeGen {
+  const vm = t.vm;
+  const vt = t.mounted!;
+  const count = mon.count;
+  vm.setField(vt, VT, "state", ms > 0n ? VT_TIMED_WAITING : VT_WAITING);
+  vm.setField(vt, VT, "notified", 0);
+  if (ms > 0n) vm.setField(vt, VT, "timeout", ms);
+  dropOwned(t, self);
+  vm.releaseMonitor(mon);
+  const wake = () => {
+    const s = vm.getField(vt, VT, "state");
+    if (s !== VT_WAITING && s !== VT_TIMED_WAITING && s !== VT_WAIT && s !== VT_TIMED_WAIT) return;
+    vm.setField(vt, VT, "notified", 1);
+    if (s === VT_WAIT || s === VT_TIMED_WAIT) vm.setField(vt, VT, "state", VT_BLOCKED);
+    unblockOnRelease(vm, vt, mon);
+  };
+  const waiter = { t, wake, count };
+  mon.waiters.push(waiter);
+  t = (yield { kind: "unmount" }) as JThread;
+  const i = mon.waiters.indexOf(waiter);
+  if (i >= 0) mon.waiters.splice(i, 1);
+  while (mon.owner !== null) {
+    vm.setField(vt, VT, "state", VT_BLOCKING);
+    unblockOnRelease(vm, vt, mon);
+    t = (yield { kind: "unmount" }) as JThread;
+  }
+  mon.owner = t;
+  mon.count = count;
+  t.owned.push(self);
   checkInterrupt(t);
 }
 
