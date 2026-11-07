@@ -17,7 +17,9 @@ const MAX_FRAMES = 6000;
 // be constructed and handled; the limit drops back once the stack unwinds.
 function checkStack(t: JThread) {
   if (t.frames.length < t.stackLimit) return;
-  if (t.stackLimit >= 2 * MAX_FRAMES) throw new Error("stack overflow while handling a stack overflow");
+  // Overflows inside handlers of overflows have no headroom left to build an
+  // error with its constructor, so a bare one is thrown.
+  if (t.stackLimit >= 2 * MAX_FRAMES) throw new JavaThrow(t.vm.newObject(t.vm.loadBootOrFail("java/lang/StackOverflowError")));
   t.stackLimit = t.frames.length + 1500;
   throw new PendingThrow("java/lang/StackOverflowError");
 }
