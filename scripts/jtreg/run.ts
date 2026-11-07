@@ -448,22 +448,22 @@ async function javacInto(tc: TestCase, cp: string[], opts: string[], files: stri
   return rc === "0" ? null : msg;
 }
 
-function props(tc: TestCase): string[] {
+// the test properties jtreg sets for a test and expands in @run words (test.main.class is set at parse)
+function variables(tc: TestCase): Record<string, string> {
   const dest = classesDir(tc);
-  const srcPath = [tc.dir, ...tc.libraries.map((l) => libraryDir(tc, l))].join(":");
-  return [
-    `-Dtest.src=${tc.dir}`, `-Dtest.src.path=${srcPath}`, `-Dtest.classes=${dest}`, `-Dtest.class.path=${dest}`,
-    `-Dtest.jdk=${javaHome}`, `-Dcompile.jdk=${javaHome}`, `-Dtest.root=${testRoot}`, "-Dtest.vm.opts=", "-Dtest.java.opts=",
-    `-Dtest.file=${tc.file}`, `-Dtest.name=${tc.id}`,
-  ];
+  return {
+    "test.src": tc.dir, "test.src.path": [tc.dir, ...tc.libraries.map((l) => libraryDir(tc, l))].join(":"),
+    "test.classes": dest, "test.class.path": dest, "test.jdk": javaHome, "compile.jdk": javaHome, "test.root": testRoot,
+    "test.file": tc.file, "test.name": tc.id,
+  };
 }
 
-// jtreg's ${...} in @run words (${test.main.class} is already in place)
+function props(tc: TestCase): string[] {
+  return [...Object.entries(variables(tc)).map(([k, v]) => `-D${k}=${v}`), "-Dtest.vm.opts=", "-Dtest.java.opts="];
+}
+
 function expand(tc: TestCase, word: string): string {
-  const dest = classesDir(tc);
-  const values: Record<string, string> = {
-    "test.src": tc.dir, "test.classes": dest, "test.jdk": javaHome, "compile.jdk": javaHome, "test.root": testRoot,
-  };
+  const values = variables(tc);
   return word.replace(/\$\{([\w.]+)\}/g, (all, name) => values[name] ?? all);
 }
 
@@ -523,7 +523,7 @@ async function runCase(tc: TestCase): Promise<Record<string, unknown>> {
   const preview = tc.preview ? ["--enable-preview"] : [];
   // resource files next to a test; a package root above the test dir holds other tests' META-INF
   const cp = ["-cp", [...path, ...(packageRoot(tc) === tc.dir ? [tc.dir] : [])].join(":")];
-  const entry = (a: Action) => a.kind === "main" ? [a.main] : ["TestRunner", a.kind, a.main];
+  const entry = (a: Action) => a.kind === "main" ? [expand(tc, a.main)] : ["TestRunner", a.kind, expand(tc, a.main)];
   const words = (a: Action) => [...a.opts, ...props(tc)].map((w) => expand(tc, w));
   const argsOf = (a: Action) => a.args.map((w) => expand(tc, w));
   // the whole sequence on one VM, then the other: later runs may depend on files earlier ones left
