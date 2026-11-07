@@ -327,7 +327,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     tab.files.set(tab.next, new DirectoryFile(abs, st.size));
     return tab.next++;
   }
-  const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile && (o.contents.ino === undefined || o.contents.ino === st.ino))?.contents : undefined;
+  const shared = st ? [...table(t).files.values()].find((o) => o.path === abs && o.constructor === OpenFile && o.contents.ino === st.ino)?.contents : undefined;
   if (st?.device || (st && !shared && !write && st.size >= LAZY_MIN && fs.canReadRange(abs))) {
     const tab = table(t);
     tab.files.set(tab.next, st.device ? new DeviceFile(abs) : new LazyFile(abs, st.size, fs));
@@ -339,7 +339,7 @@ export function openFile(t: JThread, path: string, write: boolean, truncate: boo
     const host = openHost(fs, abs, write, readable);
     if (host) {
       closeHostsOnExit(t.vm);
-      const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host, hostWritable: write, hostReadable: readable });
+      const f = new OpenFile(abs, new Uint8Array(0), write, { data: new Uint8Array(0), size: host.size(), dirty: false, refs: 0, host, hostWritable: write, hostReadable: readable, ino: st.ino });
       if (append) { f.pos = f.size; f.append = true; }
       const tab = table(t);
       tab.files.set(tab.next, f);
