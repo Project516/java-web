@@ -70,6 +70,7 @@ public class UnixSockets {
         }
         pipe.source().close();
         paths();
+        clientNames();
     }
 
     // A path names a file: a deleted one can be bound again, and equal paths reach the same socket.
@@ -104,5 +105,30 @@ public class UnixSockets {
             }
         }
         Files.deleteIfExists(relative);
+    }
+
+    // An accepted socket reports the name its client bound, even after a failed connect to the path.
+    static void clientNames() throws Exception {
+        Path dir = Files.createTempDirectory("uds");
+        var address = UnixDomainSocketAddress.of(dir.resolve("s.sock"));
+        try (SocketChannel c = SocketChannel.open(StandardProtocolFamily.UNIX)) {
+            c.bind(UnixDomainSocketAddress.of(dir.resolve("first.sock")));
+            c.connect(address);
+        } catch (IOException e) {
+            System.out.println("first " + e.getClass().getSimpleName());
+        }
+        try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+             SocketChannel c = SocketChannel.open(StandardProtocolFamily.UNIX)) {
+            server.bind(address);
+            c.bind(UnixDomainSocketAddress.of(dir.resolve("second.sock")));
+            c.connect(address);
+            try (SocketChannel a = server.accept()) {
+                System.out.println("accepted from " + ((UnixDomainSocketAddress) a.getRemoteAddress()).getPath().getFileName());
+            }
+        }
+        try (var files = Files.list(dir)) {
+            for (Path f : files.toList()) Files.delete(f);
+        }
+        Files.delete(dir);
     }
 }

@@ -142,7 +142,7 @@ export class NodeNet implements NetBackend {
 
   // The names clients of this VM bound before connecting to a path, in connect order. A host
   // socket cannot tell its peer's name, so an accepted socket takes the next one.
-  private unixClients = new Map<string, string[]>();
+  private unixClients = new Map<string, { name: string }[]>();
 
   bindUnix(s: Sock, path: string) {
     return this.listenOn(s, { path: shortUnixPath(path) }, () => {
@@ -151,11 +151,17 @@ export class NodeNet implements NetBackend {
   }
 
   connectUnix(s: Sock, path: string) {
+    const entry = { name: s.localPath };
     const names = this.unixClients.get(path);
-    if (names) names.push(s.localPath);
-    else this.unixClients.set(path, [s.localPath]);
+    if (names) names.push(entry);
+    else this.unixClients.set(path, [entry]);
     return this.connectTo(s, { path: shortUnixPath(path) }, () => {
       s.remotePath = path;
+    }, () => {
+      const list = this.unixClients.get(path);
+      const i = list?.indexOf(entry) ?? -1;
+      if (i >= 0) list!.splice(i, 1);
+      if (list?.length === 0) this.unixClients.delete(path);
     });
   }
 
@@ -180,7 +186,7 @@ export class NodeNet implements NetBackend {
         } else {
           c.unix = true;
           c.localPath = s.localPath;
-          if (unixPath) c.remotePath = this.unixClients.get(unixPath)?.shift() ?? "";
+          if (unixPath) c.remotePath = this.unixClients.get(unixPath)?.shift()?.name ?? "";
         }
         this.attach(c, ns);
         s.backlog.push(c);
@@ -279,12 +285,15 @@ export class NodeNet implements NetBackend {
     });
   }
 
-  private connectTo(s: Sock, options: net.NetConnectOpts, connected: (ns: net.Socket) => void): number {
+  private connectTo(s: Sock, options: net.NetConnectOpts, connected: (ns: net.Socket) => void, failed?: () => void): number {
     s.connecting = true;
     const start = () => {
       const ns = net.connect({ ...options, allowHalfOpen: true });
       this.attach(s, ns);
+      let made = false;
+      if (failed) ns.once("close", () => { if (!made) failed(); });
       ns.once("connect", () => {
+        made = true;
         s.connecting = false;
         s.connected = true;
         connected(ns);
