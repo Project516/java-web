@@ -18,12 +18,16 @@ const classes = join(dir, "classes");
 before(() => {
   const m = join(dir, "src", "app");
   mkdirSync(join(m, "app"), { recursive: true });
-  writeFileSync(join(m, "module-info.java"), "module app { exports app; }\n");
+  const lib = join(dir, "src", "lib");
+  mkdirSync(join(lib, "lib"), { recursive: true });
+  writeFileSync(join(lib, "module-info.java"), "module lib { exports lib; }\n");
+  writeFileSync(join(lib, "lib", "Lib.java"), "package lib;\npublic class Lib { public static String name() { return \"lib\"; } }\n");
+  writeFileSync(join(m, "module-info.java"), "module app { requires lib; exports app; }\n");
   writeFileSync(join(m, "app", "Main.java"), `package app;
 public class Main {
   public static void main(String[] args) throws Exception {
     Module m = Main.class.getModule();
-    System.out.println(m.getName() + " " + m.isNamed() + " " + String.join(",", args));
+    System.out.println(m.getName() + " " + m.isNamed() + " " + lib.Lib.name() + " " + String.join(",", args));
     System.out.println(System.getProperty("jdk.module.main") + " " + ModuleLayer.boot().findModule("app").isPresent());
     if (args.length > 0 && args[0].equals("child")) {
       String java = System.getProperty("java.home") + "/bin/java";
@@ -50,7 +54,8 @@ public class Hidden { public static String hello() { return "hello from " + Hidd
 }
 `);
   writeFileSync(join(classes, "Plain.java"), "public class Plain { public static void main(String[] a) { System.out.println(\"plain \" + Plain.class.getModule().isNamed()); } }\n");
-  execFileSync(hotspot("javac"), ["-d", join(mods, "app"), join(m, "module-info.java"), join(m, "app", "Main.java")]);
+  execFileSync(hotspot("javac"), ["-d", join(mods, "lib"), join(lib, "module-info.java"), join(lib, "lib", "Lib.java")]);
+  execFileSync(hotspot("javac"), ["-d", join(mods, "app"), "-p", mods, join(m, "module-info.java"), join(m, "app", "Main.java")]);
   execFileSync(hotspot("javac"), ["-d", join(dir, "boot"), join(dir, "boot", "bp", "Hidden.java")]);
   execFileSync(hotspot("javac"), ["-d", classes, "-cp", join(dir, "boot"), join(classes, "Plain.java"), join(classes, "UseBoot.java")]);
   execFileSync(hotspot("jar"), ["cf", join(dir, "boot.jar"), "-C", join(dir, "boot"), "bp", "-C", join(dir, "boot"), "res.txt"]);

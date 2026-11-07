@@ -205,10 +205,12 @@ export class JVM {
     // Locale data is left out as --limit-modules would leave it, unless asked
     // for, or named by --add-modules (by name or as ALL-SYSTEM). A limit given
     // by the caller keeps it only if it names it, since no module requires it.
+    // With a module path it stays in: a limit would hide the modules the main
+    // module requires.
     const addmods = [...this.props].filter(([k]) => k.startsWith("jdk.module.addmods.")).flatMap(([, v]) => v.split(","));
     const limit = this.props.get("jdk.module.limitmods");
     const noLocales = this.image !== null && (limit !== undefined ? !limit.split(",").includes("jdk.localedata")
-      : !opts.localeData && !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata"));
+      : !opts.localeData && !this.props.has("jdk.module.path") && !addmods.some((m) => m === "ALL-SYSTEM" || m === "jdk.localedata"));
     const present = new Map<string, boolean>();
     for (const line of new TextDecoder().decode(index).split("\n")) {
       const sp = line.indexOf(" ");
