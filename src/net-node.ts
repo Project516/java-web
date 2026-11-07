@@ -317,7 +317,7 @@ export class NodeNet implements NetBackend {
       if (s.connected) {
         try { ds.disconnect(); } catch { /* not connected */ }
       }
-      ds.once("connect", () => {
+      const onConnect = () => {
         s.connected = true;
         s.remote = { addr: ep.addr.slice(), port: ep.port };
         // connecting gives a wildcard-bound socket the source address the route picks
@@ -330,10 +330,15 @@ export class NodeNet implements NetBackend {
           }
         } catch { /* keeps the bound address */ }
         resolve(0);
-      });
+      };
+      ds.once("connect", onConnect);
       try {
         ds.connect(ep.port, peerString(ep.addr));
       } catch (e) {
+        // the host socket is disconnected by now
+        ds.removeListener("connect", onConnect);
+        s.connected = false;
+        s.remote = null;
         resolve(errnoOf(e));
       }
     });
