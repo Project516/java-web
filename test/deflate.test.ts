@@ -229,6 +229,41 @@ test("a dictionary is refused once a zlib stream has started", () => {
   assert.equal(d.setDictionary(Uint8Array.of(1, 2, 3)), false);
 });
 
+// Huffman-only takes one byte at a time, so its symbols can be pending when a dictionary arrives.
+test("a raw dictionary set after input keeps the symbols already taken", () => {
+  const dict = corpora.words.subarray(0, 5000);
+  const head = corpora.words.subarray(20000, 90000);
+  const tail = corpora.words.subarray(1000, 9000);
+  for (let level = 1; level <= 9; level++) {
+    for (const n of [1, 300, 5000, 70000]) {
+      const d = new Deflate(level, 2, true);
+      const parts: Uint8Array[] = [];
+      drive(d, head.subarray(0, n), NO_FLUSH, 4096, parts);
+      assert.ok(d.setDictionary(dict), `level ${level} n ${n}`);
+      drive(d, tail, NO_FLUSH, 4096, parts);
+      drive(d, new Uint8Array(0), FINISH, 4096, parts);
+      const z = Buffer.concat(parts);
+      const want = Buffer.concat([head.subarray(0, n), tail]);
+      assert.ok(want.equals(zlib.inflateRawSync(z, { dictionary: dict })), `level ${level} n ${n}`);
+      assert.ok(want.equals(vmInflate(z, true, dict)), `Inflate: level ${level} n ${n}`);
+    }
+  }
+});
+
+// HotSpot's zlib drops stored input held at this point; its length varies with the output buffer, so this keeps it.
+test("a raw dictionary set at level 0 keeps stored input not yet in a block", () => {
+  const head = corpora.words.subarray(0, 70000);
+  const tail = corpora.words.subarray(1000, 9000);
+  const d = new Deflate(0, 0, true);
+  const parts: Uint8Array[] = [];
+  drive(d, head, NO_FLUSH, 4096, parts);
+  assert.ok(d.setDictionary(corpora.words.subarray(0, 5000)));
+  drive(d, tail, NO_FLUSH, 4096, parts);
+  drive(d, new Uint8Array(0), FINISH, 4096, parts);
+  const want = Buffer.concat([head, tail]);
+  assert.ok(want.equals(zlib.inflateRawSync(Buffer.concat(parts))));
+});
+
 test("changing level and strategy mid-stream", () => {
   const data = corpora.mixed;
   const steps: [number, number][] = [[1, 0], [9, 0], [0, 0], [6, 1], [4, 2], [3, 0], [6, 0]];
