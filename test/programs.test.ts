@@ -188,6 +188,14 @@ test("env option replaces the host environment", async () => {
   assert.equal(code, 0);
 });
 
+// both raise a lower soft limit to the hard one at startup, and report the raised value
+test("open file limit as HotSpot reports it", { skip: process.platform !== "linux" }, () => {
+  const under = (cmd: string[]) => spawnSync("bash", ["-c", 'ulimit -S -n 4096; exec "$@"', "bash", ...cmd, "-cp", out, "FileLimit"], { encoding: "utf8" });
+  const ref = under([hotspot("java")]);
+  const got = under([process.execPath, join(root, "src", "node.ts")]);
+  assert.deepEqual({ stdout: got.stdout, code: got.status }, { stdout: ref.stdout, code: ref.status });
+});
+
 // A directory or an unreadable match is EACCES when nothing else is found. ELOOP stops the
 // search when the child inherits the environment and does not when it has its own.
 test("PATH lookup as the JDK's launcher", { skip: process.platform !== "linux" }, async () => {

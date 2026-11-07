@@ -136,6 +136,17 @@ function procValue(file: string, label: string, field = 1): number {
 }
 
 const orElse = (x: number, fallback: number) => (Number.isFinite(x) ? x : fallback);
+
+// the soft limit, as HotSpot reads getrlimit's rlim_cur; an unlimited one is -1 after its jlong cast
+function maxOpenFiles(): bigint {
+  try {
+    const line = host("node:fs").readFileSync("/proc/self/limits", "utf8").split("\n").find((l: string) => l.startsWith("Max open files"));
+    const soft = line.trim().split(/\s+/)[3];
+    return soft === "unlimited" ? -1n : BigInt(soft);
+  } catch {
+    return 1024n;
+  }
+}
 const KB = 1024;
 
 // The VM options java-web can state, as HotSpot reports them with G1
@@ -636,7 +647,7 @@ export const natives: Natives = {
 
   [`${OS}initialize0()V`]: () => undefined,
   [`${OS}getOpenFileDescriptorCount0()J`]: (t) => BigInt(openFdCount(t.vm)),
-  [`${OS}getMaxFileDescriptorCount0()J`]: () => BigInt(orElse(procValue("/proc/self/limits", "Max open files", 3), 1024)),
+  [`${OS}getMaxFileDescriptorCount0()J`]: () => maxOpenFiles(),
   [`${OS}getCommittedVirtualMemorySize0()J`]: () => BigInt(orElse(procValue("/proc/self/statm", "", 0) * 4096, (globalThis as any).process?.memoryUsage?.().rss ?? -1)),
   [`${OS}getTotalMemorySize0()J`]: () => BigInt(host("node:os")?.totalmem() ?? MAX_HEAP),
   [`${OS}getFreeMemorySize0()J`]: () => BigInt(host("node:os")?.freemem() ?? 0),
