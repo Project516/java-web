@@ -17,7 +17,7 @@ import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 
 // Bump when the layout of an image changes; images of another format are ignored.
-export const SNAPSHOT_FORMAT = 2;
+export const SNAPSHOT_FORMAT = 3;
 
 export interface SnapshotImage {
   format: number;
@@ -62,6 +62,8 @@ interface VmRec {
   boot: unknown;
   bootPackages: unknown;
   bootModules: unknown;
+  bootModulePackages: unknown;
+  bootAppendPackages: unknown;
   bootUnnamedModule: unknown;
   interned: unknown;
   hashSeed: number;
@@ -433,6 +435,8 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
     boot: e.enc(vm.boot, "boot"),
     bootPackages: e.enc(vm.bootPackages, "bootPackages"),
     bootModules: e.enc(vm.bootModules, "bootModules"),
+    bootModulePackages: e.enc(vm.bootModulePackages, "bootModulePackages"),
+    bootAppendPackages: e.enc(vm.bootAppendPackages, "bootAppendPackages"),
     bootUnnamedModule: e.enc(vm.bootUnnamedModule, "bootUnnamedModule"),
     interned: e.enc((vm as any).interned, "interned"),
     hashSeed: (vm as any).hashSeed,
@@ -551,6 +555,8 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   for (const [k, c] of boot) vm.boot.set(k, c);
   for (const [k, p] of d.now(v.bootPackages) as Map<string, string>) vm.bootPackages.set(k, p);
   for (const [k, m] of d.now(v.bootModules) as Map<string, JObject>) vm.bootModules.set(k, m);
+  for (const [k, m] of d.now(v.bootModulePackages) as Map<string, JObject>) vm.bootModulePackages.set(k, m);
+  for (const [k, p] of d.now(v.bootAppendPackages) as Map<string, string>) vm.bootAppendPackages.set(k, p);
   vm.bootUnnamedModule = d.dec(v.bootUnnamedModule);
   const interned = (vm as any).interned as Map<string, JObject>;
   for (const [k, s] of d.now(v.interned) as Map<string, JObject>) interned.set(k, s);

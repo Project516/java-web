@@ -129,6 +129,8 @@ export class Sock {
   pipe = false;
   // the in-VM peer of a loopback stream or pipe
   peer: Sock | null = null;
+  // a host Unix socket whose other end is in this VM
+  peerInVm = false;
   // multicast groups joined, by address
   groups = new Set<string>();
   // backend state
@@ -166,7 +168,8 @@ export class Sock {
     if (this.connecting) return r;
     if (!this.connected) return r | POLLOUT | POLLHUP;
     if (this.rxBytes > 0 || this.eof || (this.shutRd && !this.pipe)) r |= POLLIN;
-    if (!this.shutWr && !this.wblocked) r |= POLLOUT;
+    // after SHUT_WR a write fails at once, so Linux reports the socket writable
+    if (this.shutWr ? !this.pipe : !this.wblocked) r |= POLLOUT;
     if (this.pipe && this.shutRd && !this.peer) r |= POLLERR;
     if ((this.eof || this.shutRd) && this.shutWr) r |= POLLHUP;
     return r;
@@ -593,6 +596,7 @@ export class LoopbackNet implements NetBackend {
     const b = new Sock("stream");
     b.unix = true;
     b.localPath = l.localPath;
+    b.remotePath = s.localPath;
     b.connected = true;
     b.peer = s;
     s.peer = b;

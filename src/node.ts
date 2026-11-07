@@ -8,10 +8,11 @@ import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { bootClassPath, bootPatches } from "./bootpath.ts";
 import { VFS } from "./fs.ts";
 import type { Backend, Stat } from "./fs.ts";
 import { Bridge, nativeTable } from "./bridge.ts";
-import { JVM, LM_CLASS, LM_JAR, SnapshotError } from "./jvm.ts";
+import { JVM, LM_CLASS, LM_JAR, LM_MODULE, SnapshotError } from "./jvm.ts";
 import type { SnapshotImage, WarmSnapshotImage } from "./snapshot.ts";
 import { hostNatives } from "./hostnatives.ts";
 import { ImageBackend, imageFd } from "./image.ts";
@@ -318,6 +319,8 @@ export const defaultJdk = path.join(here, "..", "build", "jdk");
 export interface NodeRunOptions {
   classpath: string[];
   mainClass?: string;
+  // -m: "module" or "module/class", resolved from the module path
+  mainModule?: string;
   jar?: string;
   args?: string[];
   props?: Record<string, string>;
@@ -356,6 +359,11 @@ export interface NodeRunOptions {
   snapshotDir?: string | null;
   // save and restore the library VM after its first idle call
   warmSnapshot?: boolean;
+}
+
+// what the java-web command adds
+interface LauncherOptions extends NodeRunOptions {
+  dumpOnQuit?: boolean;
 }
 
 function fixedInput(data: Uint8Array) {
@@ -521,7 +529,7 @@ function snapshotCache(dir: string, build: string) {
   };
 }
 
-function nodeVm(o: NodeRunOptions): JVM {
+function nodeVm(o: LauncherOptions): JVM {
   exposeGc();
   const vfs = new VFS();
   vfs.mount("/", new NodeBackend("/", true));
@@ -567,6 +575,9 @@ function nodeVm(o: NodeRunOptions): JVM {
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
     enablePreview: o.enablePreview,
+    bootClassPath: bootClassPath(o.props?.["jdk.boot.class.path.append"]),
+    bootPatch: bootPatches(o.props),
+    osVersion: os.release(),
     net: o.net ?? (o.fetch ? undefined : new NodeNet()),
     fetch: o.fetch,
     hostName: o.hostName,
@@ -614,9 +625,23 @@ function retried<T>(start: () => Promise<T>): Promise<T> {
   });
 }
 
-export function runNode(o: NodeRunOptions): Promise<number> {
+export function runNode(o: LauncherOptions): Promise<number> {
   return retried(() => {
     const vm = nodeVm(o);
+    // as HotSpot, a QUIT signal prints every thread's stack and the program goes on
+    if (o.dumpOnQuit) {
+      const dump = () => vm.dumpAllStacks();
+      process.on("SIGQUIT", dump);
+      void vm.exited.finally(() => process.off("SIGQUIT", dump));
+      // JW_DUMP_STACKS=<seconds> does the same every so many seconds
+      const every = Number(process.env.JW_DUMP_STACKS);
+      if (every > 0) {
+        const timer = setInterval(dump, every * 1000);
+        timer.unref();
+        void vm.exited.finally(() => clearInterval(timer));
+      }
+    }
+    if (o.mainModule) return vm.run(LM_MODULE, o.mainModule, o.args ?? []);
     return o.jar ? vm.run(LM_JAR, path.resolve(o.jar), o.args ?? []) : vm.run(LM_CLASS, o.mainClass!, o.args ?? []);
   });
 }
@@ -675,7 +700,7 @@ async function printVersion(o: NodeRunOptions) {
 
 // the java-web command, which dist/cli.js runs
 export function main(argv: string[]) {
-  const o: NodeRunOptions = { classpath: ["."], props: {} };
+  const o: LauncherOptions = { classpath: ["."], props: {}, dumpOnQuit: true };
   let i = 0;
   let version = false;
   const javaChild = argv[0] === "--java-child";
@@ -723,6 +748,20 @@ export function main(argv: string[]) {
     }
     else if (a === "--jdk") o.jdk = argv[++i];
     else if (a === "-jar") { o.jar = argv[++i]; i++; break; }
+    else if (a === "-m" || a === "--module" || a.startsWith("--module=")) {
+      o.mainModule = a.startsWith("--module=") ? a.slice(9) : argv[++i] ?? "";
+      if (!o.mainModule) {
+        console.error(`Error: ${a.startsWith("--module=") ? "--module=" : a} requires module name`);
+        process.exit(1);
+      }
+      o.props!["jdk.module.main"] = o.mainModule.split("/")[0];
+      i++;
+      break;
+    }
+    else if (a.startsWith("-Xbootclasspath/a:")) {
+      const prev = o.props!["jdk.boot.class.path.append"];
+      o.props!["jdk.boot.class.path.append"] = prev ? `${prev}:${a.slice(18)}` : a.slice(18);
+    }
     else if (/^(-X|--add-|-verbose|-server|-client)/.test(a)) continue;
     else if (javaChild && a.startsWith("-")) {
       console.error(`Unrecognized option: ${a}\nError: Could not create the Java Virtual Machine.\nError: A fatal exception has occurred. Program will exit.`);
@@ -739,13 +778,19 @@ export function main(argv: string[]) {
     });
     return;
   }
-  if (!o.mainClass && !o.jar) {
+  if (!o.mainClass && !o.jar && !o.mainModule) {
     console.error("usage: java-web [-cp path] [-Dkey=value] Main [args] | -jar app.jar [args]");
     process.exit(2);
   }
   // Collecting first: node's exit teardown can deadlock while it frees very
   // large array buffers (seen on x64 CI runners with a few hundred MB left).
-  Promise.resolve().then(() => runNode(o)).then((code) => (globalThis.gc?.(), process.exit(code)), (e) => {
+  Promise.resolve().then(() => runNode(o)).then(async (code) => {
+    globalThis.gc?.();
+    // output a pipe has not taken yet goes out before the process does
+    const flushed = [process.stdout, process.stderr].map((s) => new Promise<void>((done) => { s.write("", () => done()); }));
+    await Promise.race([Promise.all(flushed), new Promise((done) => setTimeout(done, 10000).unref())]);
+    process.exit(code);
+  }, (e) => {
     console.error(`java-web: ${(e as Error).message}`);
     process.exit(1);
   });

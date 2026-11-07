@@ -25,7 +25,10 @@ function defineModule(t: JThread, m: JObject, version: JObject | null, location:
   const loader = vm.getField(m, "java/lang/Module", "loader") as JObject | null;
   const pkgs = (pns.a as JObject[]).map((p) => vm.jsString(p).replace(/\./g, "/"));
   if (loader === null) {
-    if (name) vm.bootModules.set(name, m);
+    if (name) {
+      vm.bootModules.set(name, m);
+      for (const p of pkgs) if (!vm.bootPackages.has(p)) vm.bootModulePackages.set(p, m);
+    }
     const set = new Set(pkgs);
     for (const c of [...vm.boot.values(), ...vm.prims.values()]) {
       let e = c;

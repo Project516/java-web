@@ -77,6 +77,12 @@ public class Processes {
       System.out.println("merged=" + (both.contains("out") && both.contains("err")) + ":" + merged.waitFor());
       Process ordered = new ProcessBuilder("sh", "-c", "i=0; while [ $i -lt 100 ]; do printf a; printf b >&2; i=$((i+1)); done").redirectErrorStream(true).start();
       System.out.println("order=" + output(ordered).equals("ab".repeat(100)) + ":" + ordered.waitFor());
+      // output that fits in the pipe is still there once the child has exited
+      for (boolean m : new boolean[] {false, true}) {
+        Process late = new ProcessBuilder("sh", "-c", "head -c 60000 /dev/zero").redirectErrorStream(m).start();
+        int code = late.waitFor();
+        System.out.println("after exit=" + late.getInputStream().readAllBytes().length + ":" + code);
+      }
       Process redirect = new ProcessBuilder("echo", "file").redirectOutput(file.toFile()).start();
       System.out.println("redirect=" + redirect.waitFor() + ":" + Files.readString(file).trim());
       Process append = new ProcessBuilder("echo", "extra").redirectOutput(ProcessBuilder.Redirect.appendTo(file.toFile())).start();

@@ -482,36 +482,50 @@ for (const [name, d] of Object.entries({ Boolean: "Z", Byte: "B", Char: "C", Sho
   };
 }
 
+// ConstantPool's natives check the index and the entry's kind as HotSpot does
+function cpAt(t: JThread, o: JObject, i: number, ...tags: number[]) {
+  const cp = cpOf(t, o);
+  if (i < 0 || i >= cp.length) throw new PendingThrow("java/lang/IllegalArgumentException", "Constant pool index out of bounds");
+  const e = cpEntry(cp, i);
+  if (tags.length && (!e || !tags.includes(e.tag))) throw new PendingThrow("java/lang/IllegalArgumentException", "Wrong type at constant pool index");
+  return { cp, e: e! };
+}
+const FIELD_OR_METHOD = [Tag.Fieldref, Tag.Methodref, Tag.InterfaceMethodref];
+
 Object.assign(natives, {
   [`${CP}getSize0(Ljava/lang/Object;)I`]: (t: JThread, [, o]: any[]) => cpOf(t, o).length,
-  [`${CP}getIntAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
-  [`${CP}getLongAt0(Ljava/lang/Object;I)J`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
-  [`${CP}getFloatAt0(Ljava/lang/Object;I)F`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
-  [`${CP}getDoubleAt0(Ljava/lang/Object;I)D`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.value,
-  [`${CP}getUTF8At0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpOf(t, o), i)),
-  [`${CP}getStringAt0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpOf(t, o), cpEntry(cpOf(t, o), i)!.a)),
-  [`${CP}getTagAt0(Ljava/lang/Object;I)B`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)?.tag ?? 0,
+  [`${CP}getIntAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, Tag.Integer).e.value,
+  [`${CP}getLongAt0(Ljava/lang/Object;I)J`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, Tag.Long).e.value,
+  [`${CP}getFloatAt0(Ljava/lang/Object;I)F`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, Tag.Float).e.value,
+  [`${CP}getDoubleAt0(Ljava/lang/Object;I)D`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, Tag.Double).e.value,
+  [`${CP}getUTF8At0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => t.vm.intern(utf8(cpAt(t, o, i, Tag.Utf8).cp, i)),
+  [`${CP}getStringAt0(Ljava/lang/Object;I)Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => {
+    const { cp, e } = cpAt(t, o, i, Tag.String);
+    return t.vm.intern(utf8(cp, e.a));
+  },
+  [`${CP}getTagAt0(Ljava/lang/Object;I)B`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i).e?.tag ?? 0,
   [`${CP}getClassAt0(Ljava/lang/Object;I)Ljava/lang/Class;`]: function* (t: JThread, [, o, i]: any[]): NativeGen {
     const c = t.vm.classOf(o);
+    cpAt(t, o, i, Tag.Class);
     return t.vm.mirror(yield* t.vm.loadClassGen(t, c.loader, className(c.cf!.cp, i)));
   },
   [`${CP}getClassAtIfLoaded0(Ljava/lang/Object;I)Ljava/lang/Class;`]: (t: JThread, [, o, i]: any[]) => {
     const c = t.vm.classOf(o);
+    cpAt(t, o, i, Tag.Class);
     const found = t.vm.findLoaded(c.loader, className(c.cf!.cp, i));
     return found ? t.vm.mirror(found) : null;
   },
   [`${CP}getMemberRefInfoAt0(Ljava/lang/Object;I)[Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => {
-    const cp = cpOf(t, o);
-    const e = cpEntry(cp, i)!, nat = cpEntry(cp, e.b)!;
+    const { cp, e } = cpAt(t, o, i, ...FIELD_OR_METHOD);
+    const nat = cpEntry(cp, e.b)!;
     return t.vm.newObjectArray("java/lang/String", [className(cp, e.a), utf8(cp, nat.a), utf8(cp, nat.b)].map((s) => t.vm.intern(s)));
   },
   [`${CP}getNameAndTypeRefInfoAt0(Ljava/lang/Object;I)[Ljava/lang/String;`]: (t: JThread, [, o, i]: any[]) => {
-    const cp = cpOf(t, o);
-    const e = cpEntry(cp, i)!;
+    const { cp, e } = cpAt(t, o, i, Tag.NameAndType);
     return t.vm.newObjectArray("java/lang/String", [utf8(cp, e.a), utf8(cp, e.b)].map((s) => t.vm.intern(s)));
   },
-  [`${CP}getClassRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpEntry(cpOf(t, o), i)!.a,
+  [`${CP}getClassRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, ...FIELD_OR_METHOD).e.a,
   [`${CP}getNameAndTypeRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => {
-    return cpEntry(cpOf(t, o), i)!.b;
+    return cpAt(t, o, i, ...FIELD_OR_METHOD, Tag.InvokeDynamic).e.b;
   },
 });
