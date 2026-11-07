@@ -526,6 +526,6 @@ Object.assign(natives, {
   },
   [`${CP}getClassRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => cpAt(t, o, i, ...FIELD_OR_METHOD).e.a,
   [`${CP}getNameAndTypeRefIndexAt0(Ljava/lang/Object;I)I`]: (t: JThread, [, o, i]: any[]) => {
-    return cpAt(t, o, i, ...FIELD_OR_METHOD, Tag.InvokeDynamic, Tag.Dynamic).e.b;
+    return cpAt(t, o, i, ...FIELD_OR_METHOD, Tag.InvokeDynamic).e.b;
   },
 });
