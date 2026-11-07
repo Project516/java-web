@@ -52,4 +52,10 @@ test("posixOffsetMinutes follows the rule dates", () => {
   assert.equal(posixOffsetMinutes("MEZ-1MESZ,M10.5.0,M3.5.0/3", Date.UTC(2026, 0, 15)), 120);
   assert.equal(posixOffsetMinutes("EST5EDT", Date.UTC(2026, 6, 15)), -240);
   assert.equal(posixOffsetMinutes("nonsense", 0), null);
+  assert.equal(posixOffsetMinutes("", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,M3.2.0", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,M13.2.0,M11.1.0", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,M3.6.0,M11.1.0", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,M3.2.0/x,M11.1.0", 0), null);
+  assert.equal(posixOffsetMinutes("AAA5BBB,J0,J300", 0), null);
 });

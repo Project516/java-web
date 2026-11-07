@@ -3,6 +3,7 @@
 
 const NAME = /^(?:[A-Za-z]{3,}|<[^>]+>)/;
 const OFFSET = /^[+-]?\d{1,3}(?::\d{1,2}(?::\d{1,2})?)?/;
+const TIME = new RegExp(OFFSET.source + "$");
 
 function seconds(s: string): number {
   const sign = s[0] === "-" ? -1 : 1;
@@ -13,11 +14,13 @@ function seconds(s: string): number {
 // Seconds from the start of the year (local wall clock) to a rule's day and time
 function ruleSeconds(rule: string, year: number): number | null {
   const [day, time = "2"] = rule.split("/");
+  if (!TIME.test(time)) return null;
   const at = seconds(time);
   const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   let m = /^M(\d+)\.(\d)\.(\d)$/.exec(day);
   if (m) {
     const [month, week, weekday] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (month < 1 || month > 12 || week < 1 || week > 5 || weekday > 6) return null;
     const first = Date.UTC(year, month - 1, 1);
     let d = (weekday - new Date(first).getUTCDay() + 7) % 7 + (week - 1) * 7;
     const length = new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -27,10 +30,11 @@ function ruleSeconds(rule: string, year: number): number | null {
   m = /^J(\d+)$/.exec(day);
   if (m) {
     const n = Number(m[1]);
+    if (n < 1 || n > 365) return null;
     return (n - 1 + (leap && n >= 60 ? 1 : 0)) * 86400 + at;
   }
   m = /^(\d+)$/.exec(day);
-  return m ? Number(m[1]) * 86400 + at : null;
+  return m && Number(m[1]) <= 365 ? Number(m[1]) * 86400 + at : null;
 }
 
 export function posixOffsetMinutes(tz: string, nowMs: number): number | null {
