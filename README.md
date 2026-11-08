@@ -12,7 +12,8 @@ pnpm add @project516/java-web
 
 Serve `node_modules/@project516/java-web/dist/` as static files (on GitHub
 Pages, deploy from Actions: a `gh-pages` branch cannot hold the 120 MB
-`jdk/image.jar`), then:
+`jdk/image.jar`; on a project site, `/app/` is `user.github.io`, so files are
+under `/app/<repo>/`), then:
 
 ```html
 <script src="java-web.js"></script>
