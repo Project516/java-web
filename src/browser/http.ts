@@ -377,11 +377,13 @@ export class HttpBackend implements Backend {
   }
 
   // When ranges of a file come back wrong, reads all of it once: a whole
-  // response decodes correctly even from a host that compresses it.
+  // response decodes correctly even from a host that compresses it. A range
+  // that fails to decode throws as a network error does, so a failed read
+  // here is taken as the network's, and later reads try again.
   private readWhole(path: string, off: number, len: number): Uint8Array | null {
-    console.warn(`java-web: range reads of ${this.base}${path} came back compressed or wrong, so it is read whole. Serve it without compression (as .jar files are on GitHub Pages).`);
     const xhr = this.request("GET", path);
     if (!xhr) return null;
+    console.warn(`java-web: range reads of ${this.base}${path} came back compressed or wrong, so it is read whole. Serve it without compression (as .jar files are on GitHub Pages).`);
     const data = new Uint8Array(xhr.response as ArrayBuffer);
     this.cache.set(path, data);
     this.blocks.delete(path);

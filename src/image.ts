@@ -20,6 +20,9 @@ export function imageFd(file: string): number {
   return fd;
 }
 
+// image files a read failed in, warned about once
+const unreadable = new Set<string>();
+
 export class ImageBackend implements Backend {
   readonly writable = false;
   // this VM's descriptor of each image file
@@ -57,21 +60,26 @@ export class ImageBackend implements Backend {
     if (part) return part;
     if (!this.pack.offsets.has(p)) return null;
     const out = new Uint8Array(len);
-    let n = 0;
+    let n = 0, image = "";
     try {
       while (n < len) {
         const at = imagePart(this.pack, p, off + n)!;
-        let fd = this.fds.get(at.image);
-        if (fd === undefined) this.fds.set(at.image, (fd = imageFd(path.join(this.dir, "jdk", at.image))));
+        image = at.image;
+        let fd = this.fds.get(image);
+        if (fd === undefined) this.fds.set(image, (fd = imageFd(path.join(this.dir, "jdk", image))));
         const got = fs.readSync(fd, out, n, Math.min(len - n, at.len), at.at);
         if (got === 0) break;
         n += got;
       }
-    } catch {
-      return null;
+    } catch {}
+    if (n === len) return out;
+    // a missing, short or unreadable image reads as missing rather than cut off
+    const file = path.join(this.dir, "jdk", image);
+    if (!unreadable.has(file)) {
+      unreadable.add(file);
+      console.warn(`java-web: cannot read ${file}, so the classes in it do not load`);
     }
-    // a short or unreadable image is damaged; the file reads as missing rather than cut off
-    return n === len ? out : null;
+    return null;
   }
 
   list(p: string): string[] | null {

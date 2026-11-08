@@ -26,7 +26,9 @@ function pack(entries: [string, string | Uint8Array][]): Uint8Array {
   return Uint8Array.from(parts);
 }
 
-test("ImageBackend reads the index, packed files and module images", () => {
+test("ImageBackend reads the index, packed files and module images", (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (m: string) => warnings.push(m));
   const dir = mkdtempSync(join(tmpdir(), "jw-image-"));
   try {
     mkdirSync(join(dir, "jdk"));
@@ -58,6 +60,7 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(b.read("/lib"), null);
     // past the end of a damaged image
     assert.equal(b.read("/lib/cut"), null);
+    assert.deepEqual(warnings, [`java-web: cannot read ${join(dir, "jdk", "jdk.other.jar")}, so the classes in it do not load`]);
     rmSync(join(dir, "jdk", "image.jar"));
     assert.throws(() => new ImageBackend(dir), /no packaged JDK image/);
   } finally {
@@ -65,7 +68,9 @@ test("ImageBackend reads the index, packed files and module images", () => {
   }
 });
 
-test("a file split across images reads from each part, and a left-out part reads as missing", () => {
+test("a file split across images reads from each part, and a left-out part reads as missing", (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (m: string) => warnings.push(m));
   const dir = mkdtempSync(join(tmpdir(), "jw-image-"));
   try {
     mkdirSync(join(dir, "jdk"));
@@ -83,6 +88,8 @@ test("a file split across images reads from each part, and a left-out part reads
     const left = new ImageBackend(dir);
     assert.equal(text(left.readRange("/lib/modules", 7, 4)), "TAIL");
     assert.equal(left.readRange("/lib/modules", 4, 3), null);
+    assert.equal(left.readRange("/lib/modules", 5, 1), null);
+    assert.deepEqual(warnings, [`java-web: cannot read ${join(dir, "jdk", "jdk.other.jar")}, so the classes in it do not load`]);
     const image = parsePack(boot.buffer as ArrayBuffer);
     assert.deepEqual(imagePart(image, "/lib/modules", 0), { image: "/image.jar", at: 1, len: 4 });
     assert.deepEqual(imagePart(image, "/lib/modules", 5), { image: "/jdk.other.jar", at: 1, len: 2 });
