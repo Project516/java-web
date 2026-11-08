@@ -10,6 +10,10 @@ next to itself, or where `cheerpjInit({ runtime: "/path/to/dist/" })` says.
   typical start reads, and `jdk/javac.pack` what javac adds. A host that
   compresses ranged responses still works, at the cost of one full download of
   `jdk/image.jar` (about 120 MB).
+- `jdk/image.jar` is over GitHub's 100 MB limit for a file in a git
+  repository, so a site published by pushing a `gh-pages` branch cannot hold
+  it. GitHub Pages deployed from Actions (`actions/upload-pages-artifact`)
+  serves it, Range requests included.
 - The JIT compiles hot Java methods with `new Function`, so a page with a
   Content Security Policy needs `'unsafe-eval'` in `script-src`. Without it,
   Java still runs, only interpreted.
