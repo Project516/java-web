@@ -12,6 +12,9 @@ export interface Pack {
   lazy: Map<string, string>;
   // path -> the image file holding it and its offset there
   offsets: Map<string, { image: string; at: number }>;
+  // path -> where the bytes from each start on are, for a file split across
+  // image files, sorted by start; offsets has the first part
+  parts: Map<string, { start: number; image: string; at: number }[]>;
   // path -> parts of a file read in ranges (the JDK image), as [offset, bytes]
   // sorted by offset
   ranges: Map<string, [number, Uint8Array][]>;
@@ -25,8 +28,10 @@ const utf8 = new TextDecoder();
 // Pack layout: repeated [u16 path length][path][u32 size][bytes]. In the boot
 // pack, "/index.prefix" holds prefix-coded "d path" and "f path size
 // [image:offset] [pack]" lines. A file with an offset is read in ranges from
-// <image>.jar; a named pack is <name>.pack next to it and is
-// fetched whole the first time one of its files is read. An entry named
+// <image>.jar, and a "p path start image:offset" line after it says the
+// file's bytes from start on are in another image. A named pack is
+// <name>.pack next to it and is fetched whole the first time one of its files
+// is read. An entry named
 // "@<offset>:<path>" holds part of a file read in ranges, and one named
 // "@lazy:<pack>:<path>" lists, as u32 start and end pairs, the parts of it
 // that pack holds. Images are .jar
@@ -44,7 +49,7 @@ export function parsePack(buf: ArrayBuffer): Pack {
     files.set(path, u8.subarray(p + 4, p + 4 + size));
     p += 4 + size;
   }
-  const pack: Pack = { files, index: null, lazy: new Map(), offsets: new Map(), ranges: new Map(), lazyRanges: new Map() };
+  const pack: Pack = { files, index: null, lazy: new Map(), offsets: new Map(), parts: new Map(), ranges: new Map(), lazyRanges: new Map() };
   for (const [p, data] of files) {
     if (p[0] !== "@") continue;
     files.delete(p);
@@ -169,8 +174,32 @@ export function addIndex(pack: Pack, text: string, prefix = false) {
         b = c;
       }
       pack.lazy.set(path, line.slice(b + 1));
+    } else if (line[0] === "p") {
+      const b = line.indexOf(" ", a + 1), colon = line.lastIndexOf(":");
+      const name = line.slice(b + 1, colon);
+      let image = images.get(name);
+      if (image === undefined) images.set(name, (image = `/${name}.jar`));
+      let parts = pack.parts.get(path);
+      if (!parts) pack.parts.set(path, (parts = []));
+      parts.push({ start: +line.slice(a + 1, b), image, at: +line.slice(colon + 1) });
     }
   }
+}
+
+// Where byte off of a file read in ranges is: the image file, the offset
+// there, and how many bytes from off on that part of the file holds.
+export function imagePart(pack: Pack, path: string, off: number): { image: string; at: number; len: number } | undefined {
+  const first = pack.offsets.get(path);
+  if (!first) return undefined;
+  let { image, at } = first, start = 0, end = pack.index!.get(path)!;
+  for (const p of pack.parts.get(path) ?? []) {
+    if (p.start > off) {
+      end = p.start;
+      break;
+    }
+    ({ image, at, start } = p);
+  }
+  return { image, at: at + off - start, len: end - off };
 }
 
 const BLOCK = 64 << 10;
@@ -204,8 +233,10 @@ export class HttpBackend implements Backend {
   private fetchedPacks = new Set<string>();
   // 64 KB blocks of files read in parts, by path
   private blocks = new Map<string, Map<number, Uint8Array>>();
+  // files read in ranges that the server does not have
+  private missing = new Set<string>();
 
-  constructor(base: string, pack: Pack = { files: new Map(), index: null, lazy: new Map(), offsets: new Map(), ranges: new Map(), lazyRanges: new Map() }) {
+  constructor(base: string, pack: Pack = { files: new Map(), index: null, lazy: new Map(), offsets: new Map(), parts: new Map(), ranges: new Map(), lazyRanges: new Map() }) {
     this.base = base.endsWith("/") ? base.slice(0, -1) : base;
     this.pack = pack;
   }
@@ -290,8 +321,18 @@ export class HttpBackend implements Backend {
       return this.readRange(path, off, len);
     }
     // has() parses the path's module first; image files themselves are not indexed
-    const at = this.pack.index?.has(path) ? this.pack.offsets.get(path) : undefined;
-    if (at !== undefined) return this.readRange(at.image, at.at + off, len);
+    const at = this.pack.index?.has(path) ? imagePart(this.pack, path, off) : undefined;
+    if (at !== undefined) {
+      if (len <= at.len || at.len <= 0) return this.readRange(at.image, at.at, len);
+      const head = this.readRange(at.image, at.at, at.len);
+      const rest = head && this.readRange(path, off + at.len, len - at.len);
+      if (!head || !rest) return null;
+      const out = new Uint8Array(len);
+      out.set(head);
+      out.set(rest, head.length);
+      return out;
+    }
+    if (this.missing.has(path)) return null;
     let blocks = this.blocks.get(path);
     if (!blocks) this.blocks.set(path, (blocks = new Map()));
     const first = Math.floor(off / BLOCK), last = Math.floor((off + len - 1) / BLOCK);
@@ -314,6 +355,10 @@ export class HttpBackend implements Backend {
         this.cache.set(path, data);
         this.blocks.delete(path);
         return data.subarray(off, off + len);
+      }
+      if (xhr.status === 404) {
+        this.missing.add(path);
+        console.warn(`java-web: ${this.base}${path} is missing, so the classes in it do not load`);
       }
       if (xhr.status !== 206) return null;
       if (!rangeOk(xhr, b * BLOCK, data.length)) return this.readWhole(path, off, len);

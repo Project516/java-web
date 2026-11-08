@@ -173,14 +173,56 @@ const rangeEntries = (ranges: Map<string, [number, number][]>, src: Recorder) =>
   [...ranges].flatMap(([p, spans]) => spans.map(([s, e]): [string, Uint8Array] => [`@${s}:${p}`, src.readRange(p, s, e - s)!]));
 const inJavacPack = new Set(javacFiles);
 
-// Every java.home file goes in one file, jdk/image.jar, read in ranges:
-// lib/modules (the jimage with every class) and the conf/ and lib/ files
-// around it. The index says where each file is, so the worker can stat and
-// list offline.
+// A jimage's resources as runs of one module's, [module, start, end) in image
+// order. Empty resources and module-info.class are left out: jlink puts the
+// latter with the index, and javac reads them all.
+function moduleRuns(image: Uint8Array): [string, number, number][] {
+  const v = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  const count = v.getUint32(16, true);
+  const locations = 28 + count * 8, strings = locations + v.getUint32(20, true);
+  const resources = strings + v.getUint32(24, true);
+  const str = (off: number) => {
+    let s = "";
+    for (let i = strings + off; image[i]; i++) s += String.fromCharCode(image[i]);
+    return s;
+  };
+  const found: [string, number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    let p = locations + v.getUint32(28 + count * 4 + i * 4, true);
+    const attrs = Array<number>(8).fill(0);
+    while (image[p] > 7) {
+      const b = image[p++];
+      let value = 0;
+      for (let n = (b & 7) + 1; n > 0; n--) value = value * 256 + image[p++];
+      attrs[b >> 3] = value;
+    }
+    const size = attrs[6] || attrs[7];
+    if (size && !(!attrs[2] && str(attrs[3]) === "module-info")) found.push([str(attrs[1]), resources + attrs[5], resources + attrs[5] + size]);
+  }
+  const runs: [string, number, number][] = [];
+  for (const [module, start, end] of found.sort((a, b) => a[1] - b[1])) {
+    const last = runs[runs.length - 1];
+    if (last?.[0] === module) last[2] = Math.max(last[2], end);
+    else runs.push([module, start, end]);
+  }
+  return runs;
+}
+
+// The java.home files go in jdk/image.jar, read in ranges, with the index
+// saying where each is, so the worker can stat and list offline. Parts a page
+// may never read go in their own files, which a host can leave out: each
+// module of lib/modules but java.base in jdk/<module>.jar, and lib/ct.sym
+// (javac --release) in jdk/ct.sym.jar.
+const linked = new Set(/^MODULES="(.*)"$/m.exec(readFileSync(join(jdk, "release"), "utf8"))![1].split(" "));
+const imageSizes = new Map<string, number>();
+// appends data to jdk/<name>.jar, returning where it starts there
+const put = (name: string, data: Uint8Array) => {
+  const at = imageSizes.get(name) ?? 0;
+  (at ? appendFileSync : writeFileSync)(join(dist, "jdk", `${name}.jar`), data);
+  imageSizes.set(name, at + data.length);
+  return at;
+};
 const lines: string[] = [];
-const imageFile = join(dist, "jdk", "image.jar");
-writeFileSync(imageFile, "");
-let imageSize = 0;
 const walk = (dir: string) => {
   for (const name of readdirSync(dir).sort()) {
     const p = join(dir, name);
@@ -190,10 +232,25 @@ const walk = (dir: string) => {
     if (st.isDirectory()) {
       lines.push(`d ${rel}`);
       walk(p);
+    } else if (rel === "/lib/modules") {
+      const data = readFileSync(p);
+      const parts: [number, string][] = [];
+      let pos = 0;
+      for (const [module, start, end] of moduleRuns(data)) {
+        if (module === "java.base" || !linked.has(module)) continue;
+        if (parts.some(([, m]) => m === module)) throw new Error(`lib/modules has ${module} in more than one place`);
+        if (start > pos) parts.push([pos, "image"]);
+        parts.push([start, module]);
+        pos = end;
+      }
+      if (pos < data.length) parts.push([pos, "image"]);
+      parts.forEach(([start, image], i) => {
+        const at = put(image, data.subarray(start, i + 1 < parts.length ? parts[i + 1][0] : data.length));
+        lines.push(start ? `p ${rel} ${start} ${image}:${at}` : `f ${rel} ${st.size} ${image}:${at}`);
+      });
     } else {
-      lines.push(`f ${rel} ${st.size} image:${imageSize}${inJavacPack.has(rel) ? " javac" : ""}`);
-      appendFileSync(imageFile, readFileSync(p));
-      imageSize += st.size;
+      const image = rel === "/lib/ct.sym" ? "ct.sym" : "image";
+      lines.push(`f ${rel} ${st.size} ${image}:${put(image, readFileSync(p))}${inJavacPack.has(rel) ? " javac" : ""}`);
     }
   }
 };
@@ -249,4 +306,6 @@ const javacPack = writePack(join(dist, "jdk", "javac.pack"), [
   ...javacFiles.map((p): [string, Uint8Array] => [p, javacRecorder.read(p)!]),
   ...rangeEntries(javacRanges, javacRecorder),
 ]);
-console.log(`dist/ ready: boot.pack ${boot}, jdk/javac.pack ${javacPack}, jdk/image.jar ${(imageSize / 2 ** 20).toFixed(0)} MB`);
+const mb = (n: number) => `${(n / 2 ** 20).toFixed(0)} MB`;
+const others = [...imageSizes].filter(([n]) => n !== "image").reduce((n, [, size]) => n + size, 0);
+console.log(`dist/ ready: boot.pack ${boot}, jdk/javac.pack ${javacPack}, jdk/image.jar ${mb(imageSizes.get("image")!)}, ${imageSizes.size - 1} more images ${mb(others)}`);

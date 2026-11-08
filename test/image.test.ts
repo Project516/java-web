@@ -1,4 +1,4 @@
-// The Node backend over the packaged image (boot.pack and jdk/<module>.jar),
+// The Node backend over the packaged image (boot.pack and the jdk/*.jar images),
 // and dist/node.js, the Node entry `pnpm build` makes; those tests skip until
 // dist/ is built.
 
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImageBackend } from "../src/image.ts";
-import { listIndex, packedRange, parsePack } from "../src/browser/http.ts";
+import { imagePart, listIndex, packedRange, parsePack } from "../src/browser/http.ts";
 import { hotspot } from "../scripts/hotspot.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -60,6 +60,33 @@ test("ImageBackend reads the index, packed files and module images", () => {
     assert.equal(b.read("/lib/cut"), null);
     rmSync(join(dir, "jdk", "image.jar"));
     assert.throws(() => new ImageBackend(dir), /no packaged JDK image/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a file split across images reads from each part, and a left-out part reads as missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jw-image-"));
+  try {
+    mkdirSync(join(dir, "jdk"));
+    // /lib/modules is "HEAD" "MOD" "TAIL": the middle in its own image
+    writeFileSync(join(dir, "jdk", "image.jar"), "xHEADTAIL");
+    writeFileSync(join(dir, "jdk", "jdk.other.jar"), "MOD");
+    const boot = pack([["/index.prefix", "0 d /lib\n0 f /lib/modules 11 image:1\n0 p /lib/modules 4 jdk.other:0\n15 7 image:5"]]);
+    writeFileSync(join(dir, "boot.pack"), boot);
+    const text = (d: Uint8Array | null) => d && new TextDecoder().decode(d);
+    const b = new ImageBackend(dir);
+    assert.equal(text(b.read("/lib/modules")), "HEADMODTAIL");
+    assert.equal(text(b.readRange("/lib/modules", 2, 4)), "ADMO");
+    assert.equal(text(b.readRange("/lib/modules", 5, 20)), "ODTAIL");
+    rmSync(join(dir, "jdk", "jdk.other.jar"));
+    const left = new ImageBackend(dir);
+    assert.equal(text(left.readRange("/lib/modules", 7, 4)), "TAIL");
+    assert.equal(left.readRange("/lib/modules", 4, 3), null);
+    const image = parsePack(boot.buffer as ArrayBuffer);
+    assert.deepEqual(imagePart(image, "/lib/modules", 0), { image: "/image.jar", at: 1, len: 4 });
+    assert.deepEqual(imagePart(image, "/lib/modules", 5), { image: "/jdk.other.jar", at: 1, len: 2 });
+    assert.deepEqual(imagePart(image, "/lib/modules", 8), { image: "/image.jar", at: 6, len: 3 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

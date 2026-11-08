@@ -1,10 +1,10 @@
 // The JDK image as `pnpm build` packages it in dist/, read from disk under
 // Node: boot.pack holds the index and the files and image ranges a typical
-// start reads, and the rest is read at its offset in jdk/image.jar.
+// start reads, and the rest is read at its offset in the jdk/*.jar images.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { listIndex, packedRange, parsePack } from "./browser/http.ts";
+import { imagePart, listIndex, packedRange, parsePack } from "./browser/http.ts";
 import type { Pack } from "./browser/http.ts";
 import type { Backend, Stat } from "./fs.ts";
 
@@ -55,15 +55,15 @@ export class ImageBackend implements Backend {
     if (packed) return packed.subarray(off, off + len);
     const part = packedRange(this.pack, p, off, len);
     if (part) return part;
-    const at = this.pack.offsets.get(p);
-    if (!at) return null;
+    if (!this.pack.offsets.has(p)) return null;
     const out = new Uint8Array(len);
     let n = 0;
     try {
-      let fd = this.fds.get(at.image);
-      if (fd === undefined) this.fds.set(at.image, (fd = imageFd(path.join(this.dir, "jdk", at.image))));
       while (n < len) {
-        const got = fs.readSync(fd, out, n, len - n, at.at + off + n);
+        const at = imagePart(this.pack, p, off + n)!;
+        let fd = this.fds.get(at.image);
+        if (fd === undefined) this.fds.set(at.image, (fd = imageFd(path.join(this.dir, "jdk", at.image))));
+        const got = fs.readSync(fd, out, n, Math.min(len - n, at.len), at.at);
         if (got === 0) break;
         n += got;
       }

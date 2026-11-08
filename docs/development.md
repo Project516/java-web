@@ -8,7 +8,8 @@ included, builds the same image, with the Linux class library whose natives
 java-web implements. The host JDK is the HotSpot reference the tests run, linked
 at `build/hotspot`. The build links the selected modules into `build/jdk/lib/modules`;
 `lib/packages.txt` indexes packages for the boot class loader. `pnpm build`
-puts it, with the files around it, in `dist/jdk/image.jar`, read by byte range.
+puts it, with the files around it, in `dist/jdk/image.jar` and, for each module
+but `java.base`, `dist/jdk/<module>.jar`, all read by byte range.
 It packs the byte ranges a typical start reads into `boot.pack`, and those javac
 adds into `jdk/javac.pack`. Without `localeData`, the VM leaves `jdk.localedata`
 out with `jdk.module.limitmods`, as `--limit-modules` does.
