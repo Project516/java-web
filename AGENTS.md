@@ -82,6 +82,11 @@ Node, which is how the tests run.
   breaks the page API or the package layout with `!` (`feat!: ...`). PRs merge
   by squash, so the PR title becomes the commit on `master`. PR bodies follow
   `.github/pull_request_template.md`
+- A release is a `chore: release X.Y.Z` PR that bumps `package.json`, then
+  `gh release create vX.Y.Z --target <its commit on master>`. The notes are a
+  few sentences for users, then the output of
+  `node scripts/release-notes.ts vPREVIOUS vX.Y.Z`: the merged PRs by type,
+  linked, and a compare link. The release workflow publishes to npm
 
 ## Glossary
 
