@@ -127,7 +127,7 @@ test("compact index keeps paths, sizes, offsets, and directory order", () => {
   assert.equal(image.lazy.get("/lib/two"), "javac");
 });
 
-test("packed image ranges are found by offset, and a lazy pack lists its own", () => {
+test("packed image ranges are found by offset, and each lazy pack lists its own", () => {
   const spans = new Uint8Array(16);
   const dv = new DataView(spans.buffer);
   [100, 110, 200, 205].forEach((v, i) => dv.setUint32(i * 4, v));
@@ -136,6 +136,7 @@ test("packed image ranges are found by offset, and a lazy pack lists its own", (
     ["@0:/lib/modules", "0123"],
     ["@50:/lib/modules", "XY"],
     ["@lazy:javac:/lib/modules", spans],
+    ["@lazy:app:/lib/modules", spans.slice(0, 8)],
   ]);
   const image = parsePack(buf.buffer as ArrayBuffer);
   const text = (d: Uint8Array | undefined) => d && new TextDecoder().decode(d);
@@ -148,7 +149,7 @@ test("packed image ranges are found by offset, and a lazy pack lists its own", (
   assert.equal(packedRange(image, "/lib/modules", 14, 3), undefined);
   assert.equal(packedRange(image, "/lib/modules", 30, 1), undefined);
   assert.equal(packedRange(image, "/lib/other", 0, 1), undefined);
-  assert.deepEqual(image.lazyRanges.get("/lib/modules"), { name: "javac", spans: [100, 110, 200, 205] });
+  assert.deepEqual(image.lazyRanges.get("/lib/modules"), [{ name: "javac", spans: [100, 110, 200, 205] }, { name: "app", spans: [100, 110] }]);
 });
 
 const node = join(root, "dist", "node.js");

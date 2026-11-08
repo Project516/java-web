@@ -36,6 +36,7 @@
     "dist/node.d.ts",
     "dist/boot.pack",
     "dist/jdk/*.jar",
+    "dist/jdk/app.pack",
     "dist/jdk/javac.pack",
     "dist/jdk/legal/"
   ],

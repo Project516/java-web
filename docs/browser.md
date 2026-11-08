@@ -9,8 +9,9 @@ next to itself, or where `cheerpjInit({ runtime: "/path/to/dist/" })` says.
   image, so a page reads only the classes it needs. `jdk/image.jar` holds
   `java.base` and the files around the classes, each other module is in
   `jdk/<module>.jar`, and `jdk/ct.sym.jar` holds what `javac --release` reads.
-  `boot.pack` holds what a typical start reads, and `jdk/javac.pack` what javac
-  adds. A host that compresses ranged responses still works, at the cost of one
+  `boot.pack` holds what a bare start reads. `jdk/app.pack` holds what a
+  typical program reads beyond that, and `jdk/javac.pack` what javac adds; a
+  page fetches each the first time it reads a class in it. A host that compresses ranged responses still works, at the cost of one
   full download of each image file a page reads.
 - A host can leave out the `jdk/<module>.jar` of a module its pages never
   load, and `jdk/ct.sym.jar` when nothing compiles with `--release`. A class of
