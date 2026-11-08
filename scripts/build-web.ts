@@ -103,24 +103,44 @@ class Recorder implements Backend {
     return d;
   }
 }
-const recorder = new Recorder(new NodeBackend(jdk));
-for (const main of ["Hello", "Primes", "Shapes"]) {
+// Runs main over the JDK through rec, with app mounted at /app.
+async function record(rec: Recorder, app: string, classpath: string[], main: string, args: string[] = []) {
   const vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
-  vfs.mount("/jdk", recorder);
+  vfs.mount("/jdk", rec);
   vfs.mount("/tmp", new MemoryBackend());
-  vfs.mount("/app", new NodeBackend(dist));
+  vfs.mount("/app", new NodeBackend(app));
   const vm = new JVM({
-    fs: vfs, javaHome: "/jdk", classpath: ["/app/samples"], cwd: "/tmp",
+    fs: vfs, javaHome: "/jdk", classpath, cwd: "/tmp",
     props: { "java.io.tmpdir": "/tmp", "user.home": "/tmp" },
     stdout: () => {}, stderr: (b) => process.stderr.write(b),
   });
-  const code = await vm.run(LM_CLASS, main, main === "Primes" ? ["100"] : []);
+  const code = await vm.run(LM_CLASS, main, args);
   if (code !== 0) throw new Error(`${main} exited with ${code}`);
 }
+const recorder = new Recorder(new NodeBackend(jdk));
+for (const main of ["Hello", "Primes", "Shapes"]) await record(recorder, dist, ["/app/samples"], main, main === "Primes" ? ["100"] : []);
 
-// Record what a javax.tools compile reads on top of that.
+// The programs scripts/packs holds, built into build/packs: a typical program
+// run from jars, and a compile with a jar classpath and an annotation processor.
+const packs = join(root, "scripts", "packs"), fixtures = join(root, "build", "packs");
+rmSync(fixtures, { recursive: true, force: true });
+const javacTo = (out: string, ...args: string[]) => execFileSync(hotspot("javac"), ["-d", join(fixtures, out), ...args]);
+javacTo("lib", join(packs, "lib", "Lib.java"));
+javacTo("proc", join(packs, "proc", "Generate.java"), join(packs, "proc", "GenerateProcessor.java"));
+mkdirSync(join(fixtures, "proc", "META-INF", "services"), { recursive: true });
+writeFileSync(join(fixtures, "proc", "META-INF", "services", "javax.annotation.processing.Processor"), "proc.GenerateProcessor\n");
+javacTo("app", "-cp", join(fixtures, "lib"), join(packs, "App.java"));
+cpSync(join(packs, "app.properties"), join(fixtures, "app", "app.properties"));
+javacTo("driver", join(packs, "Compile.java"));
+for (const d of ["lib", "proc", "app"]) execFileSync(hotspot("jar"), ["cf", join(fixtures, `${d}.jar`), "-C", join(fixtures, d), "."]);
+cpSync(join(packs, "src"), join(fixtures, "src"), { recursive: true });
+const appRecorder = new Recorder(new NodeBackend(jdk));
+await record(appRecorder, fixtures, ["/app/app.jar", "/app/lib.jar"], "App");
+
+// Record what javac reads: the compile above, and the one the browser self test runs.
 const javacRecorder = new Recorder(new NodeBackend(jdk));
+await record(javacRecorder, fixtures, ["/app/driver"], "Compile", ["/app/lib.jar:/app/proc.jar", "/app/proc.jar", "/tmp", "/app/src/Model.java", "/app/src/Uses.java"]);
 {
   const vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
@@ -139,7 +159,6 @@ const javacRecorder = new Recorder(new NodeBackend(jdk));
   if (r !== "true ") throw new Error(`javac in the VM failed: ${r}`);
   vm.halt(0);
 }
-const javacFiles = [...javacRecorder.seen].filter((p) => !recorder.seen.has(p)).sort();
 
 // Sorted [start, end) spans covering the given ones. Spans less than GAP apart
 // join, since a pack entry costs more than a few bytes of filler.
@@ -167,11 +186,26 @@ function subtract(spans: [number, number][], covered: [number, number][]): [numb
   }
   return out;
 }
+// boot.pack holds what a bare start reads. app.pack, fetched the first time a
+// program reads one of its parts, holds what the typical program reads beyond
+// that and every java.base part javac reads. javac.pack holds the rest of what
+// javac reads: the compiler's own modules.
+const linked = new Set(/^MODULES="(.*)"$/m.exec(readFileSync(join(jdk, "release"), "utf8"))![1].split(" "));
+const compiler = merge(moduleRuns(readFileSync(join(jdk, "lib", "modules")))
+  .filter(([m]) => m !== "java.base" && linked.has(m)).map(([, s, e]): [number, number] => [s, e]));
 const bootRanges = new Map([...recorder.ranges].map(([p, r]) => [p, merge(r)]));
-const javacRanges = new Map([...javacRecorder.ranges].map(([p, r]) => [p, subtract(merge(r), bootRanges.get(p) ?? [])]));
-const rangeEntries = (ranges: Map<string, [number, number][]>, src: Recorder) =>
-  [...ranges].flatMap(([p, spans]) => spans.map(([s, e]): [string, Uint8Array] => [`@${s}:${p}`, src.readRange(p, s, e - s)!]));
-const inJavacPack = new Set(javacFiles);
+const beyondBoot = (rec: Recorder) => new Map([...rec.ranges].map(([p, r]) => [p, subtract(merge(r), bootRanges.get(p) ?? [])]));
+const appRanges = beyondBoot(appRecorder), javacRanges = new Map<string, [number, number][]>();
+for (const [p, r] of beyondBoot(javacRecorder)) {
+  const own = p === "/lib/modules" ? subtract(r, subtract(r, compiler)) : [];
+  appRanges.set(p, merge([...(appRanges.get(p) ?? []), ...subtract(r, own)]));
+  javacRanges.set(p, own);
+}
+const jdkFiles = new NodeBackend(jdk);
+const rangeEntries = (ranges: Map<string, [number, number][]>) =>
+  [...ranges].flatMap(([p, spans]) => spans.map(([s, e]): [string, Uint8Array] => [`@${s}:${p}`, jdkFiles.readRange(p, s, e - s)!]));
+const appFiles = [...new Set([...appRecorder.seen, ...javacRecorder.seen])].filter((p) => !recorder.seen.has(p)).sort();
+const inAppPack = new Set(appFiles);
 
 // A jimage's resources as runs of one module's, [module, start, end) in image
 // order. Empty resources and module-info.class are left out: jlink puts the
@@ -213,7 +247,6 @@ function moduleRuns(image: Uint8Array): [string, number, number][] {
 // may never read go in their own files, which a host can leave out: each
 // module of lib/modules but java.base in jdk/<module>.jar, and lib/ct.sym
 // (javac --release) in jdk/ct.sym.jar.
-const linked = new Set(/^MODULES="(.*)"$/m.exec(readFileSync(join(jdk, "release"), "utf8"))![1].split(" "));
 const imageSizes = new Map<string, number>();
 // appends data to jdk/<name>.jar, returning where it starts there
 const put = (name: string, data: Uint8Array) => {
@@ -250,7 +283,7 @@ const walk = (dir: string) => {
       });
     } else {
       const image = rel === "/lib/ct.sym" ? "ct.sym" : "image";
-      lines.push(`f ${rel} ${st.size} ${image}:${put(image, readFileSync(p))}${inJavacPack.has(rel) ? " javac" : ""}`);
+      lines.push(`f ${rel} ${st.size} ${image}:${put(image, readFileSync(p))}${inAppPack.has(rel) ? " app" : ""}`);
     }
   }
 };
@@ -297,15 +330,17 @@ const lazySpans = (name: string, ranges: Map<string, [number, number][]>): [stri
   return [`@lazy:${name}:${p}`, data];
 });
 const boot = writePack(join(dist, "boot.pack"), [
-  ...rangeEntries(bootRanges, recorder),
+  ...rangeEntries(bootRanges),
+  ...lazySpans("app", appRanges),
   ...lazySpans("javac", javacRanges),
   ["/index.prefix", prefixCode(lines)],
   ...[...recorder.seen].sort().map((p): [string, Uint8Array] => [p, recorder.read(p)!]),
 ]);
-const javacPack = writePack(join(dist, "jdk", "javac.pack"), [
-  ...javacFiles.map((p): [string, Uint8Array] => [p, javacRecorder.read(p)!]),
-  ...rangeEntries(javacRanges, javacRecorder),
+const appPack = writePack(join(dist, "jdk", "app.pack"), [
+  ...appFiles.map((p): [string, Uint8Array] => [p, jdkFiles.read(p)!]),
+  ...rangeEntries(appRanges),
 ]);
+const javacPack = writePack(join(dist, "jdk", "javac.pack"), rangeEntries(javacRanges));
 const mb = (n: number) => `${(n / 2 ** 20).toFixed(0)} MB`;
 const others = [...imageSizes].filter(([n]) => n !== "image").reduce((n, [, size]) => n + size, 0);
-console.log(`dist/ ready: boot.pack ${boot}, jdk/javac.pack ${javacPack}, jdk/image.jar ${mb(imageSizes.get("image")!)}, ${imageSizes.size - 1} more images ${mb(others)}`);
+console.log(`dist/ ready: boot.pack ${boot}, jdk/app.pack ${appPack}, jdk/javac.pack ${javacPack}, jdk/image.jar ${mb(imageSizes.get("image")!)}, ${imageSizes.size - 1} more images ${mb(others)}`);

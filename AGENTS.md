@@ -33,7 +33,7 @@ Node, which is how the tests run.
 - The release form is an npm package of the built files only
   (`java-web.js`, `java-web-worker.js`, `node.js` (the Node entry), `cli.js` (the
   `java-web` command), `boot.pack`, the `jdk/*.jar` image files,
-  `jdk/javac.pack`, and OpenJDK's notices in `jdk/legal/`), versioned, with
+  `jdk/app.pack`, `jdk/javac.pack`, and OpenJDK's notices in `jdk/legal/`), versioned, with
   nothing built at install. A GitHub Actions workflow triggered by a release
   publishes it to npm; never publish by hand.
 

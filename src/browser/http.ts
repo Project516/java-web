@@ -18,9 +18,9 @@ export interface Pack {
   // path -> parts of a file read in ranges (the JDK image), as [offset, bytes]
   // sorted by offset
   ranges: Map<string, [number, Uint8Array][]>;
-  // path -> a lazily fetched pack with more parts of it, and their [start, end)
-  // offsets in pairs
-  lazyRanges: Map<string, { name: string; spans: number[] }>;
+  // path -> the lazily fetched packs with more parts of it, and their
+  // [start, end) offsets in pairs
+  lazyRanges: Map<string, { name: string; spans: number[] }[]>;
 }
 
 const utf8 = new TextDecoder();
@@ -58,7 +58,10 @@ export function parsePack(buf: ArrayBuffer): Pack {
       const at = p.indexOf(":", 6);
       const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
       const spans = Array.from({ length: data.length / 4 }, (_, i) => dv.getUint32(i * 4));
-      pack.lazyRanges.set(p.slice(at + 1), { name: p.slice(6, at), spans });
+      const path = p.slice(at + 1);
+      let lazy = pack.lazyRanges.get(path);
+      if (!lazy) pack.lazyRanges.set(path, (lazy = []));
+      lazy.push({ name: p.slice(6, at), spans });
     } else {
       const path = p.slice(colon + 1);
       let parts = pack.ranges.get(path);
@@ -102,9 +105,9 @@ export function packedRange(pack: Pack, path: string, off: number, len: number):
 
 // The lazy pack holding byte off of path, if it has not been added yet.
 function lazyRangePack(pack: Pack, path: string, off: number): string | undefined {
-  const lazy = pack.lazyRanges.get(path);
-  if (!lazy) return undefined;
-  for (let i = 0; i < lazy.spans.length; i += 2) if (lazy.spans[i] <= off && off < lazy.spans[i + 1]) return lazy.name;
+  for (const lazy of pack.lazyRanges.get(path) ?? []) {
+    for (let i = 0; i < lazy.spans.length; i += 2) if (lazy.spans[i] <= off && off < lazy.spans[i + 1]) return lazy.name;
+  }
   return undefined;
 }
 
