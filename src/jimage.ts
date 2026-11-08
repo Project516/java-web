@@ -63,7 +63,9 @@ export class JImage {
     if (actual !== full) return null;
     if (attrs[6]) throw new Error("compressed jimage resource");
     const data = this.fs.readRange(this.path, this.index.length + attrs[5], attrs[7]);
-    if (!data || data.length !== attrs[7]) throw new Error(`cannot read image resource: ${full}`);
+    // a host may leave out the image file of a module its pages never load
+    if (!data) return null;
+    if (data.length !== attrs[7]) throw new Error(`cannot read image resource: ${full}`);
     return data;
   }
 }

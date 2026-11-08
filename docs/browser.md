@@ -5,15 +5,19 @@ The npm package holds the built files: `java-web.js`, `java-web-worker.js`,
 and load `java-web.js` with a classic `<script>` tag. It finds the other files
 next to itself, or where `cheerpjInit({ runtime: "/path/to/dist/" })` says.
 
-- The server should answer range requests for `jdk/image.jar`, the whole JDK
-  image, so a page reads only the classes it needs. `boot.pack` holds what a
-  typical start reads, and `jdk/javac.pack` what javac adds. A host that
-  compresses ranged responses still works, at the cost of one full download of
-  `jdk/image.jar` (about 120 MB).
-- `jdk/image.jar` is over GitHub's 100 MB limit for a file in a git
-  repository, so a site published by pushing a `gh-pages` branch cannot hold
-  it. GitHub Pages deployed from Actions (`actions/upload-pages-artifact`)
-  serves it, Range requests included.
+- The server should answer range requests for the `jdk/*.jar` files, the JDK
+  image, so a page reads only the classes it needs. `jdk/image.jar` holds
+  `java.base` and the files around the classes, each other module is in
+  `jdk/<module>.jar`, and `jdk/ct.sym.jar` holds what `javac --release` reads.
+  `boot.pack` holds what a typical start reads, and `jdk/javac.pack` what javac
+  adds. A host that compresses ranged responses still works, at the cost of one
+  full download of each image file a page reads.
+- A host can leave out the `jdk/<module>.jar` of a module its pages never
+  load, and `jdk/ct.sym.jar` when nothing compiles with `--release`. A class of
+  a left-out module does not load (`NoClassDefFoundError`), and the console
+  names the missing file. Without `localeData` nothing reads
+  `jdk/jdk.localedata.jar` (26 MB); javac reads `jdk.compiler`,
+  `java.compiler` and `jdk.zipfs`.
 - The JIT compiles hot Java methods with `new Function`, so a page with a
   Content Security Policy needs `'unsafe-eval'` in `script-src`. Without it,
   Java still runs, only interpreted.
