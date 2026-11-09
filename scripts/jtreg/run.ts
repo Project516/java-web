@@ -2,7 +2,7 @@
 //
 //   node scripts/jtreg/run.ts <jdk-source-checkout> [dir or file filters...]
 //        [--jobs 1] [--timeout 120] [--rerun] [--only-passing] [--shard 1/4] [--vm path/to/node.ts] [--cool 75]
-//        [--locale-data] [--library-dirs]
+//        [--locale-data] [--library-dirs] [--coverage dir]
 //
 // Each test is compiled the way jtreg does it, run on HotSpot first (only
 // tests that pass there count), then on java-web in a child process.
@@ -11,14 +11,17 @@
 // java-web alone, and fails if any of them regress. --shard k/n runs the kth
 // of n shards with about equal run time, for parallel CI jobs. Tests listed in
 // test/jtreg/locale-data.txt start java-web with --locale-data (every locale
-// costs start-up and run time, so the others run without it).
+// costs start-up and run time, so the others run without it). --coverage
+// writes, for each test that passes on java-web, the blocks of the VM's code it
+// ran to <dir>/<test>.txt, for scripts/jtreg/prune.ts. Tests listed in
+// test/jtreg/redundant.txt stay out of passing.txt.
 
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { release, totalmem } from "node:os";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { basename, dirname, join, normalize, relative, resolve } from "node:path";
 import { hotspot } from "../hotspot.ts";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -27,6 +30,8 @@ const resultsFile = join(out, "results.jsonl");
 const passingFile = join(root, "test", "jtreg", "passing.txt");
 // tests that need the locales other than English (java-web's --locale-data)
 const localeFile = join(root, "test", "jtreg", "locale-data.txt");
+// tests that pass but run no java-web code a faster listed test does not
+const redundantFile = join(root, "test", "jtreg", "redundant.txt");
 // how long each listed test takes on java-web, for splitting them into shards
 const timesFile = join(root, "test", "jtreg", "times.tsv");
 
@@ -49,6 +54,9 @@ const onlyPassing = has("--only-passing");
 // --locale-data runs every test with the locale data, to find the tests that need it
 const localeData = has("--locale-data");
 const printLibraryDirs = has("--library-dirs");
+const coverageDir = flag("--coverage", "");
+const coverage = coverageDir && resolve(coverageDir);
+if (coverage) mkdirSync(coverage, { recursive: true });
 const [shardK, shardN] = flag("--shard", "1/1").split("/").map(Number);
 if (!Number.isInteger(shardK) || !Number.isInteger(shardN) || shardK < 1 || shardK > shardN) {
   console.error("--shard takes k/n with 1 <= k <= n");
@@ -484,10 +492,25 @@ function clean(tc: TestCase, names: string[]) {
 
 interface RunResult { ok: boolean; ms: number; timedOut: boolean; tail: string }
 
+// The blocks of dist/node.js (or src/) a test's VMs ran, as "start-end" lines
+// in <coverage>/<test>.txt, from the V8 coverage they wrote to raw.
+function keepCoverage(raw: string, test: string) {
+  const blocks = new Set<string>();
+  for (const f of readdirSync(raw)) {
+    for (const script of JSON.parse(readFileSync(join(raw, f), "utf8")).result) {
+      if (!script.url.startsWith("file:") || !script.url.includes(vm.endsWith(".js") ? vm : "/src/")) continue;
+      for (const fn of script.functions) for (const r of fn.ranges) if (r.count > 0) blocks.add(`${script.url}:${r.startOffset}-${r.endOffset}`);
+    }
+  }
+  writeFileSync(join(coverage, `${test}.txt`), [...blocks].join("\n"));
+}
+
 function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<RunResult> {
   return new Promise((done) => {
     const start = Date.now();
-    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // java-web runs only: the test's work directory names it
+    const raw = coverage && cmd === "node" ? join(coverage, "raw", basename(dirname(cwd))) : "";
+    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: raw ? { ...process.env, NODE_V8_COVERAGE: raw } : process.env });
     let text = "";
     const keep = (d: Buffer) => { text = (text + d.toString()).slice(-65536); };
     child.stdout.on("data", keep);
@@ -500,6 +523,10 @@ function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<
     child.on("close", (code) => {
       clearTimeout(timer);
       writeFileSync(join(cwd, "output.txt"), text);
+      if (raw) {
+        if (code === 0 && !timedOut && existsSync(raw)) keepCoverage(raw, basename(dirname(cwd)));
+        rmSync(raw, { recursive: true, force: true });
+      }
       const lines = text.split("\n").filter((l) => /Exception|Error|FAIL|failed/i.test(l));
       done({ ok: code === 0 && !timedOut, ms: Date.now() - start, timedOut, tail: (lines[0] ?? text.split("\n").filter(Boolean).pop() ?? "").slice(0, 300) });
     });
@@ -705,8 +732,9 @@ if (onlyPassing) {
   const all = [...latest.values()];
   // results cover only the tests run here, so the list keeps the others
   const passing = new Set(listed());
+  const redundant = new Set(readList(redundantFile));
   for (const r of all) {
-    if (r.status === "pass") passing.add(r.id);
+    if (r.status === "pass" && !redundant.has(r.id)) passing.add(r.id);
     else passing.delete(r.id);
   }
   const total = (s: string) => all.filter((r) => r.status === s).length;

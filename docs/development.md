@@ -71,6 +71,15 @@ HotSpot with default options (for example `vm.continuations` is true and
 `vm.debug` is false); a test that needs more is skipped.
 
 `test/jtreg/passing.txt` lists the tests CI runs, with `--only-passing`.
+It holds only tests that check java-web's own code. java-web runs OpenJDK's
+class library unmodified, so a test whose path through the VM a faster listed
+test already covers adds CI time but no check. `test/jtreg/redundant.txt`
+lists those, and a full run never adds them back. To redo the list, run the
+suite with `--coverage build/coverage --vm dist/node.js`, which writes the
+blocks of the VM each passing test ran, then `node scripts/jtreg/prune.ts
+build/coverage`. Tests in `locale-data.txt` and tests that fail under coverage
+always stay.
+
 A pull request runs the tests its changes need (`scripts/jtreg/select.ts`): a
 change to a file the tests load runs the test directories the table there maps
 it to plus every tenth listed test, while a change to any other loaded file or
