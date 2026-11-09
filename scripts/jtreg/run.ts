@@ -13,8 +13,8 @@
 // test/jtreg/locale-data.txt start java-web with --locale-data (every locale
 // costs start-up and run time, so the others run without it). --coverage
 // writes, for each test that passes on java-web, the blocks of the VM's code it
-// ran to <dir>/<test>.txt, for scripts/jtreg/prune.ts. Tests listed in
-// test/jtreg/redundant.txt stay out of passing.txt.
+// ran to <dir>/<test>.txt, for scripts/jtreg/prune.ts; with --only-passing it
+// runs the tests in test/jtreg/redundant.txt too. Those stay out of passing.txt.
 
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -492,8 +492,8 @@ function clean(tc: TestCase, names: string[]) {
 
 interface RunResult { ok: boolean; ms: number; timedOut: boolean; tail: string }
 
-// The blocks of dist/node.js (or src/) a test's VMs ran, as "start-end" lines
-// in <coverage>/<test>.txt, from the V8 coverage they wrote to raw.
+// The blocks of dist/node.js (or src/) a test's VMs ran, as "url:start-end"
+// lines in <coverage>/<test>.txt, from the V8 coverage all its actions wrote to raw.
 function keepCoverage(raw: string, test: string) {
   const blocks = new Set<string>();
   for (const f of readdirSync(raw)) {
@@ -508,7 +508,7 @@ function keepCoverage(raw: string, test: string) {
 function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<RunResult> {
   return new Promise((done) => {
     const start = Date.now();
-    // java-web runs only: the test's work directory names it
+    // java-web runs only, each into its test's directory (named as its work directory)
     const raw = coverage && cmd === "node" ? join(coverage, "raw", basename(dirname(cwd))) : "";
     const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: raw ? { ...process.env, NODE_V8_COVERAGE: raw } : process.env });
     let text = "";
@@ -523,10 +523,6 @@ function exec(cmd: string, args: string[], cwd: string, limit: number): Promise<
     child.on("close", (code) => {
       clearTimeout(timer);
       writeFileSync(join(cwd, "output.txt"), text);
-      if (raw) {
-        if (code === 0 && !timedOut && existsSync(raw)) keepCoverage(raw, basename(dirname(cwd)));
-        rmSync(raw, { recursive: true, force: true });
-      }
       const lines = text.split("\n").filter((l) => /Exception|Error|FAIL|failed/i.test(l));
       done({ ok: code === 0 && !timedOut, ms: Date.now() - start, timedOut, tail: (lines[0] ?? text.split("\n").filter(Boolean).pop() ?? "").slice(0, 300) });
     });
@@ -644,7 +640,8 @@ mkdirSync(out, { recursive: true });
 let selected: TestCase[];
 if (onlyPassing) {
   const under = (id: string) => !argv.length || argv.some((f) => id === f || id.startsWith(f + "/") || id.startsWith(f + "#"));
-  const ids = new Set(listed().filter(under));
+  // a coverage run also reruns the redundant tests, so prune.ts can reconsider them
+  const ids = new Set([...listed(), ...(coverage ? readList(redundantFile) : [])].filter(under));
   const files = [...new Set([...ids].map((id) => join(testRoot, id.split("#")[0])))];
   selected = files.flatMap(parseFile).filter((tc) => ids.has(tc.id));
 } else {
@@ -699,7 +696,14 @@ async function worker() {
     await coolDown();
     const tc = queue.shift();
     if (!tc) return;
+    const name = tc.id.replace(/[#/]/g, "_"), raw = join(coverage, "raw", name);
+    if (coverage) for (const f of [raw, join(coverage, `${name}.txt`)]) rmSync(f, { recursive: true, force: true });
     const r: Record<string, any> = { id: tc.id, ...(await runCase(tc)) };
+    if (coverage) {
+      // only a test that passed as a whole counts, with every action's coverage
+      if (r.status === "pass" && existsSync(raw)) keepCoverage(raw, name);
+      rmSync(raw, { recursive: true, force: true });
+    }
     counts[r.status as string] = (counts[r.status as string] ?? 0) + 1;
     finished++;
     if (onlyPassing) {
