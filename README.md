@@ -52,6 +52,24 @@ See [docs/node.md](docs/node.md).
 
 Details: [docs/support.md](docs/support.md).
 
+## Compared with CheerpJ
+
+[CheerpJ](https://cheerpj.com/) 5.0 takes the same page calls (`cheerpjInit`,
+`cheerpjRunMain`), so the two can be compared on one page. Medians, measured
+2026-11-08 in headless Chromium on one machine, with java-web 0.1.3 from npm
+and CheerpJ 5.0 from its CDN. Cold means an empty browser cache; the downloads
+are the runtime and JDK only, not the program's own jars.
+
+| | java-web 0.1.3 | CheerpJ 5.0 |
+|---|---|---|
+| Java 25 | yes | preview |
+| Hello world, cold | 0.55 s, 3.7 MB | 4.3 s, 10.8 MB |
+| Hello world, warm | 0.17 s, nothing downloaded | 2.4 s, 3.8 MB |
+| AWT and Swing windows | not yet | yes |
+| License | AGPL-3.0 | free for personal, educational, evaluation and non-commercial open-source use, loaded from CheerpJ's CDN; business use needs a licence |
+
+CheerpJ also runs Java 8, 11, 17 and 21, applets and JNLP; java-web runs only Java 25.
+
 ## Develop
 
 You need Node 23.6+, pnpm, curl and bzip2 on Linux or macOS.
