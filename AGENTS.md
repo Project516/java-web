@@ -24,6 +24,9 @@ Node, which is how the tests run.
   one bundled font, DejaVu Sans, rasterized in JS; its pixels differ from
   HotSpot's FreeType output, everything else follows a Linux HotSpot that has
   only that font.
+- For Java in general, not for one user. Docs, examples, benchmarks and the
+  reasons given for changes use general Java programs and libraries, never one
+  downstream project's code, jars or domain.
 - Prove it with tests: programs whose output must match HotSpot exactly, and
   OpenJDK's own regression tests where they can run.
 - master is used: pages build pinned commits of it and rely on `cheerpjInit`
