@@ -10,7 +10,7 @@
 // all. A change to times.tsv alone runs none.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -72,7 +72,7 @@ const patterns = affects.map(([file, dirs]) =>
 const dirsFor = (file: string) => patterns.find(([re]) => re.test(file))?.[1];
 
 // about 10 test-minutes a shard, so a selection spreads over up to 8
-const times = new Map(readFileSync(join(root, timesFile), "utf8").split("\n").filter(Boolean).map((l) => {
+const times = new Map((existsSync(join(root, timesFile)) ? readFileSync(join(root, timesFile), "utf8") : "").split("\n").filter(Boolean).map((l) => {
   const [ms, id] = l.split("\t");
   return [id, Number(ms)];
 }));

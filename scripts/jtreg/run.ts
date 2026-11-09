@@ -738,8 +738,8 @@ if (onlyPassing) {
   const passing = new Set(listed());
   const redundant = new Set(readList(redundantFile));
   for (const r of all) {
-    if (r.status === "pass" && !redundant.has(r.id)) passing.add(r.id);
-    else passing.delete(r.id);
+    if (r.status !== "pass") passing.delete(r.id);
+    else if (!redundant.has(r.id)) passing.add(r.id);
   }
   const total = (s: string) => all.filter((r) => r.status === s).length;
   writeFileSync(join(out, "summary.txt"),

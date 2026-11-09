@@ -74,7 +74,8 @@ HotSpot with default options (for example `vm.continuations` is true and
 It holds only tests that check java-web's own code. java-web runs OpenJDK's
 class library unmodified, so a test whose path through the VM a faster listed
 test already covers adds CI time but no check. `test/jtreg/redundant.txt`
-lists those, and a full run never adds them back. To redo the list, run the
+lists those, and a full run never adds them back; to run one again, move its
+line from `redundant.txt` to `passing.txt`. To redo the list, run the
 suite with `--coverage build/coverage --vm dist/node.js`, which writes the
 blocks of the VM each passing test ran, then `node scripts/jtreg/prune.ts
 build/coverage`. Tests in `locale-data.txt` and tests that fail under coverage
