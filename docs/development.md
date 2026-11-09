@@ -75,10 +75,10 @@ It holds only tests that check java-web's own code. java-web runs OpenJDK's
 class library unmodified, so a test whose path through the VM a faster listed
 test already covers adds CI time but no check. `test/jtreg/redundant.txt`
 lists those, and a full run never adds them back; to run one again, move its
-line from `redundant.txt` to `passing.txt`. To redo the list, run the
-suite with `--coverage build/coverage --vm dist/node.js`, which writes the
-blocks of the VM each passing test ran, then `node scripts/jtreg/prune.ts
-build/coverage`. Tests in `locale-data.txt` and tests that fail under coverage
+line from `redundant.txt` to `passing.txt`. To redo the list, run
+`node scripts/jtreg/run.ts <jdk-source> --only-passing --coverage build/coverage --vm dist/node.js`
+after `pnpm build`. It runs both lists and writes the blocks of the VM each
+passing test ran. Then run `node scripts/jtreg/prune.ts build/coverage`. Tests in `locale-data.txt` and tests that fail under coverage
 always stay.
 
 A pull request runs the tests its changes need (`scripts/jtreg/select.ts`): a

@@ -25,7 +25,14 @@ const list = (name: string) => existsSync(file(name))
   ? readFileSync(file(name), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
 
 const passing = list("passing.txt"), wasRedundant = list("redundant.txt").filter((id) => !passing.includes(id));
-const times = new Map((existsSync(file("times.tsv")) ? readFileSync(file("times.tsv"), "utf8") : "").split("\n").filter(Boolean).map((l) => {
+const read = (name: string) => {
+  try {
+    return readFileSync(file(name), "utf8");
+  } catch {
+    return "";
+  }
+};
+const times = new Map(read("times.tsv").split("\n").filter(Boolean).map((l) => {
   const [ms, id] = l.split("\t");
   return [id, Number(ms)];
 }));
