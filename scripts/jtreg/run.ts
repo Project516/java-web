@@ -22,6 +22,7 @@ import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { release, totalmem } from "node:os";
 import { basename, dirname, join, normalize, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { hotspot } from "../hotspot.ts";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -495,6 +496,9 @@ interface RunResult { ok: boolean; ms: number; timedOut: boolean; tail: string }
 // The blocks of dist/node.js (or src/) a test's VMs ran, as "url:start-end"
 // lines in <coverage>/<test>.txt, from the V8 coverage all its actions wrote to raw.
 function keepCoverage(raw: string, test: string) {
+  // V8 names scripts by real path as a file URL, so spaces and symlinks must match
+  const real = realpathSync(vm);
+  const ours = pathToFileURL(vm.endsWith(".js") ? real : dirname(real) + "/").href;
   const blocks = new Set<string>();
   for (const f of readdirSync(raw)) {
     let scripts;
@@ -506,9 +510,13 @@ function keepCoverage(raw: string, test: string) {
       return;
     }
     for (const script of scripts) {
-      if (!script.url.startsWith("file:") || !script.url.includes(vm.endsWith(".js") ? vm : "/src/")) continue;
+      if (!script.url.startsWith(ours)) continue;
       for (const fn of script.functions) for (const r of fn.ranges) if (r.count > 0) blocks.add(`${script.url}:${r.startOffset}-${r.endOffset}`);
     }
+  }
+  if (!blocks.size) {
+    console.warn(`${test}: no java-web coverage, none kept`);
+    return;
   }
   writeFileSync(join(coverage, `${test}.txt`), [...blocks].join("\n"));
 }
