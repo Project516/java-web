@@ -20,6 +20,10 @@ if (!dir) {
   console.error("usage: node scripts/jtreg/prune.ts <coverage dir>");
   process.exit(2);
 }
+if (!existsSync(dir)) {
+  console.error(`prune.ts: no coverage directory ${dir}`);
+  process.exit(2);
+}
 const file = (name: string) => join(root, "test", "jtreg", name);
 const list = (name: string) => existsSync(file(name))
   ? readFileSync(file(name), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];

@@ -497,7 +497,15 @@ interface RunResult { ok: boolean; ms: number; timedOut: boolean; tail: string }
 function keepCoverage(raw: string, test: string) {
   const blocks = new Set<string>();
   for (const f of readdirSync(raw)) {
-    for (const script of JSON.parse(readFileSync(join(raw, f), "utf8")).result) {
+    let scripts;
+    try {
+      scripts = JSON.parse(readFileSync(join(raw, f), "utf8")).result;
+    } catch {
+      // Partial coverage would prune the test wrongly; without a file it stays listed
+      console.warn(`${test}: unreadable coverage ${f}, none kept`);
+      return;
+    }
+    for (const script of scripts) {
       if (!script.url.startsWith("file:") || !script.url.includes(vm.endsWith(".js") ? vm : "/src/")) continue;
       for (const fn of script.functions) for (const r of fn.ranges) if (r.count > 0) blocks.add(`${script.url}:${r.startOffset}-${r.endOffset}`);
     }
