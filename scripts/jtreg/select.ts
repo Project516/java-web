@@ -72,10 +72,11 @@ const patterns = affects.map(([file, dirs]) =>
 const dirsFor = (file: string) => patterns.find(([re]) => re.test(file))?.[1];
 
 // about 10 test-minutes a shard, so a selection spreads over up to 8
-const times = new Map((existsSync(join(root, timesFile)) ? readFileSync(join(root, timesFile), "utf8") : "").split("\n").filter(Boolean).map((l) => {
+const times = new Map<string, number>();
+for (const l of (existsSync(join(root, timesFile)) ? readFileSync(join(root, timesFile), "utf8") : "").split("\n")) {
   const [ms, id] = l.split("\t");
-  return [id, Number(ms)];
-}));
+  if (id && Number.isFinite(Number(ms))) times.set(id, Number(ms));
+}
 const median = [...times.values()].sort((a, b) => a - b)[times.size >> 1] ?? 0;
 const shardsFor = (ids: string[]) => {
   const ms = ids.reduce((n, id) => n + (times.get(id) ?? median), 0);
