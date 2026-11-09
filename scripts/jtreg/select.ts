@@ -10,7 +10,7 @@
 // all. A change to times.tsv alone runs none.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -71,7 +71,17 @@ const patterns = affects.map(([file, dirs]) =>
   [new RegExp(`^${file.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`), dirs] as const);
 const dirsFor = (file: string) => patterns.find(([re]) => re.test(file))?.[1];
 
-const shardsFor = (n: number) => Array.from({ length: Math.min(8, Math.ceil(n / 400)) }, (_, i) => i + 1);
+// about 10 test-minutes a shard, so a selection spreads over up to 8
+const times = new Map<string, number>();
+for (const l of (existsSync(join(root, timesFile)) ? readFileSync(join(root, timesFile), "utf8") : "").split("\n")) {
+  const [ms, id] = l.split("\t");
+  if (id && Number.isFinite(Number(ms))) times.set(id, Number(ms));
+}
+const median = [...times.values()].sort((a, b) => a - b)[times.size >> 1] ?? 0;
+const shardsFor = (ids: string[]) => {
+  const ms = ids.reduce((n, id) => n + (times.get(id) ?? median), 0);
+  return Array.from({ length: Math.min(8, Math.max(1, Math.ceil(ms / 600_000))) }, (_, i) => i + 1);
+};
 const listed = readFileSync(join(root, passingFile), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 const under = (id: string, f: string) => id === f || id.startsWith(f + "/") || id.startsWith(f + "#");
 
@@ -109,7 +119,8 @@ function select(base: string | undefined): string[] | "all" {
 
 const arg = process.argv[2];
 const picked = select(arg === "--full" ? undefined : arg);
-const count = picked === "all" ? listed.length : listed.filter((id) => picked.some((f) => under(id, f))).length;
+const chosen = picked === "all" ? listed : listed.filter((id) => picked.some((f) => under(id, f)));
+const count = chosen.length;
 console.log(`filters=${picked === "all" ? "" : picked.join(" ")}`);
-console.log(`shards=${JSON.stringify(count ? shardsFor(count) : [])}`);
+console.log(`shards=${JSON.stringify(count ? shardsFor(chosen) : [])}`);
 console.error(`${count} tests${picked === "all" ? " (all)" : picked.length ? ": " + picked.join(" ") : ""}`);
