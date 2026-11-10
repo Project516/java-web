@@ -5,6 +5,7 @@
 // null. Long and double take two stack and local slots like in the JVMS; the
 // second slot holds undefined.
 
+import { memberAttrs } from "./classfile.ts";
 import type { ClassFile, Code, Member } from "./classfile.ts";
 import { PendingThrow } from "./thread.ts";
 import type { JThread } from "./thread.ts";
@@ -76,7 +77,7 @@ export class JField {
   readonly name: string;
   readonly desc: string;
   readonly access: number;
-  readonly attrs: Map<string, Uint8Array>;
+  private attrsRaw: Map<string, Uint8Array> | number;
   readonly wide: boolean;
   slot = -1;
   index = 0;
@@ -85,8 +86,12 @@ export class JField {
     this.name = m.name;
     this.desc = m.desc;
     this.access = m.access;
-    this.attrs = m.attrs;
+    this.attrsRaw = m.attrs;
     this.wide = isWide(m.desc);
+  }
+  get attrs(): Map<string, Uint8Array> {
+    const a = this.attrsRaw;
+    return typeof a === "number" ? this.attrsRaw = memberAttrs(this.cls.cf!.cp, a) : a;
   }
   get isStatic() { return (this.access & ACC_STATIC) !== 0; }
 }
@@ -106,7 +111,7 @@ export class JMethod {
   readonly desc: string;
   readonly key: string;
   readonly access: number;
-  readonly attrs: Map<string, Uint8Array>;
+  private attrsRaw: Map<string, Uint8Array> | number;
   readonly code: Code | null;
   readonly params: string[];
   readonly ret: string;
@@ -134,7 +139,7 @@ export class JMethod {
     this.desc = m.desc;
     this.key = m.name + m.desc;
     this.access = m.access;
-    this.attrs = m.attrs;
+    this.attrsRaw = m.attrs;
     this.code = m.code;
     this.isStatic = (m.access & ACC_STATIC) !== 0;
     this.isNative = (m.access & ACC_NATIVE) !== 0;
@@ -152,6 +157,10 @@ export class JMethod {
   readonly isAbstract: boolean;
   readonly isPrivate: boolean;
   readonly isSynchronized: boolean;
+  get attrs(): Map<string, Uint8Array> {
+    const a = this.attrsRaw;
+    return typeof a === "number" ? this.attrsRaw = memberAttrs(this.cls.cf!.cp, a) : a;
+  }
   toString() { return `${this.cls.name}.${this.name}${this.desc}`; }
   lineAt(pc: number): number {
     const lines = this.code?.lines;
