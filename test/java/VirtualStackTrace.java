@@ -17,7 +17,10 @@ public class VirtualStackTrace {
         // the vthread is running: its trace is read off its carrier
         StackTraceElement[] st = vt.getStackTrace();
         StackTraceElement bottom = st[st.length - 1];
-        System.out.println("top " + st[0].getMethodName().startsWith("lambda$main"));
+        // the top frame depends on where the spin loop is when sampled
+        boolean lambda = false;
+        for (StackTraceElement e : st) lambda |= e.getMethodName().startsWith("lambda$main");
+        System.out.println("lambda " + lambda);
         System.out.println("bottom " + bottom.getClassName() + "." + bottom.getMethodName());
         done.set(true);
         vt.join();
