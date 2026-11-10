@@ -77,10 +77,8 @@ function execFailure(error: NodeJS.ErrnoException): string {
   return `Exec failed, error: ${-error.errno!} (${text}) `;
 }
 
-// A child's output waits in memory up to this many bytes before the child is held back. More than a
-// pipe holds, since a java-web child cannot close its host stdout: a parent that reads stdout to its
-// end before stderr would otherwise wait on a child held back on stderr.
-const HELD = 1 << 24;
+// A child's output waits in memory up to this many bytes, what a Linux pipe holds, before the child is held back
+const HELD = 1 << 16;
 
 class Pipe implements ProcessPipe {
   private chunks: Uint8Array[] = [];

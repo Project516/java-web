@@ -493,7 +493,7 @@ export function closeFd(t: JThread, fd: number) {
     if (f.writable && f.path) t.vm.opts.fileClosed?.(f.path);
     // the descriptor is closed either way, as with close(2)
     if (!ok) throw writeFailed(t, f.path);
-  }
+  } else if (fd === 1 || fd === 2) t.vm.opts.closeOutput?.(fd);
 }
 
 // Open files follow their inode: a rename moves their path, an unlink drops it.
@@ -687,7 +687,7 @@ export const natives: Natives = {
     const fd = t.vm.getField(fdObj, "java/io/FileDescriptor", "fd");
     // closed even when close reports a failed write
     t.vm.setField(fdObj, "java/io/FileDescriptor", "fd", -1);
-    if (fd > 2) closeFd(t, fd);
+    if (fd > 0) closeFd(t, fd);
   },
 
   [`${FOS}.open0(Ljava/lang/String;Z)V`]: (t, [self, path, append]) =>

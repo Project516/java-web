@@ -58,6 +58,8 @@ export interface JvmOptions {
   loadNativeLibrary?: (path: string) => Promise<void>;
   // told when Java closes a file it wrote
   fileClosed?: (path: string) => void;
+  // told when Java closes descriptor 1 or 2, its standard output or error
+  closeOutput?: (fd: number) => void;
   // runs before the first OutOfMemoryError the VM throws is created
   onOutOfMemory?: (message: string | null) => void;
   // log VM internals to the host console

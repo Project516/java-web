@@ -4,6 +4,7 @@ import { isAssertionFlag, parseAssertions } from "./assertions.ts";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { isMainThread } from "node:worker_threads";
 import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -400,12 +401,41 @@ const broken = new Set<NodeJS.WriteStream>();
 function hostOut(s: NodeJS.WriteStream) {
   if (!s.listeners("error").includes(onOutError)) s.on("error", onOutError);
   return (b: Uint8Array) => {
+    if (closed.has(s)) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
     if (broken.has(s)) throw new PendingThrow("java/io/IOException", "Broken pipe");
     s.write(b);
   };
 }
 function onOutError(this: NodeJS.WriteStream) {
   broken.add(this);
+}
+// Java closing descriptor 1 or 2 closes the host's, as in HotSpot, so a reader sees end of file.
+// The null device takes the number, so no file opened later gets the stream's writes.
+const closed = new Set<NodeJS.WriteStream>();
+function closeHostOut(s: NodeJS.WriteStream, fd: number) {
+  // a Worker's stdout and stderr are not descriptors 1 and 2, which belong to the whole process
+  if (!isMainThread || closed.has(s)) return;
+  closed.add(s);
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    try {
+      fs.closeSync(fd);
+      // open takes the lowest free number: fill any free one below fd, then let those go
+      const below: number[] = [];
+      for (let nul = fs.openSync(os.devNull, "w"); nul !== fd; nul = fs.openSync(os.devNull, "w")) {
+        below.push(nul);
+        if (nul > fd) break;
+      }
+      for (const nul of below) fs.closeSync(nul);
+    } catch { /* already closed */ }
+  };
+  if (s.destroyed || s.writableEnded) return close();
+  // runs once the writes before it are done
+  s.write("", close);
+  s.once("error", close);
+  s.once("close", close);
 }
 
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
@@ -600,6 +630,10 @@ export function nodeVm(o: LauncherOptions): JVM {
     },
     stdout: o.stdout ?? hostOut(process.stdout),
     stderr: o.stderr ?? hostOut(process.stderr),
+    closeOutput: (fd) => {
+      if (fd === 1 && !o.stdout) closeHostOut(process.stdout, 1);
+      else if (fd === 2 && !o.stderr) closeHostOut(process.stderr, 2);
+    },
     stdin: o.input ? fixedInput(o.input) : () => new Promise((resolve) => {
       const onData = (d: Buffer) => { cleanup(); resolve(new Uint8Array(d)); };
       const onEnd = () => { cleanup(); resolve(null); };
