@@ -4,6 +4,7 @@ import { isAssertionFlag, parseAssertions } from "./assertions.ts";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { isMainThread } from "node:worker_threads";
 import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -412,7 +413,8 @@ function onOutError(this: NodeJS.WriteStream) {
 // The null device takes the number, so no file opened later gets the stream's writes.
 const closed = new Set<NodeJS.WriteStream>();
 function closeHostOut(s: NodeJS.WriteStream, fd: number) {
-  if (closed.has(s)) return;
+  // a Worker's stdout and stderr are not descriptors 1 and 2, which belong to the whole process
+  if (!isMainThread || closed.has(s)) return;
   closed.add(s);
   let done = false;
   const close = () => {
