@@ -269,8 +269,23 @@ const runtime = {
   E: Object.freeze({ exit: true }),
   xc: 0,
   // slowCall's counterpart for a virtual call that missed its inlining guard:
-  // dispatches through the site's cache and calls a compiled target directly
-  callv(t: JThread, f: Frame, ic: any[], args: any[], pc: number, xp: number, xi: number): any {
+  // dispatches through the site's cache and calls a compiled target directly.
+  // Up to four argument slots come as parameters, more in an array.
+  callv(t: JThread, f: Frame, ic: any[], pc: number, xp: number, xi: number, a0: any, a1?: any, a2?: any, a3?: any): any {
+    f.pc = pc;
+    const tm: JMethod = a0 !== null && a0.cls === ic[0] ? ic[1] : runtime.select(a0, ic, pc);
+    let cf: Frame | null;
+    if (tm.jit !== null && (cf = t.enter(tm, a0)) !== null) {
+      if ((tm.jit as (...a: any[]) => number)(t, cf, a0, a1, a2, a3) !== 0) {
+        t.unpool(cf);
+        runtime.xc = xp;
+        return runtime.E;
+      }
+      return t.ret;
+    }
+    return runtime.callvSlow(t, tm, [a0, a1, a2, a3], xp, xi);
+  },
+  callvMany(t: JThread, f: Frame, ic: any[], args: any[], pc: number, xp: number, xi: number): any {
     f.pc = pc;
     const recv = args[0] as JObject | null;
     const tm: JMethod = recv !== null && recv.cls === ic[0] ? ic[1] : runtime.select(recv, ic, pc);
@@ -283,9 +298,13 @@ const runtime = {
       }
       return t.ret;
     }
-    const native: any[] = [recv];
+    return runtime.callvSlow(t, tm, args, xp, xi);
+  },
+  // a native or interpreted target: slots are argument slots, natives take values
+  callvSlow(t: JThread, tm: JMethod, slots: any[], xp: number, xi: number): any {
+    const native: any[] = [slots[0]];
     for (let i = 1, p = 0; p < tm.params.length; p++) {
-      native.push(args[i]);
+      native.push(slots[i]);
       i += isWide(tm.params[p]) ? 2 : 1;
     }
     return runtime.slowCall(t, tm, native, xp, xi);
@@ -1356,7 +1375,8 @@ function genGuardMiss(g: Gen, pc: number, next: number, d: number, target: JMeth
   const ret = target.ret;
   const xp = g.xcode(pc, base, EXIT_SUSPEND), xi = g.xcode(pc, d, EXIT_INTERPRET);
   const cell = g.K([null, null, target.key]);
-  return `v=rt.callv(t,f,${cell},[${args}],${pc},${xp},${xi});if(v===rt.E){x=rt.xc;break X;}${ret === "V" ? "" : `s${base}=v;`}` +
+  const call = n <= 4 ? `rt.callv(t,f,${cell},${pc},${xp},${xi},${args})` : `rt.callvMany(t,f,${cell},[${args}],${pc},${xp},${xi})`;
+  return `v=${call};if(v===rt.E){x=rt.xc;break X;}${ret === "V" ? "" : `s${base}=v;`}` +
     `if(t.state!==0)${g.exit(next, ret === "V" ? base : base + (isWide(ret) ? 2 : 1), EXIT_SUSPEND)}`;
 }
 
