@@ -753,7 +753,8 @@ function callNested(t: JThread, m: JMethod, args: any[]): any {
 }
 
 // Feeds a native frame its pending input and acts on what it yields.
-function stepNative(t: JThread, f: NativeFrame) {
+// Returns true when the thread gives up its turn.
+function stepNative(t: JThread, f: NativeFrame): boolean {
   let r: IteratorResult<any, any>;
   try {
     if (f.thrown) {
@@ -768,12 +769,12 @@ function stepNative(t: JThread, f: NativeFrame) {
   } catch (e) {
     t.frames.pop();
     handleError(t, f.m ? fromNative(e, f.m) : e);
-    return;
+    return false;
   }
   if (r.done) {
     t.frames.pop();
     deliver(t, r.value, f.ret, f.reexec);
-    return;
+    return false;
   }
   const req = r.value;
   if (req.kind === "invoke") {
@@ -800,6 +801,8 @@ function stepNative(t: JThread, f: NativeFrame) {
     }
   } else if (req.kind === "unmount") {
     unmountNative(t);
+  } else if (req.kind === "yield") {
+    return true;
   } else if (req.kind === "wait") {
     t.state = WAITING;
     req.promise.then(
@@ -812,6 +815,7 @@ function stepNative(t: JThread, f: NativeFrame) {
       },
     );
   }
+  return false;
 }
 
 const entryStats = typeof process !== "undefined" && process.env?.JW_JIT_STATS ? new Map<string, number>() : null;
@@ -839,7 +843,7 @@ export function runThread(t: JThread, budget: number) {
       return;
     }
     if (f instanceof NativeFrame) {
-      stepNative(t, f);
+      if (stepNative(t, f)) return;
       budget--;
       continue;
     }

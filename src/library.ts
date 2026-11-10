@@ -9,7 +9,7 @@
 
 import { ACC_PUBLIC, ACC_SYNTHETIC, ACC_VARARGS, INITIALIZED, JArray, JObject, newArrayData } from "./runtime.ts";
 import type { JClass, JField, JMethod } from "./runtime.ts";
-import { JavaThrow } from "./thread.ts";
+import { JavaThrow, Signal } from "./thread.ts";
 import type { JThread, NativeGen, Request } from "./thread.ts";
 import type { JVM } from "./jvm.ts";
 
@@ -362,7 +362,7 @@ export class Library {
     for (;;) {
       this.idle.push(me);
       this.dispatch();
-      while (!me.call) yield t.block(new Promise<void>((r) => (me.wake = r)));
+      while (!me.call) yield t.block(new Signal((r) => (me.wake = r)));
       const call = me.call;
       me.call = null;
       yield* this.serve(t, call);
@@ -381,7 +381,7 @@ export class Library {
       for (;;) {
         this.idle.push(me);
         this.dispatch();
-        while (!me.call && !outcome) yield t.block(new Promise<void>((r) => (me.wake = r)));
+        while (!me.call && !outcome) yield t.block(new Signal((r) => (me.wake = r)));
         if (!me.call) {
           this.idle.splice(this.idle.indexOf(me), 1);
           break;

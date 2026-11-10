@@ -9,7 +9,7 @@ import type { Monitor } from "../runtime.ts";
 import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
 import {
   Frame, JThread, JavaThrow, PendingThrow, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_SLEEPING, STATUS_TIMED_WAITING,
-  STATUS_WAITING, TERMINATED,
+  STATUS_WAITING, Signal, TERMINATED,
 } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import { javaFrames, jstr, nonNull, sourceFile } from "./util.ts";
@@ -32,8 +32,8 @@ function checkInterrupt(t: JThread) {
 }
 
 // Sleeps up to ms (forever when ms is null), waking early on t.wake.
-export function interruptibleWait(t: JThread, ms: number | null, register?: (wake: () => void) => void): Promise<void> {
-  return new Promise<void>((resolve) => {
+export function interruptibleWait(t: JThread, ms: number | null, register?: (wake: () => void) => void): Signal {
+  return new Signal((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const done = () => {
       if (timer !== undefined) {
@@ -76,7 +76,7 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const i = mon.waiters.indexOf(entry!);
   if (i >= 0) mon.waiters.splice(i, 1);
   if (mon.owner !== null) setThreadStatus(t, STATUS_BLOCKED);
-  while (mon.owner !== null) yield t.block(new Promise<void>((r) => mon.entry.push(r)));
+  while (mon.owner !== null) yield t.block(new Signal((r) => mon.entry.push(r)));
   mon.owner = t;
   mon.count = count;
   t.waitingOn = null;
@@ -288,7 +288,7 @@ export const natives: Natives = {
   "java/lang/Thread.scopedValueCache()[Ljava/lang/Object;": (t) => t.scopedValueCache,
   "java/lang/Thread.setScopedValueCache([Ljava/lang/Object;)V": (t, [c]) => void (t.scopedValueCache = c),
   "java/lang/Thread.ensureMaterializedForStackWalk(Ljava/lang/Object;)V": () => undefined,
-  "java/lang/Thread.yield0()V": () => undefined,
+  "java/lang/Thread.yield0()V": function* (): NativeGen { yield { kind: "yield" }; },
   "java/lang/Thread.sleepNanos0(J)V": function* (t, [nanos]): NativeGen {
     checkInterrupt(t);
     setThreadStatus(t, STATUS_SLEEPING);

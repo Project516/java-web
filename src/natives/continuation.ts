@@ -7,7 +7,7 @@
 // Object.wait all unmount it, and the monitors move to a stand-in owner.
 
 import type { JObject, Monitor } from "../runtime.ts";
-import { Frame, JThread, NativeFrame, PendingThrow, RUNNABLE, WAITING } from "../thread.ts";
+import { Frame, JThread, NativeFrame, PendingThrow, RUNNABLE, Signal, WAITING } from "../thread.ts";
 import type { AnyFrame, NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { Natives } from "./util.ts";
@@ -230,7 +230,7 @@ export const natives: Natives = {
   // virtual threads that blocked on a monitor or in wait and can try again, linked by next
   "java/lang/VirtualThread.takeVirtualThreadListToUnblock()Ljava/lang/VirtualThread;": function* (t): NativeGen {
     const s = state(t.vm);
-    while (s.unblock.length === 0) yield t.block(new Promise<void>((r) => (s.unblocker = r)));
+    while (s.unblock.length === 0) yield t.block(new Signal((r) => (s.unblocker = r)));
     const list = s.unblock;
     s.unblock = [];
     let next: JObject | null = null;

@@ -15,7 +15,7 @@ import {
 } from "./runtime.ts";
 import type { CallSite, NativeFn } from "./runtime.ts";
 import {
-  Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
+  Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, Signal, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
   TERMINATED, WAITING,
 } from "./thread.ts";
 import type { NativeGen, Request } from "./thread.ts";
@@ -596,7 +596,7 @@ export class JVM {
       }
       if (c.state === INITIALIZING) {
         if (c.initThread === t) return;
-        yield t.block(new Promise<void>((r) => c.initWaiters.push(r)));
+        yield t.block(new Signal((r) => c.initWaiters.push(r)));
         continue;
       }
       break;
@@ -1048,7 +1048,7 @@ export class JVM {
   }
 
   private loop() {
-    this.scheduled = false;
+    // wakes during the turn join the queue it is draining
     noteYield();
     const end = performance.now() + 20;
     while (this.runQueue.length > 0 && this.exitCode === null) {
@@ -1065,6 +1065,7 @@ export class JVM {
       if (performance.now() > end || sched.yieldNow) break;
     }
     sched.thread = null;
+    this.scheduled = false;
     if (this.runQueue.length > 0) this.schedule();
   }
 
@@ -1127,7 +1128,7 @@ export class JVM {
     // Thread.join waits on the thread object, checking isAlive() under its
     // monitor. Take the monitor first, as HotSpot's ensure_join does, so a
     // joiner between isAlive() and wait() cannot miss the wakeup.
-    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Promise<void>((r) => obj.mon!.entry.push(r)));
+    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => obj.mon!.entry.push(r)));
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     this.setField(holder, "java/lang/Thread$FieldHolder", "threadStatus", STATUS_TERMINATED);
     this.setField(obj, "java/lang/Thread", "eetop", 0n);
