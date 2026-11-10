@@ -400,12 +400,29 @@ const broken = new Set<NodeJS.WriteStream>();
 function hostOut(s: NodeJS.WriteStream) {
   if (!s.listeners("error").includes(onOutError)) s.on("error", onOutError);
   return (b: Uint8Array) => {
+    if (closed.has(s)) throw new PendingThrow("java/io/IOException", "Bad file descriptor");
     if (broken.has(s)) throw new PendingThrow("java/io/IOException", "Broken pipe");
     s.write(b);
   };
 }
 function onOutError(this: NodeJS.WriteStream) {
   broken.add(this);
+}
+// Java closing descriptor 1 or 2 closes the host's, as in HotSpot, so a reader sees end of file.
+// /dev/null takes the number, so no file opened later gets the stream's writes.
+const closed = new Set<NodeJS.WriteStream>();
+function closeHostOut(s: NodeJS.WriteStream, fd: number) {
+  if (closed.has(s)) return;
+  closed.add(s);
+  const close = () => {
+    try {
+      fs.closeSync(fd);
+      const nul = fs.openSync("/dev/null", "w");
+      if (nul !== fd) fs.closeSync(nul);
+    } catch { /* already closed */ }
+  };
+  if (s.writableLength) s.once("drain", close);
+  else close();
 }
 
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
@@ -600,6 +617,10 @@ export function nodeVm(o: LauncherOptions): JVM {
     },
     stdout: o.stdout ?? hostOut(process.stdout),
     stderr: o.stderr ?? hostOut(process.stderr),
+    closeOutput: (fd) => {
+      if (fd === 1 && !o.stdout) closeHostOut(process.stdout, 1);
+      else if (fd === 2 && !o.stderr) closeHostOut(process.stderr, 2);
+    },
     stdin: o.input ? fixedInput(o.input) : () => new Promise((resolve) => {
       const onData = (d: Buffer) => { cleanup(); resolve(new Uint8Array(d)); };
       const onEnd = () => { cleanup(); resolve(null); };
