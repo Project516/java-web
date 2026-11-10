@@ -615,7 +615,8 @@ function findTests(paths: string[]): string[] {
     }
   };
   for (const p of paths) walk(join(testRoot, p));
-  return files;
+  // a directory and a file in it name the file twice
+  return [...new Set(files)];
 }
 
 // This shard's tests, slowest first: each goes to the shard with the least
