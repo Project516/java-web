@@ -188,6 +188,7 @@ java/lang/RuntimeTests/exec/ConcurrentRead.java
 java/lang/RuntimeTests/exec/Duped.java
 java/lang/RuntimeTests/exec/ExitValue.java
 java/lang/RuntimeTests/exec/LotsOfDestroys.java
+java/lang/RuntimeTests/exec/LotsOfOutput.java
 java/lang/RuntimeTests/loadLibrary/LoadLibraryTest.java
 java/lang/RuntimeTests/shutdown/ShutdownHooks.java
 java/lang/RuntimeTests/shutdown/ShutdownInterruptedMain.java
