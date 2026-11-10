@@ -365,7 +365,9 @@ export class NodeNet implements NetBackend {
       this.attach(s, ns);
       const im = s.impl as TcpImpl;
       let pairing: Pairing | undefined;
-      // the host assigns the local port by now; the listener's connection event may come before this one's connect event
+      // Registered on the next tick: net.connect issues the connect in a tick queued before this one,
+      // so the local port is known, and ticks run before any I/O callback, so before the listener's
+      // connection event. That event can still come before this socket's own connect event.
       if (listener) process.nextTick(() => {
         const clients = (listener.impl as TcpImpl | null)?.clients;
         if (!clients || ns.localPort === undefined || s.impl !== im) return;
