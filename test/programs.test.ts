@@ -34,7 +34,7 @@ for (const file of files) {
     const stdout: Uint8Array[] = [];
     const stderr: Uint8Array[] = [];
     let code: number;
-    if (vmFlags.some((f) => /^-(Xmx|XX:(OnOutOfMemoryError|MaxDirectMemorySize)=)/.test(f))) {
+    if (vmFlags.some((f) => /^-(Xmx|XX:(OnOutOfMemoryError|MaxDirectMemorySize)=)|^--finalization=/.test(f))) {
       const got = spawnSync(process.execPath, [join(root, "src", "node.ts"), ...vmFlags, "-cp", out, main], { input, encoding: "utf8" });
       stdout.push(new TextEncoder().encode(got.stdout));
       stderr.push(new TextEncoder().encode(got.stderr));

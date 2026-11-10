@@ -10,6 +10,7 @@ import type { NativeGen } from "./thread.ts";
 import type { JVM } from "./jvm.ts";
 import { INTERPRET, PUSHED, compileIfHot, hooks, noteBackedge } from "./jit.ts";
 import { unmountNative } from "./natives/continuation.ts";
+import { registerFinalizer } from "./natives/ref.ts";
 
 const MAX_FRAMES = 6000;
 
@@ -403,7 +404,9 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
           if (c === undefined) { f.pc = ipc; f.sp = sp; return budget; }
           if (c.state !== INITIALIZED && !vm.initialize(t, c)) { f.pc = ipc; f.sp = sp; return budget; }
           if (c.access & 0x0600) throw new PendingThrow("java/lang/InstantiationError", c.javaName);
-          stack[sp++] = new JObject(c, c.template.slice());
+          const o = new JObject(c, c.template.slice());
+          if (c.finalizable) registerFinalizer(vm, o);
+          stack[sp++] = o;
           pc += 3;
           break;
         }

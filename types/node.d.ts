@@ -24,6 +24,8 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // --finalization=disabled leaves finalize() uncalled (true by default)
+  finalization?: boolean;
   // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
   onOutOfMemoryError?: string[];
   // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
