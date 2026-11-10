@@ -244,25 +244,52 @@ const runtime = {
     return f;
   },
   // A call that is not direct: the result of a native or an interpreted
-  // method, PUSHED once the callee's frames must finish in the run loop, or
-  // INTERPRET for the run loop to make the call.
-  slowCall(t: JThread, m: JMethod, args: any[]): any {
-    if (m.isAbstract) return INTERPRET;
-    if (m.native === null) return m.code ? hooks.callNested(t, m, args) : INTERPRET;
+  // method. When the callee's frames must finish in the run loop (xp) or the
+  // run loop must make the call (xi), returns E with the exit code in xc.
+  slowCall(t: JThread, m: JMethod, args: any[], xp: number, xi: number): any {
     let r;
-    try {
-      r = m.native(t, args);
-    } catch (e) {
-      throw fromNative(e, m);
+    if (m.isAbstract) r = INTERPRET;
+    else if (m.native === null) r = m.code ? hooks.callNested(t, m, args) : INTERPRET;
+    else {
+      try {
+        r = m.native(t, args);
+      } catch (e) {
+        throw fromNative(e, m);
+      }
+      if (runtime.isGen(r)) {
+        t.frames.push(new NativeFrame(r, m, m.ret, false));
+        r = PUSHED;
+      } else if (m.ret === "Z" && typeof r === "boolean") r = r ? 1 : 0;
     }
-    if (runtime.isGen(r)) {
-      t.frames.push(new NativeFrame(r, m, m.ret, false));
-      return PUSHED;
-    }
-    return m.ret === "Z" && typeof r === "boolean" ? (r ? 1 : 0) : r;
+    if (r === PUSHED) runtime.xc = xp;
+    else if (r === INTERPRET) runtime.xc = xi;
+    else return r;
+    return runtime.E;
   },
-  PUSHED,
-  INTERPRET,
+  E: Object.freeze({ exit: true }),
+  xc: 0,
+  // slowCall's counterpart for a virtual call that missed its inlining guard:
+  // dispatches through the site's cache and calls a compiled target directly
+  callv(t: JThread, f: Frame, ic: any[], args: any[], pc: number, xp: number, xi: number): any {
+    f.pc = pc;
+    const recv = args[0] as JObject | null;
+    const tm: JMethod = recv !== null && recv.cls === ic[0] ? ic[1] : runtime.select(recv, ic, pc);
+    let cf: Frame | null;
+    if (tm.jit !== null && (cf = t.enter(tm, recv)) !== null) {
+      if ((tm.jit as (...a: any[]) => number)(t, cf, ...args) !== 0) {
+        t.unpool(cf);
+        runtime.xc = xp;
+        return runtime.E;
+      }
+      return t.ret;
+    }
+    const native: any[] = [recv];
+    for (let i = 1, p = 0; p < tm.params.length; p++) {
+      native.push(args[i]);
+      i += isWide(tm.params[p]) ? 2 : 1;
+    }
+    return runtime.slowCall(t, tm, native, xp, xi);
+  },
   longToFloat,
   npe: npeAt,
   arr(o: JArray | null, i: number, pc?: number): any {
@@ -539,6 +566,8 @@ interface Body {
   region: Region | null;
   // instructions before this pc were emitted already, as part of a fused sequence
   skip: number;
+  // operand stack slots known to hold a non-null value: `this` loaded since the last jump target
+  nn: Set<number>;
 }
 
 interface Region {
@@ -575,6 +604,8 @@ interface Gen {
   resume: Set<number>;
   // leave through the shared exit, which spills the frame's state; kind is an EXIT_* value
   exit: (pc: number, sp: number, kind: number) => string;
+  // the code of such an exit, for a helper that picks it at run time
+  xcode: (pc: number, sp: number, kind: number) => number;
   // run this one instruction in the interpreter
   slow: (pc: number, sp: number) => string;
   call: (pc: number, sp: number) => string;
@@ -584,23 +615,30 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const code = m.code!;
   const a = analyze(m);
   const consts: any[] = [];
+  const index = new Map<any, number>();
+  // a constant used again shares its slot; inline caches pass fresh arrays, so they stay apart
   const K = (v: any) => {
-    consts.push(v);
-    return `K[${consts.length - 1}]`;
+    let i = index.get(v);
+    if (i === undefined) {
+      i = consts.push(v) - 1;
+      index.set(v, i);
+    }
+    return `K[${i}]`;
   };
   const nl = code.maxLocals, ns = code.maxStack + 2;
   const L = (i: number) => `l${i}`;
   const S = (i: number) => `s${i}`;
   const alloc = `if(L===null){L=f.locals=new Array(${nl});S=f.stack=new Array(${ns});}`;
   const spillLocals = () => alloc + Array.from({ length: nl }, (_, i) => `L[${i}]=${L(i)};`).join("");
-  const top: Body = { m, a, L, S, out: [], region: null, skip: 0 };
+  const top: Body = { m, a, L, S, out: [], region: null, skip: 0, nn: new Set() };
   const resume = new Set<number>();
-  const exit = (pc: number, sp: number, kind: number) => {
+  const xcode = (pc: number, sp: number, kind: number) => {
     resume.add(pc);
-    return `{x=${exitCode(pc, sp, kind)};break X;}`;
+    return exitCode(pc, sp, kind);
   };
+  const exit = (pc: number, sp: number, kind: number) => `{x=${xcode(pc, sp, kind)};break X;}`;
   const g: Gen = {
-    t, K, vars: new Set(), regions: [], inlined: 0, top, resume, exit,
+    t, K, vars: new Set(), regions: [], inlined: 0, top, resume, exit, xcode,
     slow: (pc, sp) => exit(pc, sp, EXIT_FALLBACK),
     call: (pc, sp) => exit(pc, sp, EXIT_INTERPRET),
   };
@@ -635,7 +673,7 @@ function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const fname = `${m.cls.name}_${m.name}`.replace(/[^A-Za-z0-9_$]/g, "_");
   const out: string[] = [];
   // direct calls pass arguments as parameters and a frame without arrays
-  out.push(`return (function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks;`);
+  out.push(`return (function ${fname}(t,f${params.map((p) => "," + p).join("")}){let L=f.locals,S=f.stack;const vm=t.vm,H=rt.hooks,np=rt.npe;`);
   out.push(`let pc=f.pc,tm,cf,r,a,v,ic,ifs=0,dpc=0,dsp=0,x=0,xs=0,xe=null,${[...g.vars].join(",")};`);
   out.push(`if(L===null){${params.map((p, i) => `${L(i)}=${p};`).join("")}}else{${Array.from({ length: nl }, (_, i) => `${L(i)}=L[${i}];`).join("")}${Array.from({ length: ns }, (_, i) => `${S(i)}=S[${i}];`).join("")}}`);
   out.push(`X:{for(;;){try{switch(pc){`);
@@ -658,7 +696,7 @@ function deoptCatch(g: Gen): string {
     const chain: Body[] = [];
     for (let q: Body = r; q.region; q = q.region.parent) chain.unshift(q);
     const outer = chain[0].region!;
-    let s = `case ${r.region!.id}:rt.deopted(${g.K(r.m)},f.m);${stats ? `rt.noteDeopt(${g.K(r.m)},e);` : ""}`;
+    let s = `case ${r.region!.id}:`;
     chain.forEach((q, k) => {
       const code = q.m.code!;
       const inner = chain[k + 1]?.region;
@@ -669,8 +707,9 @@ function deoptCatch(g: Gen): string {
     });
     return s + `x=${exitCode(outer.callPc, outer.base, 0)};break;`;
   });
+  const callee = `${g.K(g.regions.map((r) => r.m))}[ifs-1]`;
   return `if(ifs!==0){if(e!==rt.DEOPT){dpc=e instanceof rt.PendingThrow&&e.pc!==undefined?e.pc:0;dsp=0;}` +
-    `switch(ifs){${cases.join("")}}ifs=0;if(f.direct)f.direct=false;` +
+    `rt.deopted(${callee},f.m);${stats ? `rt.noteDeopt(${callee},e);` : ""}switch(ifs){${cases.join("")}}ifs=0;if(f.direct)f.direct=false;` +
     `x+=e===rt.DEOPT?${EXIT_SUSPEND}:e instanceof rt.JavaThrow?${EXIT_RETHROW}:${EXIT_ERROR};xe=e;break X;}`;
 }
 
@@ -688,7 +727,7 @@ function genRegion(g: Gen, parent: Body, callee: JMethod, args: string[], result
   const single = info.starts.size === 1;
   const b: Body = {
     m: callee, a: info.a, L: (i) => `${p}l${i}`, S: (i) => `${p}s${i}`, out: [],
-    region: { id, level, pcVar: `${p}pc`, result, parent, callPc, base }, skip: 0,
+    region: { id, level, pcVar: `${p}pc`, result, parent, callPc, base }, skip: 0, nn: new Set(),
   };
   const mark = g.regions.length, inlined = g.inlined;
   g.regions.push(b);
@@ -719,8 +758,40 @@ function genRegion(g: Gen, parent: Body, callee: JMethod, args: string[], result
   }
 }
 
-// Emits the instruction at pc of body b.
+// Whether `this` of m is never overwritten, so aload_0 is never null.
+const keepsThis = new WeakMap<JMethod, boolean>();
+function thisKept(m: JMethod): boolean {
+  let k = keepsThis.get(m);
+  if (k === undefined) {
+    const c = m.code!.code;
+    k = !m.isStatic;
+    for (const pc of analyze(m).pcs) {
+      const op = c[pc];
+      if (op === 0x4b || (op === 0x3a && c[pc + 1] === 0) || (op === 0xc4 && c[pc + 1] === 0x3a && u16(c, pc + 2) === 0)) k = false;
+    }
+    keepsThis.set(m, k);
+  }
+  return k;
+}
+
+// Emits the instruction at pc of body b, then tracks which stack slots are
+// known to be non-null.
 function insn(g: Gen, b: Body, pc: number) {
+  const c = b.m.code!.code, op = c[pc];
+  const d = b.a.depth.get(pc)!;
+  if (b.a.targets.has(pc)) b.nn.clear();
+  insnCode(g, b, pc);
+  if (op === 0x2a || (op === 0x19 && c[pc + 1] === 0)) {
+    b.nn.delete(d + 1);
+    if (thisKept(b.m)) b.nn.add(d);
+    else b.nn.delete(d);
+  } else if (op >= 0x01 && op <= 0x2d) {
+    b.nn.delete(d);
+    b.nn.delete(d + 1);
+  } else b.nn.clear();
+}
+
+function insnCode(g: Gen, b: Body, pc: number) {
   const { m, L, S, region } = b;
   const t = g.t, vm = t.vm, K = g.K;
   const cls = m.cls;
@@ -772,7 +843,7 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x26: case 0x27: case 0x28: case 0x29: emit(`${S(d)}=${L(op - 0x26)};`); break;
     case 0x2a: case 0x2b: case 0x2c: case 0x2d: emit(`${S(d)}=${L(op - 0x2a)};`); break;
     case 0x2e: case 0x2f: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
-      emit(`if(${top(1)}===null)rt.npe(${pc});a=${top(1)}.a;if(${top()}>>>0>=a.length)rt.arr(${top(1)},${top()},${pc});${top(1)}=a[${top()}];`);
+      emit(`if(${top(1)}===null)np(${pc});a=${top(1)}.a;if(${top()}>>>0>=a.length)rt.arr(${top(1)},${top()},${pc});${top(1)}=a[${top()}];`);
       break;
     case 0x36: case 0x38: case 0x3a: emit(`${L(c[pc + 1])}=${top()};`); break;
     case 0x37: case 0x39: emit(`${L(c[pc + 1])}=${top(1)};`); break;
@@ -782,13 +853,13 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0x47: case 0x48: case 0x49: case 0x4a: emit(`${L(op - 0x47)}=${top(1)};`); break;
     case 0x4b: case 0x4c: case 0x4d: case 0x4e: emit(`${L(op - 0x4b)}=${top()};`); break;
     case 0x4f: case 0x51: case 0x55: case 0x56:
-      emit(`if(${top(2)}===null)rt.npe(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top()};`);
+      emit(`if(${top(2)}===null)np(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top()};`);
       break;
     case 0x54:
-      emit(`if(${top(2)}===null)rt.npe(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top(2)}.cls.name==="[Z"?${top()}&1:${top()};`);
+      emit(`if(${top(2)}===null)np(${pc});a=${top(2)}.a;if(${top(1)}>>>0>=a.length)rt.arr(${top(2)},${top(1)},${pc});a[${top(1)}]=${top(2)}.cls.name==="[Z"?${top()}&1:${top()};`);
       break;
     case 0x50: case 0x52:
-      emit(`if(${top(3)}===null)rt.npe(${pc});a=${top(3)}.a;if(${top(2)}>>>0>=a.length)rt.arr(${top(3)},${top(2)},${pc});a[${top(2)}]=${top(1)};`);
+      emit(`if(${top(3)}===null)np(${pc});a=${top(3)}.a;if(${top(2)}>>>0>=a.length)rt.arr(${top(3)},${top(2)},${pc});a[${top(2)}]=${top(1)};`);
       break;
     case 0x53: emit(`rt.aastore(${top(2)},${top(1)},${top()},${pc});`); break;
     case 0x57: case 0x58: break;
@@ -889,7 +960,8 @@ function insn(g: Gen, b: Body, pc: number) {
         break;
       }
       const pop = m.isSynchronized ? "H.popFrame(t,f);" : "t.frames.pop();";
-      emit(`${pop}if(f.direct){t.ret=${v};return 0;}H.deliver(t,${v},${JSON.stringify(m.ret)},false);return 0;`);
+      // deliver only tells void, boolean and wide results apart
+      emit(`${pop}if(f.direct){t.ret=${v};return 0;}H.deliver(t,${v},"${m.ret[0] === "[" ? "L" : m.ret[0]}",false);return 0;`);
       break;
     }
     case 0xb2: case 0xb3: {
@@ -903,19 +975,21 @@ function insn(g: Gen, b: Body, pc: number) {
     case 0xb4: case 0xb5: {
       const fld = cls.rcp[idx2] as JField | undefined;
       if (!fld) { emit(slow(pc, d)); break; }
-      if (op === 0xb4) emit(`if(${top()}===null)rt.npe(${pc});${top()}=${top()}.f[${fld.slot}];`);
+      if (op === 0xb4) emit(`${b.nn.has(d - 1) ? "" : `if(${top()}===null)np(${pc});`}${top()}=${top()}.f[${fld.slot}];`);
       else {
-        const obj = fld.wide ? top(2) : top(1);
-        emit(`if(${obj}===null)rt.npe(${pc});${obj}.f[${fld.slot}]=${fld.wide ? top(1) : top()};`);
+        const k = fld.wide ? 2 : 1;
+        const obj = top(k);
+        emit(`${b.nn.has(d - 1 - k) ? "" : `if(${obj}===null)np(${pc});`}${obj}.f[${fld.slot}]=${fld.wide ? top(1) : top()};`);
       }
       break;
     }
     case 0xb6: case 0xb7: case 0xb8: case 0xb9: {
       const target = cls.rcp[idx2] as JMethod | undefined;
-      if (region) { emit(regionInvoke(g, b, op, pc, d, target)); break; }
+      const known = !!target && op !== 0xb8 && b.nn.has(d - target.argSlots);
+      if (region) { emit(regionInvoke(g, b, op, pc, d, target, known)); break; }
       if (!target || (op === 0xb8 && target.cls.state !== INITIALIZED)) { emit(slow(pc, d)); break; }
       if (target.polymorphic) emit(genPolymorphic(g, pc, next, d, target));
-      else emit(genInvoke(g, op, pc, next, d, target, cls));
+      else emit(genInvoke(g, op, pc, next, d, target, cls, d, true, known));
       break;
     }
     case 0xba: {
@@ -949,10 +1023,10 @@ function insn(g: Gen, b: Body, pc: number) {
       emit(`${top()}=rt.newarray(${K(vm.arrayOf(k))},"L",${top()},${pc});`);
       break;
     }
-    case 0xbe: emit(`if(${top()}===null)rt.npe(${pc});${top()}=${top()}.a.length;`); break;
+    case 0xbe: emit(`if(${top()}===null)np(${pc});${top()}=${top()}.a.length;`); break;
     case 0xbf:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)rt.npe(${pc});throw new rt.JavaThrow(${top()});`);
+      emit(`if(${top()}===null)np(${pc});throw new rt.JavaThrow(${top()});`);
       break;
     case 0xc0: case 0xc1: {
       const k = cls.rcp[idx2] as JClass | undefined;
@@ -968,11 +1042,11 @@ function insn(g: Gen, b: Body, pc: number) {
     }
     case 0xc2:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)rt.npe(${pc});if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}`);
+      emit(`if(${top()}===null)np(${pc});if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}`);
       break;
     case 0xc3:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)rt.npe(${pc});vm.monitorExit(t,${top()});`);
+      emit(`if(${top()}===null)np(${pc});vm.monitorExit(t,${top()});`);
       break;
     case 0xc4: {
       const wop = c[pc + 1], i = u16(c, pc + 2);
@@ -1031,7 +1105,7 @@ function fuseConcat(g: Gen, b: Body, pc: number): { pieces: string[]; end: numbe
 
 // An invoke inside a region: the target must be fixed and inlinable itself, or a
 // virtual call to the receiver class seen last here, which deoptimizes on any other.
-function regionInvoke(g: Gen, b: Body, op: number, pc: number, d: number, target: JMethod | undefined): string {
+function regionInvoke(g: Gen, b: Body, op: number, pc: number, d: number, target: JMethod | undefined, known: boolean): string {
   if (!target || target.polymorphic || (op === 0xb8 && target.cls.state !== INITIALIZED)) throw new NoInline();
   let callee = op === 0xb7 ? g.t.vm.specialTarget(b.m.cls, target) : target;
   let guard: JClass | null = null;
@@ -1046,10 +1120,11 @@ function regionInvoke(g: Gen, b: Body, op: number, pc: number, d: number, target
   const base = d - n;
   const args = Array.from({ length: n }, (_, i) => b.S(base + i));
   const result = target.ret === "V" ? null : b.S(base);
-  const check = guard === null ? "" : `if(${args[0]}!==null&&${args[0]}.cls!==${g.K(guard)}){dpc=${pc};dsp=${d};throw rt.DEOPT;}`;
+  const check = guard === null ? "" : `if(${known ? "" : `${args[0]}!==null&&`}${args[0]}.cls!==${g.K(guard)}){dpc=${pc};dsp=${d};throw rt.DEOPT;}`;
   const trivial = trivialBody(callee);
-  if (trivial) return check + genInline(trivial, result ?? "v", args, pc, callee.isStatic);
-  return check + (callee.isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`) + genRegion(g, b, callee, args, result, pc, base);
+  const needNull = !callee.isStatic && !known;
+  if (trivial) return check + genInline(trivial, result ?? "v", args, pc, needNull);
+  return check + (needNull ? `if(${args[0]}===null)np(${pc});` : "") + genRegion(g, b, callee, args, result, pc, base);
 }
 
 // The callee of an invoke does not depend on the receiver's class.
@@ -1176,8 +1251,8 @@ function trivialBody(m: JMethod): Trivial | null {
   return build ? { kind: "expr", build } : null;
 }
 
-function genInline(body: Trivial, res: string, args: string[], pc: number, isStatic: boolean): string {
-  const nullCheck = isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`;
+function genInline(body: Trivial, res: string, args: string[], pc: number, checkNull: boolean): string {
+  const nullCheck = checkNull ? `if(${args[0]}===null)np(${pc});` : "";
   switch (body.kind) {
     case "empty": return nullCheck;
     case "const": return `${nullCheck}${res}=${body.value};`;
@@ -1189,7 +1264,7 @@ function genInline(body: Trivial, res: string, args: string[], pc: number, isSta
 
 function genInvoke(
   g: Gen, op: number, pc: number, next: number, d: number, target: JMethod, cls: JClass,
-  slowDepth = d, inline = slowDepth === d,
+  slowDepth = d, inline = slowDepth === d, known = false,
 ): string {
   const { t, K, exit, call } = g;
   const n = target.argSlots;
@@ -1213,11 +1288,13 @@ function genInvoke(
     const res = `s${base}`;
     let code: string | null = null;
     const trivial = trivialBody(callee);
+    // a class guard already rules out null
+    const needNull = !callee.isStatic && guard === null && !known;
     if (op === 0xb9 && !seen) code = null;
-    else if (trivial) code = genInline(trivial, res, args, pc, callee.isStatic);
+    else if (trivial) code = genInline(trivial, res, args, pc, needNull);
     else if (callee.code && !callee.isAbstract) {
       try {
-        const nullCheck = callee.isStatic ? "" : `if(${args[0]}===null)rt.npe(${pc});`;
+        const nullCheck = needNull ? `if(${args[0]}===null)np(${pc});` : "";
         code = nullCheck + genRegion(g, g.top, callee, args, target.ret === "V" ? null : res, pc, base);
       } catch (e) {
         if (!(e instanceof NoInline)) throw e;
@@ -1225,20 +1302,20 @@ function genInvoke(
     }
     if (code !== null) {
       if (guard === null) return code;
-      return `if(${args[0]}!==null&&${args[0]}.cls===${K(guard)}){${code}}else{${genInvoke(g, op, pc, next, d, target, cls, d, false)}}`;
+      return `if(${args[0]}!==null&&${args[0]}.cls===${K(guard)}){${code}}else{${genGuardMiss(g, pc, next, d, target)}}`;
     }
   }
   const parts: string[] = [`f.pc=${pc};`];
   // pick the method
   if (op === 0xb6 || op === 0xb9) {
-    if (target.isPrivate) parts.push(`tm=${K(target)};if(${args[0]}===null)rt.npe(${pc});`);
+    if (target.isPrivate) parts.push(`tm=${K(target)};${known ? "" : `if(${args[0]}===null)np(${pc});`}`);
     else {
       const cell = K([null, null, target.key]);
       parts.push(`ic=${cell};tm=${args[0]}!==null&&${args[0]}.cls===ic[0]?ic[1]:rt.select(${args[0]},ic,${pc});`);
     }
   } else if (op === 0xb7) {
     const special = t.vm.specialTarget(cls, target);
-    parts.push(`tm=${K(special)};if(${args[0]}===null)rt.npe(${pc});`);
+    parts.push(`tm=${K(special)};${known ? "" : `if(${args[0]}===null)np(${pc});`}`);
   } else parts.push(`tm=${K(target)};`);
   const ret = target.ret;
   const res = (v: string) => (ret === "V" ? "" : `s${base}=${v};`);
@@ -1248,10 +1325,23 @@ function genInvoke(
   parts.push(`r=tm.jit(t,cf${args.map((x) => "," + x).join("")});if(r!==0){t.unpool(cf);${exit(pc, base, EXIT_SUSPEND)}}`);
   parts.push(`${res("t.ret")}}`);
   // a native callee runs here; anything else goes through the interpreter
-  parts.push(`else{v=rt.slowCall(t,tm,[${nativeArgs(target, args)}]);`);
-  parts.push(`if(v===rt.PUSHED)${exit(pc, base, EXIT_SUSPEND)}if(v===rt.INTERPRET)${call(pc, slowDepth)}`);
+  const xp = g.xcode(pc, base, EXIT_SUSPEND), xi = g.xcode(pc, slowDepth, EXIT_INTERPRET);
+  parts.push(`else{v=rt.slowCall(t,tm,[${nativeArgs(target, args)}],${xp},${xi});if(v===rt.E){x=rt.xc;break X;}`);
   parts.push(`${res("v")}if(t.state!==0)${exit(next, ret === "V" ? base : base + (isWide(ret) ? 2 : 1), EXIT_SUSPEND)}}`);
   return parts.join("");
+}
+
+// A virtual or interface call after its inlining guard failed: the same
+// call as genInvoke makes, out of line to keep the code small.
+function genGuardMiss(g: Gen, pc: number, next: number, d: number, target: JMethod): string {
+  const n = target.argSlots;
+  const base = d - n;
+  const args = Array.from({ length: n }, (_, i) => `s${base + i}`);
+  const ret = target.ret;
+  const xp = g.xcode(pc, base, EXIT_SUSPEND), xi = g.xcode(pc, d, EXIT_INTERPRET);
+  const cell = g.K([null, null, target.key]);
+  return `v=rt.callv(t,f,${cell},[${args}],${pc},${xp},${xi});if(v===rt.E){x=rt.xc;break X;}${ret === "V" ? "" : `s${base}=v;`}` +
+    `if(t.state!==0)${g.exit(next, ret === "V" ? base : base + (isWide(ret) ? 2 : 1), EXIT_SUSPEND)}`;
 }
 
 // Signature-polymorphic calls, dispatched as the interpreter does: invokeBasic
