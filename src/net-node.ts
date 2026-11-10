@@ -210,6 +210,7 @@ export class NodeNet implements NetBackend {
         this.attach(c, ns);
         const im = s.impl as TcpImpl;
         const pairing = im.clients?.get(ns.remotePort ?? -1);
+        // the queue holds maxBacklog + 1, as Linux's does
         if (s.backlog.length > s.maxBacklog) im.overflow!.push({ c, pairing });
         else {
           s.backlog.push(c);
