@@ -74,6 +74,18 @@ export function javaHeap(): { used: number; committed: number } | null {
   return { used: Math.min(used, committed), committed };
 }
 
+// The engine's own heap use and limit, unclamped; null where it cannot tell.
+export function engineHeap(): { used: number; limit: number } | null {
+  const g = globalThis as any;
+  const node = g.process?.memoryUsage?.();
+  if (node) {
+    const v8 = g.process.getBuiltinModule?.("node:v8");
+    return v8 ? { used: node.heapUsed + node.arrayBuffers, limit: v8.getHeapStatistics().heap_size_limit } : null;
+  }
+  const chrome = g.performance?.memory;
+  return chrome ? { used: chrome.usedJSHeapSize, limit: chrome.jsHeapSizeLimit } : null;
+}
+
 function* beans(t: JThread): NativeGen {
   const vm = t.vm;
   let b = vm.state.get("mgmtBeans") as Beans | undefined;

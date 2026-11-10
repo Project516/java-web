@@ -426,6 +426,15 @@ export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: (
   allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
+// Lets go of what the VM holds for the program's sake (soft referents) before an
+// OutOfMemoryError; returns whether there was any.
+let reclaim: (() => boolean) | null = null;
+export function setReclaim(f: () => boolean) { reclaim = f; }
+// An allocation that cannot succeed still collects first, as HotSpot does, so
+// the program sees soft references cleared.
+function collectBeforeGivingUp() {
+  if (reclaim?.()) (allocationCheck?.gc ?? (globalThis as { gc?: () => void }).gc)?.();
+}
 // A JObject made while a collection hands a finalizable object to its Finalizer:
 // it is not an allocation that can fail.
 export function wrapperOver(cls: JClass, f: any[]): JObject {
@@ -437,6 +446,11 @@ export function wrapperOver(cls: JClass, f: any[]): JObject {
   } finally {
     if (check) check.enabled = was!;
   }
+}
+// Java heap bytes still free under the cap, measured as the cap is.
+export function freeHeap(): number {
+  const check = allocationCheck;
+  return check?.enabled ? MAX_HEAP - (check.usage() - check.baseline) : MAX_HEAP;
 }
 export function resetAllocationCheck() {
   if (!allocationCheck) return;
@@ -500,7 +514,12 @@ function allocated(bytes: number) {
   if (check.allocated < (check.gc || check.lazy ? check.step : check.cap)) return;
   check.allocated = 0;
   if (check.usage() - check.baseline > check.cap) check.gc?.();
-  const over = check.usage() - check.baseline > check.cap;
+  let over = check.usage() - check.baseline > check.cap;
+  // soft references go before an OutOfMemoryError, as in HotSpot
+  if (over && reclaim?.() && check.gc) {
+    check.gc();
+    over = check.usage() - check.baseline > check.cap;
+  }
   if (!over) {
     check.over = false;
     return;
@@ -536,7 +555,10 @@ function store(bytes: number): [ArrayBuffer, number] | null {
 export function newArrayData(elem: string, n: number): ArrayData {
   if (n > 0x7ffffffd) throw new PendingThrow("java/lang/OutOfMemoryError", "Requested array size exceeds VM limit");
   const bytes = n * ELEM_SIZE[elem];
-  if (bytes > MAX_HEAP) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  if (bytes > MAX_HEAP) {
+    collectBeforeGivingUp();
+    throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  }
   const at = elem === "L" ? null : store(bytes);
   try {
     switch (elem) {
@@ -551,7 +573,10 @@ export function newArrayData(elem: string, n: number): ArrayData {
     }
   } catch (e) {
     // the JS engine's own size limits, below MAX_HEAP for object arrays
-    if (e instanceof RangeError) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+    if (e instanceof RangeError) {
+      collectBeforeGivingUp();
+      throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+    }
     throw e;
   }
 }

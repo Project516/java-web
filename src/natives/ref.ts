@@ -1,15 +1,17 @@
-// java.lang.ref on the JS engine's collector. A weak or phantom reference
+// java.lang.ref on the JS engine's collector. A weak, soft or phantom reference
 // holds its referent through a JS WeakRef, so the referent can be collected;
 // a FinalizationRegistry then puts the reference on the pending list that the
-// Reference Handler thread enqueues from. Soft references stay strong. An
-// object whose class has a finalizer is watched too: its wrapper is collected,
-// and the Finalizer gets a new wrapper over the same storage.
+// Reference Handler thread enqueues from. A soft referent is also held by a
+// table that is emptied when memory runs short. An object whose class has a
+// finalizer is watched too: its wrapper is collected, and the Finalizer gets a
+// new wrapper over the same storage.
 
-import { INITIALIZED, wrapperOver } from "../runtime.ts";
+import { INITIALIZED, MAX_HEAP, freeHeap, hasMaxHeap, setReclaim, wrapperOver } from "../runtime.ts";
 import { JObject } from "../runtime.ts";
 import type { JClass } from "../runtime.ts";
 import type { JThread, NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
+import { engineHeap } from "./management.ts";
 import type { Natives } from "./util.ts";
 
 const R = "java/lang/ref/Reference";
@@ -24,7 +26,7 @@ interface Fin {
   x: any;
 }
 
-// A weak or phantom reference (its referent is watched), a finalizer, or a collect() probe.
+// A reference whose referent is watched, a finalizer, or a collect() probe.
 type Held = WeakRef<JObject> | Fin | (() => void);
 
 interface RefState {
@@ -36,7 +38,11 @@ interface RefState {
   registry: FinalizationRegistry<Held>;
   weak: JClass;
   phantom: JClass;
+  soft: JClass;
   finalizer: JClass;
+  // soft reference -> referent: held while the reference is alive, until memory runs short
+  softs: WeakMap<JObject, JObject>;
+  softCount: number;
 }
 
 function refs(vm: JVM): RefState {
@@ -60,8 +66,12 @@ function refs(vm: JVM): RefState {
       }),
       weak: vm.loadBoot("java/lang/ref/WeakReference")!,
       phantom: vm.loadBoot("java/lang/ref/PhantomReference")!,
+      soft: vm.loadBoot("java/lang/ref/SoftReference")!,
       finalizer: vm.loadBoot("java/lang/ref/Finalizer")!,
+      softs: new WeakMap(),
+      softCount: 0,
     };
+    setReclaim(() => clearSoftReferences(vm));
     vm.state.set("refs", s);
   }
   return s;
@@ -78,16 +88,47 @@ function referent(t: JThread, r: JObject): JObject | null {
 }
 
 function clear(t: JThread, r: JObject) {
-  if (r.x instanceof WeakRef) refs(t.vm).registry.unregister(r);
+  if (r.x instanceof WeakRef) {
+    const s = refs(t.vm);
+    s.registry.unregister(r);
+    s.softs.delete(r);
+  }
   r.x = null;
   t.vm.setField(r, R, "referent", null);
 }
 
-// A weak or phantom reference to obj; a reference with a queue is enqueued
-// when obj is collected.
+// A weak, soft or phantom reference to obj; a reference with a queue is
+// enqueued when obj is collected.
 function watch(s: RefState, self: JObject, obj: JObject, queued: boolean) {
   self.x = new WeakRef(obj);
+  if (self.cls.isSubclassOf(s.soft)) {
+    s.softs.set(self, obj);
+    s.softCount++;
+  }
   if (queued) s.registry.register(obj, new WeakRef(self), self);
+}
+
+// Lets the engine collect the soft referents nothing else reaches. Returns
+// whether there were any soft references.
+function clearSoftReferences(vm: JVM): boolean {
+  const s = refs(vm);
+  if (s.softCount === 0) return false;
+  s.softs = new WeakMap();
+  s.softCount = 0;
+  return true;
+}
+
+function memoryShort(): boolean {
+  if (hasMaxHeap()) return freeHeap() < MAX_HEAP / 2;
+  const h = engineHeap();
+  return h !== null && h.used > h.limit / 2;
+}
+
+// HotSpot clears soft references when memory is short: here, on System.gc()
+// with more than half of the heap limit in use.
+export function releaseSoftReferences(vm: JVM) {
+  if (refs(vm).softCount === 0 || !memoryShort()) return;
+  clearSoftReferences(vm);
 }
 
 const PROBE_MS = 50;
@@ -198,7 +239,7 @@ function watchFinalizer(vm: JVM, s: RefState, fin: JObject, obj: JObject) {
   s.registry.register(obj, h, fin);
 }
 
-// A weak, phantom or final reference restored from a snapshot: watch its
+// A weak, soft, phantom or final reference restored from a snapshot: watch its
 // referent again.
 export function restoreReference(vm: JVM, self: JObject, obj: JObject) {
   const s = refs(vm);
@@ -221,7 +262,7 @@ export const intrinsics: Natives = {
     vm.setField(self, R, "queue", queue ?? none);
     const s = refs(vm);
     const c = self.cls;
-    if (obj !== null && (c.isSubclassOf(s.weak) || c.isSubclassOf(s.phantom))) watch(s, self, obj, queue !== null && queue !== none);
+    if (obj !== null && (c.isSubclassOf(s.weak) || c.isSubclassOf(s.phantom) || c.isSubclassOf(s.soft))) watch(s, self, obj, queue !== null && queue !== none);
     else vm.setField(self, R, "referent", obj);
   },
   [`${R}.get()Ljava/lang/Object;`]: (t, [self]) => referent(t, self),
