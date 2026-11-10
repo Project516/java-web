@@ -242,7 +242,7 @@ export function pin(o: JMethod | any[] | { c: JClass | null; m: JMethod | null; 
 // Returns whether there was anything to empty. With a gap, it does nothing
 // within that many ms of the last time: compiled code is dropped, and a
 // program that collects in a loop would compile it again each time.
-let pinsReleased = 0;
+let pinsReleased = -Infinity;
 export function releasePins(gapMs = 0): boolean {
   const now = performance.now();
   if (now - pinsReleased < gapMs) return false;
