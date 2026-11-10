@@ -1,7 +1,7 @@
 // Bytecode interpreter and the per-thread run loop.
 
 import {
-  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData, sched,
+  INITIALIZED, JArray, JClass, JMethod, JObject, isWide, longToFloat, newArrayData, pin, sched,
 } from "./runtime.ts";
 import {
   Frame, JThread, JavaThrow, MAX_DIRECT, NativeFrame, PendingThrow, RUNNABLE, TERMINATED, WAITING, fromNative,
@@ -375,12 +375,20 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
               target = vm.specialTarget(cls, target);
             } else if (!target.isPrivate) {
               const cache = m.cache ??= [];
-              const ic = cache[ipc];
+              let ic = cache[ipc];
               if (ic !== undefined && ic.c === o.cls) target = ic.m;
               else {
                 const sel = o.cls.selectMethod(target.key);
                 if (!sel) throw new PendingThrow("java/lang/AbstractMethodError", `${o.cls.javaName}.${target.name}${target.desc}`);
-                cache[ipc] = { c: o.cls, m: sel };
+                if (ic === undefined) cache[ipc] = ic = { c: o.cls, m: sel, p: false };
+                else {
+                  ic.c = o.cls;
+                  ic.m = sel;
+                }
+                if (o.cls.unloadable && !ic.p) {
+                  ic.p = true;
+                  pin(ic);
+                }
                 target = sel;
               }
             }
