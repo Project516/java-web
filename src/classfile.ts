@@ -37,24 +37,37 @@ export interface ExceptionEntry {
 export class Code {
   readonly maxStack: number;
   readonly maxLocals: number;
-  readonly code: Uint8Array;
   readonly handlers: ExceptionEntry[];
-  // raw LocalVariableTable attribute body, parsed on demand
-  readonly localVars: Uint8Array | null;
   // the class's bytes, and where its LineNumberTable bodies start (-1 for none)
   private bytes: Uint8Array;
+  private codeAt: number;
+  private codeEnd: number;
+  private view: Uint8Array | null = null;
+  // where the LocalVariableTable body starts and ends (-1 for none)
+  private varsAt: number;
+  private varsEnd: number;
   private linesAt: number;
   private moreLines: number[] | null;
   private parsedLines: number[] | null | undefined;
-  constructor(maxStack: number, maxLocals: number, code: Uint8Array, handlers: ExceptionEntry[], bytes: Uint8Array, linesAt: number, moreLines: number[] | null, localVars: Uint8Array | null) {
+  constructor(maxStack: number, maxLocals: number, codeAt: number, codeEnd: number, handlers: ExceptionEntry[], bytes: Uint8Array, linesAt: number, moreLines: number[] | null, varsAt: number, varsEnd: number) {
     this.maxStack = maxStack;
     this.maxLocals = maxLocals;
-    this.code = code;
+    this.codeAt = codeAt;
+    this.codeEnd = codeEnd;
     this.handlers = handlers;
     this.bytes = bytes;
     this.linesAt = linesAt;
     this.moreLines = moreLines;
-    this.localVars = localVars;
+    this.varsAt = varsAt;
+    this.varsEnd = varsEnd;
+  }
+  // the bytecode, as a view made on first use: most methods never run
+  get code(): Uint8Array {
+    return this.view ??= this.bytes.subarray(this.codeAt, this.codeEnd);
+  }
+  // the raw LocalVariableTable attribute body
+  get localVars(): Uint8Array | null {
+    return this.varsAt < 0 ? null : this.bytes.subarray(this.varsAt, this.varsEnd);
   }
   // pairs of (start pc, line), sorted by pc
   get lines(): number[] | null {
@@ -86,7 +99,8 @@ export interface Member {
   access: number;
   name: string;
   desc: string;
-  attrs: Map<string, Uint8Array>;
+  // the attributes besides Code: a map, or where they start in the class file for memberAttrs
+  attrs: Map<string, Uint8Array> | number;
   code: Code | null;
 }
 
@@ -191,7 +205,8 @@ function readMember(r: Reader, cp: ClassFile["cp"]): Member {
   const access = r.u2();
   const name = utf8(cp, r.u2());
   const desc = utf8(cp, r.u2());
-  let attrs = NO_ATTRS;
+  const at = r.pos;
+  let attrs: Map<string, Uint8Array> | number = NO_ATTRS;
   let code: Code | null = null;
   for (let n = r.u2(); n > 0; n--) {
     const attr = utf8(cp, r.u2());
@@ -201,11 +216,24 @@ function readMember(r: Reader, cp: ClassFile["cp"]): Member {
       code = readCode(r, cp);
       r.pos = end;
     } else {
-      if (attrs === NO_ATTRS) attrs = new Map();
-      attrs.set(attr, r.slice(length));
+      attrs = at;
+      r.pos += length;
     }
   }
   return { access, name, desc, attrs, code };
+}
+
+// The attributes of the member whose attribute count is at `at`, but Code.
+export function memberAttrs(cp: ClassFile["cp"], at: number): Map<string, Uint8Array> {
+  const r = new Reader(cp.bytes);
+  r.pos = at;
+  const attrs = new Map<string, Uint8Array>();
+  for (let n = r.u2(); n > 0; n--) {
+    const name = utf8(cp, r.u2());
+    const body = r.slice(r.u4());
+    if (name !== "Code") attrs.set(name, body);
+  }
+  return attrs;
 }
 
 function readAttrs(r: Reader, cp: ClassFile["cp"]) {
@@ -220,7 +248,9 @@ function readAttrs(r: Reader, cp: ClassFile["cp"]) {
 function readCode(r: Reader, cp: ClassFile["cp"]): Code {
   const maxStack = r.u2();
   const maxLocals = r.u2();
-  const code = r.slice(r.u4());
+  const codeAt = r.pos + 4;
+  const codeEnd = codeAt + r.u4();
+  r.pos = codeEnd;
   let n = r.u2();
   const handlers: ExceptionEntry[] = n === 0 ? NO_HANDLERS : [];
   for (; n > 0; n--) {
@@ -228,7 +258,7 @@ function readCode(r: Reader, cp: ClassFile["cp"]): Code {
   }
   let linesAt = -1;
   let moreLines: number[] | null = null;
-  let localVars: Uint8Array | null = null;
+  let varsAt = -1, varsEnd = -1;
   for (n = r.u2(); n > 0; n--) {
     const name = utf8(cp, r.u2());
     const length = r.u4();
@@ -237,11 +267,14 @@ function readCode(r: Reader, cp: ClassFile["cp"]): Code {
       else (moreLines ??= []).push(r.pos);
       r.pos += length;
     } else {
-      const body = r.slice(length);
-      if (name === "LocalVariableTable") localVars = body;
+      if (name === "LocalVariableTable") {
+        varsAt = r.pos;
+        varsEnd = r.pos + length;
+      }
+      r.pos += length;
     }
   }
-  return new Code(maxStack, maxLocals, code, handlers, r.bytes, linesAt, moreLines, localVars);
+  return new Code(maxStack, maxLocals, codeAt, codeEnd, handlers, r.bytes, linesAt, moreLines, varsAt, varsEnd);
 }
 
 export function cpEntry(cp: ClassFile["cp"], i: number): CpEntry | undefined {
