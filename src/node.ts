@@ -424,10 +424,9 @@ function closeHostOut(s: NodeJS.WriteStream, fd: number) {
       if (nul !== fd) fs.closeSync(nul);
     } catch { /* already closed */ }
   };
-  if (s.writableLength) {
-    s.once("drain", close);
-    s.once("error", close);
-  } else close();
+  // runs once the writes before it are done
+  s.write("", close);
+  s.once("error", close);
 }
 
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
