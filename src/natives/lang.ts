@@ -387,7 +387,7 @@ export const natives: Natives = {
     for (const th of t.vm.threads) for (const f of th.frames) if (f instanceof Frame && f.stack) f.stack.fill(undefined, f.sp);
     releaseSoftReferences(t.vm);
     releaseFinalizerCycles(t.vm);
-    releasePins(250);
+    releasePins(5000);
     const t0 = performance.now();
     yield t.block(collect(t.vm, gc));
     stats.ms += performance.now() - t0;
