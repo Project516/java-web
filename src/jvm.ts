@@ -1072,6 +1072,7 @@ export class JVM {
     // wakes during the turn join the queue it is draining
     noteYield();
     const end = performance.now() + 20;
+    let turns = 0;
     while (this.exitCode === null) {
       const t = this.next();
       if (t === undefined) break;
@@ -1084,7 +1085,7 @@ export class JVM {
         this.queued.add(t);
         this.runQueue.push(t);
       }
-      if (performance.now() > end || sched.pause) break;
+      if (sched.pause || ((++turns & 15) === 0 && performance.now() > end)) break;
       sched.yieldNow = false;
     }
     sched.thread = null;
