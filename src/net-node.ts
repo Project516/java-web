@@ -339,7 +339,14 @@ export class NodeNet implements NetBackend {
 
   private listenerAt(ep: Endpoint): Sock | undefined {
     const to = E.isWildcard(ep.addr) ? Uint8Array.of(127, 0, 0, 1) : ep.addr;
-    return [...this.live].find((o) => o.listening && !o.unix && o.local?.port === ep.port && E.overlap(o.local.addr, to));
+    let found: Sock | undefined;
+    for (const o of this.live) {
+      if (!o.listening || o.unix || o.local?.port !== ep.port || !E.overlap(o.local.addr, to)) continue;
+      // listeners sharing the port (SO_REUSEPORT): the host picks one, so the connect cannot be held
+      if (found) return undefined;
+      found = o;
+    }
+    return found;
   }
 
   // listener is a listening socket of this VM that the connect goes to
