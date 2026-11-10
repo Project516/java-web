@@ -30,6 +30,55 @@ function view(a: JArray): DataView {
   return (a.x = new DataView(d.buffer, d.byteOffset, d.byteLength));
 }
 
+// A byte[] access of another width, composed from bytes: a DataView per
+// array would cost more than the short-lived arrays it serves.
+const scratchBytes = new Uint8Array(8);
+const scratch = new DataView(scratchBytes.buffer);
+
+function bytesRead(a: Int8Array, p: number, k: string, le: boolean): any {
+  switch (k) {
+    case "S": return le ? ((a[p + 1] << 24) | ((a[p] & 255) << 16)) >> 16 : ((a[p] << 24) | ((a[p + 1] & 255) << 16)) >> 16;
+    case "C": return le ? ((a[p + 1] & 255) << 8) | (a[p] & 255) : ((a[p] & 255) << 8) | (a[p + 1] & 255);
+    case "I": return le
+      ? (a[p + 3] << 24) | ((a[p + 2] & 255) << 16) | ((a[p + 1] & 255) << 8) | (a[p] & 255)
+      : (a[p] << 24) | ((a[p + 1] & 255) << 16) | ((a[p + 2] & 255) << 8) | (a[p + 3] & 255);
+    case "Z": return a[p] !== 0 ? 1 : 0;
+    case "B": return a[p];
+  }
+  const n = k === "F" ? 4 : 8;
+  for (let i = 0; i < n; i++) scratchBytes[i] = a[p + i];
+  return dvRead(scratch, 0, k, le);
+}
+
+function bytesWrite(a: Int8Array, p: number, k: string, v: any, le: boolean) {
+  switch (k) {
+    case "S": case "C":
+      a[p + (le ? 0 : 1)] = v;
+      a[p + (le ? 1 : 0)] = v >> 8;
+      return;
+    case "I":
+      if (le) { a[p] = v; a[p + 1] = v >> 8; a[p + 2] = v >> 16; a[p + 3] = v >> 24; }
+      else { a[p + 3] = v; a[p + 2] = v >> 8; a[p + 1] = v >> 16; a[p] = v >> 24; }
+      return;
+    case "Z": case "B": a[p] = v; return;
+  }
+  dvWrite(scratch, 0, k, v, le);
+  const n = k === "F" ? 4 : 8;
+  for (let i = 0; i < n; i++) a[p + i] = scratchBytes[i];
+}
+
+// a primitive array element of another width, as the VM's byte order lays it out
+function arrayRead(a: JArray, p: number, k: string, le = true): any {
+  const d = a.a as Int8Array;
+  return a.cls.component!.prim === "B" || a.cls.component!.prim === "Z" ? bytesRead(d, p, k, le) : dvRead(view(a), p, k, le);
+}
+
+function arrayWrite(a: JArray, p: number, k: string, v: any, le = true) {
+  const d = a.a as Int8Array;
+  if (a.cls.component!.prim === "B" || a.cls.component!.prim === "Z") bytesWrite(d, p, k, v, le);
+  else dvWrite(view(a), p, k, v, le);
+}
+
 // native order is little-endian
 function dvRead(dv: DataView, p: number, k: string, le = true): any {
   switch (k) {
@@ -71,7 +120,7 @@ export function unsafeGet(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") return o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE];
     if (sameKind(elem, k)) return o.a[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]];
-    return dvRead(view(o), off - ARRAY_BASE_OFFSET, k);
+    return arrayRead(o, off - ARRAY_BASE_OFFSET, k);
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) return o.x.statics[off - STATIC_OFFSET_BASE];
   return o.f[off];
@@ -87,7 +136,7 @@ export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: stri
     const elem = o.cls.component!.prim ?? "L";
     if (elem === "L") o.a[(off - ARRAY_BASE_OFFSET) / REF_SCALE] = v;
     else if (sameKind(elem, k)) (o.a as any)[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]] = v;
-    else dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v);
+    else arrayWrite(o, off - ARRAY_BASE_OFFSET, k, v);
     return;
   }
   if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) o.x.statics[off - STATIC_OFFSET_BASE] = v;
@@ -141,55 +190,6 @@ export const intrinsics: Natives = {
   [`${U}compareAndExchangeShort(Ljava/lang/Object;JSS)S`]: (t, [, o, off, e, v]) => cas(t, o, off, "S", e, v),
 };
 
-// Unaligned access, intrinsics in HotSpot too: one native-order read or write
-// instead of the Java version's byte-by-byte assembly.
-// a primitive array access that the element-indexed path cannot do
-function unaligned(o: JObject | null, off: number, k: string): o is JArray {
-  if (!(o instanceof JArray)) return false;
-  const elem = o.cls.component!.prim;
-  return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
-}
-// Unsafe.convEndian, through a shared scratch view: a VM runs its Java
-// threads on one JS thread and this never yields, so calls cannot interleave.
-const swapView = new DataView(new ArrayBuffer(8));
-function convEndian(k: string, v: any, bigEndian: boolean): any {
-  if (!bigEndian) return v;
-  dvWrite(swapView, 0, k, v);
-  return dvRead(swapView, 0, k, false);
-}
-for (const [name, k] of [["Long", "J"], ["Int", "I"], ["Short", "S"], ["Char", "C"]]) {
-  const get = (t: JThread, o: JObject | null, offset: bigint, bigEndian: boolean) => {
-    const off = Number(offset);
-    if (unaligned(o, off, k)) return dvRead(view(o), off - ARRAY_BASE_OFFSET, k, !bigEndian);
-    return convEndian(k, unsafeGet(t, o, offset, k), bigEndian);
-  };
-  const put = (t: JThread, o: JObject | null, offset: bigint, v: any, bigEndian: boolean) => {
-    const off = Number(offset);
-    if (unaligned(o, off, k)) dvWrite(view(o), off - ARRAY_BASE_OFFSET, k, v, !bigEndian);
-    else unsafePut(t, o, offset, k, convEndian(k, v, bigEndian));
-  };
-  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, off]) => get(t, o, off, false);
-  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;JZ)${k}`] = (t, [, o, off, be]) => get(t, o, off, be !== 0);
-  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, off, v]) => put(t, o, off, v, false);
-  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k}Z)V`] = (t, [, o, off, v, be]) => put(t, o, off, v, be !== 0);
-}
-
-function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
-  if (t.parkPermit) {
-    t.parkPermit = false;
-    return;
-  }
-  if (t.interrupted) return;
-  let ms: number | null = null;
-  if (absolute) ms = Number(time) - Date.now();
-  else if (time > 0n) ms = Number(time) / 1e6;
-  if (ms !== null && ms <= 0) return;
-  t.vm.state.set(`parked:${t.id}`, true);
-  setStatus(t, ms === null ? STATUS_PARKED : STATUS_PARKED_TIMED);
-  yield t.block(interruptibleWait(t, ms));
-  t.vm.state.delete(`parked:${t.id}`);
-  setStatus(t, STATUS_RUNNABLE);
-  t.parkPermit = false;
 // The ordered accessors and read-modify-write methods that Unsafe builds from
 // the volatile ones, as natives like HotSpot's intrinsics: Java threads here
 // never interleave inside a native, so each is a plain read and write.
@@ -222,6 +222,55 @@ for (const [name, k, desc] of [["Int", "I", "I"], ["Long", "J", "J"], ["Referenc
   }
 }
 
+// Unaligned access, intrinsics in HotSpot too: one native-order read or write
+// instead of the Java version's byte-by-byte assembly.
+// a primitive array access that the element-indexed path cannot do
+function unaligned(o: JObject | null, off: number, k: string): o is JArray {
+  if (!(o instanceof JArray)) return false;
+  const elem = o.cls.component!.prim;
+  return !!elem && !(sameKind(elem, k) && (off - ARRAY_BASE_OFFSET) % WIDTH[k] === 0);
+}
+// Unsafe.convEndian, through a shared scratch view: a VM runs its Java
+// threads on one JS thread and this never yields, so calls cannot interleave.
+const swapView = new DataView(new ArrayBuffer(8));
+function convEndian(k: string, v: any, bigEndian: boolean): any {
+  if (!bigEndian) return v;
+  dvWrite(swapView, 0, k, v);
+  return dvRead(swapView, 0, k, false);
+}
+for (const [name, k] of [["Long", "J"], ["Int", "I"], ["Short", "S"], ["Char", "C"]]) {
+  const get = (t: JThread, o: JObject | null, offset: bigint, bigEndian: boolean) => {
+    const off = Number(offset);
+    if (unaligned(o, off, k)) return arrayRead(o, off - ARRAY_BASE_OFFSET, k, !bigEndian);
+    return convEndian(k, unsafeGet(t, o, offset, k), bigEndian);
+  };
+  const put = (t: JThread, o: JObject | null, offset: bigint, v: any, bigEndian: boolean) => {
+    const off = Number(offset);
+    if (unaligned(o, off, k)) arrayWrite(o, off - ARRAY_BASE_OFFSET, k, v, !bigEndian);
+    else unsafePut(t, o, offset, k, convEndian(k, v, bigEndian));
+  };
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;J)${k}`] = (t, [, o, off]) => get(t, o, off, false);
+  intrinsics[`${U}get${name}Unaligned(Ljava/lang/Object;JZ)${k}`] = (t, [, o, off, be]) => get(t, o, off, be !== 0);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k})V`] = (t, [, o, off, v]) => put(t, o, off, v, false);
+  intrinsics[`${U}put${name}Unaligned(Ljava/lang/Object;J${k}Z)V`] = (t, [, o, off, v, be]) => put(t, o, off, v, be !== 0);
+}
+
+function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
+  if (t.parkPermit) {
+    t.parkPermit = false;
+    return;
+  }
+  if (t.interrupted) return;
+  let ms: number | null = null;
+  if (absolute) ms = Number(time) - Date.now();
+  else if (time > 0n) ms = Number(time) / 1e6;
+  if (ms !== null && ms <= 0) return;
+  t.vm.state.set(`parked:${t.id}`, true);
+  setStatus(t, ms === null ? STATUS_PARKED : STATUS_PARKED_TIMED);
+  yield t.block(interruptibleWait(t, ms));
+  t.vm.state.delete(`parked:${t.id}`);
+  setStatus(t, STATUS_RUNNABLE);
+  t.parkPermit = false;
 }
 
 function setStatus(t: JThread, s: number) {
