@@ -79,6 +79,8 @@ export class NativeFrame {
   readonly reexec: boolean;
   input: any = undefined;
   thrown: JObject | null = null;
+  // set on the frame of Continuation.enterSpecial while its continuation is mounted
+  entry: { cont: JObject; virtual: boolean } | null = null;
   constructor(gen: NativeGen, m: JMethod | null, ret: string, reexec: boolean) {
     this.gen = gen;
     this.m = m;

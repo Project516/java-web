@@ -76,7 +76,7 @@ export const natives: Natives = {
   "java/lang/StackStreamFactory$AbstractStackWalker.callStackWalk(IILjdk/internal/vm/ContinuationScope;Ljdk/internal/vm/Continuation;II[Ljava/lang/Object;)Ljava/lang/Object;":
     function* (t, [self, mode, skip, , cont, bufSize, start, frames]): NativeGen {
       // a continuation is walked while it is not mounted, as Continuation.getStackTrace does
-      let list: Frame[] = [...javaFrames(t, cont ? frozenFrames(t.vm, cont) ?? [] : t.frames)];
+      let list: Frame[] = [...javaFrames(t, cont ? frozenFrames(cont) ?? [] : t.frames)];
       let i = 0;
       while (i < list.length && isWalkerImpl(list[i].m)) i++;
       list = list.slice(i + skip);
@@ -117,10 +117,12 @@ export const natives: Natives = {
 };
 
 function stackOf(t: JThread, thread: JObject): JObject | null {
-  const target = thread.x as JThread | undefined;
+  // a mounted virtual thread's frames are on its carrier
+  const own = thread.x as JThread | undefined;
+  const target = own ?? [...t.vm.threads].find((c) => c.mounted === thread);
   if (!target) return null;
   const ste = t.vm.loadBoot("java/lang/StackTraceElement")!;
-  const items = [...javaFrames(target)].filter((f) => !isHidden(f.m)).map(({ m, pc }) => {
+  const items = [...javaFrames(target, target.frames, own !== undefined)].filter((f) => !isHidden(f.m)).map(({ m, pc }) => {
     const e = t.vm.newObject(ste);
     fillElement(t, e, m.cls, m.name, pc, m);
     return e;

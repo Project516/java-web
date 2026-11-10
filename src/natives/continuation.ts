@@ -21,13 +21,12 @@ const VT = "java/lang/VirtualThread";
 // VirtualThread.state values the VM sets
 const BLOCKING = 12;
 
-interface Entry {
-  cont: JObject;
-  virtual: boolean;
-}
+type Entry = NonNullable<NativeFrame["entry"]>;
 
-// What a yielded continuation needs to resume.
+// What a yielded continuation needs to resume, kept in its object's x.
 interface Frozen {
+  // its frames, bottom first
+  frames: AnyFrame[];
   // the top frame re-executes its instruction instead of taking a result
   retry: boolean;
   // monitors its virtual thread owns, and the owner standing in for it
@@ -36,14 +35,9 @@ interface Frozen {
 }
 
 interface State {
-  // frames of yielded continuations, bottom first
-  frozen: WeakMap<JObject, AnyFrame[]>;
-  info: WeakMap<JObject, Frozen>;
   // virtual threads whose monitor was released, for the unblocker thread
   unblock: JObject[];
   unblocker: (() => void) | null;
-  // enterSpecial's native frames: where each mounted continuation starts
-  entries: WeakMap<NativeFrame, Entry>;
   active: number;
   frozenCount: number;
   busy: boolean;
@@ -51,26 +45,21 @@ interface State {
 
 function state(vm: JVM): State {
   let s = vm.state.get("continuations") as State | undefined;
-  if (!s) vm.state.set("continuations", (s = { frozen: new WeakMap(), info: new WeakMap(), unblock: [], unblocker: null, entries: new WeakMap(), active: 0, frozenCount: 0, busy: false }));
+  if (!s) vm.state.set("continuations", (s = { unblock: [], unblocker: null, active: 0, frozenCount: 0, busy: false }));
   return s;
 }
 
 // The continuation a native frame is the entry of, if it is one.
-export function continuationEntry(vm: JVM, f: NativeFrame): Entry | undefined {
-  return state(vm).entries.get(f);
-}
-
 // The frames of a yielded continuation, bottom first.
-export function frozenFrames(vm: JVM, c: JObject): AnyFrame[] | undefined {
-  return state(vm).frozen.get(c);
+export function frozenFrames(c: JObject): AnyFrame[] | undefined {
+  return (c.x as Frozen | undefined)?.frames;
 }
 
 // Index in t.frames of the innermost mounted continuation's entry frame.
 function innermost(t: JThread): number {
-  const entries = state(t.vm).entries;
   for (let i = t.frames.length - 2; i >= 0; i--) {
     const f = t.frames[i];
-    if (f instanceof NativeFrame && entries.has(f)) return i;
+    if (f instanceof NativeFrame && f.entry !== null) return i;
   }
   return -1;
 }
@@ -85,7 +74,7 @@ function pinned(t: JThread, e: number): number {
 // Whether the virtual thread mounted on t can unmount from where it is.
 export function canUnmount(t: JThread): boolean {
   const e = innermost(t);
-  return e >= 0 && state(t.vm).entries.get(t.frames[e] as NativeFrame)!.virtual && pinned(t, e) === 0;
+  return e >= 0 && (t.frames[e] as NativeFrame).entry!.virtual && pinned(t, e) === 0;
 }
 
 export function dropOwned(t: JThread, o: JObject) {
@@ -103,8 +92,8 @@ export function dropOwned(t: JThread, o: JObject) {
 // for it while it is unmounted.
 function freeze(t: JThread, e: number, count: number, retry: boolean) {
   const s = state(t.vm);
-  const entry = s.entries.get(t.frames[e] as NativeFrame)!;
-  const info: Frozen = { retry, monitors: [], owner: null };
+  const entry = (t.frames[e] as NativeFrame).entry!;
+  const info: Frozen = { frames: [], retry, monitors: [], owner: null };
   if (entry.virtual) {
     const monitors = [...new Set(t.owned)].filter((o) => o.mon?.owner === t);
     t.owned = [];
@@ -117,8 +106,8 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
       info.owner = owner;
     }
   }
-  s.frozen.set(entry.cont, t.frames.splice(e + 1, count));
-  s.info.set(entry.cont, info);
+  info.frames = t.frames.splice(e + 1, count);
+  entry.cont.x = info;
   s.frozenCount++;
   s.busy = true;
   setChunk(t, entry.cont, true);
@@ -177,7 +166,7 @@ export const natives: Natives = {
   [`${C}.registerNatives()V`]: () => undefined,
   [`${C}.enterSpecial(Ljdk/internal/vm/Continuation;ZZ)V`]: function* (t, [c, isContinue, isVirtual]): NativeGen {
     const s = state(t.vm);
-    s.entries.set(t.top as NativeFrame, { cont: c, virtual: isVirtual === 1 });
+    (t.top as NativeFrame).entry = { cont: c, virtual: isVirtual === 1 };
     s.active++;
     s.busy = true;
     try {
@@ -186,14 +175,12 @@ export const natives: Natives = {
         yield t.call(enter, c, 0);
         return;
       }
-      const frozen = s.frozen.get(c);
-      if (!frozen) throw new PendingThrow("java/lang/IllegalStateException", "Continuation has no frames");
-      const info = s.info.get(c)!;
-      s.frozen.delete(c);
-      s.info.delete(c);
+      const info = c.x as Frozen | undefined;
+      if (!info) throw new PendingThrow("java/lang/IllegalStateException", "Continuation has no frames");
+      c.x = undefined;
       s.frozenCount--;
       setChunk(t, c, false);
-      t.frames.push(...frozen);
+      t.frames.push(...info.frames);
       if (info.owner) {
         for (const o of info.monitors) o.mon!.owner = t;
         t.owned = info.monitors;
@@ -207,7 +194,7 @@ export const natives: Natives = {
       }
       yield { kind: "resume" };
     } finally {
-      s.entries.delete(t.top as NativeFrame);
+      (t.top as NativeFrame).entry = null;
       s.active--;
       s.busy = s.active > 0 || s.frozenCount > 0;
     }
