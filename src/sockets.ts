@@ -303,7 +303,8 @@ export const isWildcard = (a: Uint8Array) => a[0] === 0 && a[1] === 0 && a[2] ==
 export const sameAddr = (a: Uint8Array, b: Uint8Array) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
 const WILDCARD = new Uint8Array(4);
 const SOMAXCONN = 4096;
-const overlap = (a: Uint8Array, b: Uint8Array) => isWildcard(a) || isWildcard(b) || sameAddr(a, b);
+export const backlogLimit = (backlog: number) => (backlog < 0 ? SOMAXCONN : Math.min(backlog, SOMAXCONN));
+export const overlap = (a: Uint8Array, b: Uint8Array) => isWildcard(a) || isWildcard(b) || sameAddr(a, b);
 
 export function ipv4Literal(s: string | undefined): Uint8Array | null {
   const m = s ? /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s) : null;
@@ -390,7 +391,7 @@ export class LoopbackNet implements NetBackend {
 
   listen(s: Sock, backlog: number) {
     s.listening = true;
-    s.maxBacklog = backlog < 0 ? SOMAXCONN : Math.min(backlog, SOMAXCONN);
+    s.maxBacklog = backlogLimit(backlog);
     return 0;
   }
 

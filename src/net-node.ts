@@ -34,6 +34,9 @@ function parseIp(s: string | undefined): Uint8Array {
 
 const ipString = (a: Uint8Array) => (E.isWildcard(a) ? "0.0.0.0" : `${a[0]}.${a[1]}.${a[2]}.${a[3]}`);
 const peerString = (a: Uint8Array) => (E.isWildcard(a) ? "127.0.0.1" : ipString(a));
+// whether a is an IPv4 address of one of this host's interfaces
+const hostHas = (a: Uint8Array) =>
+  Object.values(os.networkInterfaces()).some((list) => list?.some((i) => i.family === "IPv4" && i.address === ipString(a)));
 
 function sysfs(name: string, file: string): number | null {
   try {
@@ -54,6 +57,22 @@ interface TcpImpl {
   srv?: net.Server;
   werr?: number;
   resume?: () => void;
+  // listener: connections the host accepted beyond the backlog, and the clients in this VM connecting to it by local port
+  overflow?: { c: Sock; pairing?: Pairing }[];
+  clients?: Map<number, Pairing>;
+  // client: its connect to a listener of this VM
+  pairing?: Pairing;
+}
+
+// A connect from this VM to a listener of this VM finishes once the listener's accept queue
+// admits the connection, as a kernel that drops the SYN of a full queue makes it.
+interface Pairing {
+  client: Sock;
+  listener: Sock;
+  port: number;
+  connected: boolean;
+  admitted: boolean;
+  finish?: () => void;
 }
 
 interface UdpImpl {
@@ -192,14 +211,21 @@ export class NodeNet implements NetBackend {
           c.peerInVm = client !== undefined;
         }
         this.attach(c, ns);
-        s.backlog.push(c);
+        const im = s.impl as TcpImpl;
+        const pairing = im.clients?.get(ns.remotePort ?? -1);
+        // the queue holds maxBacklog + 1, as Linux's does
+        if (s.backlog.length > s.maxBacklog) im.overflow!.push({ c, pairing });
+        else {
+          s.backlog.push(c);
+          if (pairing) this.admit(pairing);
+        }
         s.notify();
       });
       srv.listen(options, () => {
         srv.removeAllListeners("error");
         srv.on("error", () => {});
         bound(srv);
-        s.impl = { srv } satisfies TcpImpl;
+        s.impl = { srv, overflow: [], clients: new Map() } satisfies TcpImpl;
         this.live.add(s);
         resolve(0);
       });
@@ -233,9 +259,36 @@ export class NodeNet implements NetBackend {
     });
   }
 
-  listen(s: Sock) {
+  listen(s: Sock, backlog: number) {
     s.listening = true;
+    s.maxBacklog = E.backlogLimit(backlog);
+    this.accepted(s);
     return 0;
+  }
+
+  // The accept queue lost its head: connections waiting beyond the backlog move in, and
+  // the clients of this VM among them finish connecting.
+  accepted(l: Sock) {
+    const q = (l.impl as TcpImpl | null)?.overflow;
+    while (q && q.length > 0 && l.backlog.length <= l.maxBacklog) {
+      const { c, pairing } = q.shift()!;
+      l.backlog.push(c);
+      l.notify();
+      if (pairing) this.admit(pairing);
+    }
+  }
+
+  private admit(p: Pairing) {
+    p.admitted = true;
+    this.finishPairing(p);
+  }
+
+  private finishPairing(p: Pairing) {
+    if (!p.admitted || !p.connected) return;
+    (p.listener.impl as TcpImpl | null)?.clients?.delete(p.port);
+    const im = p.client.impl as TcpImpl | null;
+    if (im) im.pairing = undefined;
+    p.finish!();
   }
 
   // Wires a connected host socket to s.
@@ -285,22 +338,56 @@ export class NodeNet implements NetBackend {
     }, (ns) => {
       s.local = { addr: parseIp(ns.localAddress), port: ns.localPort ?? 0 };
       s.remote = { addr: ep.addr.slice(), port: ep.port };
-    });
+    }, undefined, this.listenerAt(ep));
   }
 
-  private connectTo(s: Sock, options: net.NetConnectOpts, connected: (ns: net.Socket) => void, failed?: () => void): number {
+  private listenerAt(ep: Endpoint): Sock | undefined {
+    const to = E.isWildcard(ep.addr) ? Uint8Array.of(127, 0, 0, 1) : ep.addr;
+    let found: Sock | undefined;
+    for (const o of this.live) {
+      if (!o.listening || o.unix || o.local?.port !== ep.port || !E.overlap(o.local.addr, to)) continue;
+      // listeners sharing the port (SO_REUSEPORT): the host picks one, so the connect cannot be held
+      if (found) return undefined;
+      found = o;
+    }
+    // a wildcard listener matches any address: the connect must go to this host to reach it
+    if (found && E.isWildcard(found.local!.addr) && to[0] !== 127 && !hostHas(to)) return undefined;
+    return found;
+  }
+
+  // listener is a listening socket of this VM that the connect goes to
+  private connectTo(
+    s: Sock, options: net.NetConnectOpts, connected: (ns: net.Socket) => void, failed?: () => void, listener?: Sock,
+  ): number {
     s.connecting = true;
     const start = () => {
       const ns = net.connect({ ...options, allowHalfOpen: true });
       this.attach(s, ns);
+      const im = s.impl as TcpImpl;
+      let pairing: Pairing | undefined;
+      // Registered on the next tick: net.connect issues the connect in a tick queued before this one,
+      // so the local port is known, and ticks run before any I/O callback, so before the listener's
+      // connection event. That event can still come before this socket's own connect event.
+      if (listener) process.nextTick(() => {
+        const clients = (listener.impl as TcpImpl | null)?.clients;
+        if (!clients || ns.localPort === undefined || s.impl !== im) return;
+        pairing = im.pairing = { client: s, listener, port: ns.localPort, connected: false, admitted: false };
+        clients.set(ns.localPort, pairing);
+      });
       let made = false;
       if (failed) ns.once("close", () => { if (!made) failed(); });
       ns.once("connect", () => {
         made = true;
-        s.connecting = false;
-        s.connected = true;
-        connected(ns);
-        s.notify();
+        const finish = () => {
+          s.connecting = false;
+          s.connected = true;
+          connected(ns);
+          s.notify();
+        };
+        if (!pairing) return finish();
+        pairing.finish = finish;
+        pairing.connected = true;
+        this.finishPairing(pairing);
       });
     };
     // a socket bound before connecting holds its port in a listening server
@@ -442,16 +529,35 @@ export class NodeNet implements NetBackend {
   close(s: Sock) {
     this.live.delete(s);
     // a listener resets the connections nobody accepted
-    for (const b of s.backlog) {
-      this.live.delete(b);
-      const ns = (b.impl as TcpImpl | null)?.ns;
-      b.impl = null;
-      if (ns) reset(ns);
-    }
+    for (const b of s.backlog) this.dropQueued(b);
     s.backlog = [];
     const im = s.impl as TcpImpl & UdpImpl | null;
     s.impl = null;
     if (!im) return;
+    // a connect that timed out or was abandoned leaves the listener's queues
+    const p = im.pairing;
+    if (p) {
+      const l = p.listener.impl as TcpImpl | null;
+      l?.clients?.delete(p.port);
+      const at = l?.overflow?.findIndex((e) => e.pairing === p) ?? -1;
+      if (at >= 0) this.dropQueued(l!.overflow!.splice(at, 1)[0].c);
+    }
+    // the listener resets what nobody accepted; like a kernel that dropped the SYN, a held connect then gets refused
+    for (const { c, pairing } of im.overflow ?? []) {
+      this.dropQueued(c);
+      const client = pairing?.client;
+      const ci = client?.impl as TcpImpl | undefined;
+      if (!client || !ci) continue;
+      ci.pairing = undefined;
+      ci.ns?.removeAllListeners();
+      ci.ns?.on("error", () => {});
+      ci.ns?.destroy();
+      client.impl = null;
+      client.connecting = false;
+      client.fail(E.ECONNREFUSED);
+    }
+    im.overflow = [];
+    im.clients?.clear();
     if (im.srv) {
       // libuv removes a closed server's socket file, a kernel leaves it
       const path = im.srv.address();
@@ -467,6 +573,13 @@ export class NodeNet implements NetBackend {
     if (s.option(1, 13, -1) === 0) ns.resetAndDestroy();
     else if (ns.writableLength > 0 && !ns.destroyed) ns.end(() => ns.destroy());
     else ns.destroy();
+  }
+
+  private dropQueued(c: Sock) {
+    this.live.delete(c);
+    const ns = (c.impl as TcpImpl | null)?.ns;
+    c.impl = null;
+    if (ns) reset(ns);
   }
 
   closeAll() {

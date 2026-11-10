@@ -578,6 +578,7 @@ java/net/httpclient/HeadersTest.java
 java/net/httpclient/HttpClientAuthRetryLimitTest.java
 java/net/httpclient/HttpClientBuilderTest.java
 java/net/httpclient/HttpClientSNITest.java
+java/net/httpclient/HttpGetInCancelledFuture.java
 java/net/httpclient/HttpSlowServerTest.java
 java/net/httpclient/HttpsTunnelAuthTest.java
 java/net/httpclient/HttpsTunnelTest.java

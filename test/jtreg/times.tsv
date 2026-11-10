@@ -433,6 +433,7 @@
 16965	java/util/Date/DateGregorianCalendarTest.java
 16815	javax/crypto/spec/PBEKeySpec/PBEKeySpecRacing.java
 16776	java/net/DatagramSocket/DatagramSocketMulticasting.java
+16774	java/net/httpclient/HttpGetInCancelledFuture.java
 16760	java/lang/module/ModuleDescriptorHashCodeTest.java
 16687	java/io/Serializable/GetField/ReadFieldsCNF.java
 16658	java/text/Format/common/Bug6215962.java
