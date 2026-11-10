@@ -133,6 +133,9 @@ const WARM_MIN_CLASSES = 200;
 
 const WOKEN_RUN = 16;
 
+// instructions a thread runs per turn
+const SLICE = 20000;
+
 export class JVM {
   readonly opts: JvmOptions;
   readonly fs: VFS;
@@ -1072,28 +1075,36 @@ export class JVM {
   }
 
   private loop() {
-    // wakes during the turn join the queue it is draining
     noteYield();
     const end = performance.now() + 20;
-    let turns = 0;
-    while (this.exitCode === null) {
-      const t = this.next();
-      if (t === undefined) break;
-      this.queued.delete(t);
-      if (t.state !== RUNNABLE) continue;
-      sched.thread = t;
-      runThread(t, 20000);
-      if (t.unmounting !== null) unmountBlocked(t);
-      if (t.state === RUNNABLE && !this.queued.has(t)) {
-        this.queued.add(t);
-        this.runQueue.push(t);
+    // instructions run since the clock was read: short turns of threads that hand off share one read
+    let spent = 0;
+    try {
+      while (this.exitCode === null) {
+        const t = this.next();
+        if (t === undefined) break;
+        this.queued.delete(t);
+        if (t.state !== RUNNABLE) continue;
+        sched.thread = t;
+        spent += SLICE - runThread(t, SLICE);
+        if (t.unmounting !== null) unmountBlocked(t);
+        if (t.state === RUNNABLE && !this.queued.has(t)) {
+          this.queued.add(t);
+          this.runQueue.push(t);
+        }
+        if (sched.pause) break;
+        if (spent >= SLICE) {
+          if (performance.now() > end) break;
+          spent = 0;
+        }
+        sched.yieldNow = false;
       }
-      if (sched.pause || ((++turns & 15) === 0 && performance.now() > end)) break;
-      sched.yieldNow = false;
+    } finally {
+      // set here, not on entry, so wakes during the turns do not schedule another loop
+      sched.thread = null;
+      this.scheduled = false;
+      if (this.runQueue.length > 0 || this.woken.length > 0) this.schedule();
     }
-    sched.thread = null;
-    this.scheduled = false;
-    if (this.runQueue.length > 0 || this.woken.length > 0) this.schedule();
   }
 
   nonDaemonAlive(except: JThread): boolean {

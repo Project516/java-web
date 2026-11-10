@@ -834,21 +834,21 @@ function countEntry(t: JThread, f: Frame) {
   entryStats!.set(k, (entryStats!.get(k) ?? 0) + 1);
 }
 
-// Runs t for up to budget instructions.
-export function runThread(t: JThread, budget: number) {
+// Runs t for up to budget instructions; returns what is left of it.
+export function runThread(t: JThread, budget: number): number {
   while (budget > 0 && t.state === RUNNABLE && !sched.yieldNow) {
     const f = t.top;
     if (f === undefined) {
       terminate(t);
-      return;
+      return budget;
     }
     if (f instanceof NativeFrame) {
-      if (stepNative(t, f)) return;
+      if (stepNative(t, f)) return budget;
       budget--;
       continue;
     }
     if (f.needLock) {
-      if (!t.vm.monitorEnter(t, f.lock!)) return;
+      if (!t.vm.monitorEnter(t, f.lock!)) return budget;
       f.needLock = false;
     }
     const jit = f.m.jit;
@@ -865,6 +865,7 @@ export function runThread(t: JThread, budget: number) {
     } else budget = interpret(t, f, budget);
   }
   if (t.frames.length === 0 && t.state !== TERMINATED) terminate(t);
+  return budget;
 }
 
 // The VM forgets a finished thread, so its Thread object and thread locals can be collected.
