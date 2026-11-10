@@ -190,6 +190,38 @@ function* park(t: JThread, absolute: boolean, time: bigint): NativeGen {
   t.vm.state.delete(`parked:${t.id}`);
   setStatus(t, STATUS_RUNNABLE);
   t.parkPermit = false;
+// The ordered accessors and read-modify-write methods that Unsafe builds from
+// the volatile ones, as natives like HotSpot's intrinsics: Java threads here
+// never interleave inside a native, so each is a plain read and write.
+for (const [name, k] of KINDS) {
+  const desc = k === "L" ? "Ljava/lang/Object;" : k;
+  for (const suffix of ["Acquire", "Opaque"]) intrinsics[`${U}get${name}${suffix}(Ljava/lang/Object;J)${desc}`] = (t, [, o, off]) => unsafeGet(t, o, off, k);
+  for (const suffix of ["Release", "Opaque"]) intrinsics[`${U}put${name}${suffix}(Ljava/lang/Object;J${desc})V`] = (t, [, o, off, v]) => unsafePut(t, o, off, k, v);
+}
+for (const [name, k, desc] of [["Int", "I", "I"], ["Long", "J", "J"], ["Reference", "L", "Ljava/lang/Object;"]]) {
+  for (const suffix of ["Plain", "Acquire", "Release", ""]) {
+    intrinsics[`${U}weakCompareAndSet${name}${suffix}(Ljava/lang/Object;J${desc}${desc})Z`] =
+      (t, [, o, off, e, v]) => cas(t, o, off, k, e, v) === e;
+  }
+  for (const suffix of ["Acquire", "Release"]) {
+    intrinsics[`${U}compareAndExchange${name}${suffix}(Ljava/lang/Object;J${desc}${desc})${desc}`] =
+      (t, [, o, off, e, v]) => cas(t, o, off, k, e, v);
+  }
+  for (const suffix of ["", "Acquire", "Release"]) {
+    intrinsics[`${U}getAndSet${name}${suffix}(Ljava/lang/Object;J${desc})${desc}`] = (t, [, o, off, x]) => {
+      const old = unsafeGet(t, o, off, k);
+      unsafePut(t, o, off, k, x);
+      return old;
+    };
+    if (k === "L") continue;
+    intrinsics[`${U}getAndAdd${name}${suffix}(Ljava/lang/Object;J${desc})${desc}`] = (t, [, o, off, d]) => {
+      const old = unsafeGet(t, o, off, k);
+      unsafePut(t, o, off, k, k === "I" ? (old + d) | 0 : BigInt.asIntN(64, old + d));
+      return old;
+    };
+  }
+}
+
 }
 
 function setStatus(t: JThread, s: number) {
