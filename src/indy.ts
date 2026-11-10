@@ -566,7 +566,7 @@ export function invokePolymorphic(vm: JVM, t: JThread, f: Frame, m: JMethod): bo
       let target = memberTarget(t, stack[f.sp - 1]);
       if (m.name === "linkToStatic" && target.cls.state !== INITIALIZED && !vm.initialize(t, target.cls)) return false;
       f.sp--;
-      if (m.name === "linkToVirtual" || m.name === "linkToInterface") {
+      if ((m.name === "linkToVirtual" || m.name === "linkToInterface") && !target.isPrivate) {
         const recv = stack[f.sp - target.argSlots] as JObject | null;
         if (recv === null) throw new PendingThrow("java/lang/NullPointerException");
         const sel = recv.cls.selectMethod(target.key);

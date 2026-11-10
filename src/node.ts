@@ -343,6 +343,8 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // --finalization=disabled leaves finalize() uncalled (true by default)
+  finalization?: boolean;
   // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
   onOutOfMemoryError?: string[];
   // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
@@ -615,6 +617,7 @@ export function nodeVm(o: LauncherOptions): JVM {
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
     enablePreview: o.enablePreview,
+    finalization: o.finalization,
     bootClassPath: bootClassPath(o.props?.["jdk.boot.class.path.append"]),
     bootPatch: bootPatches(o.props),
     osVersion: os.release(),
@@ -767,6 +770,7 @@ export function main(argv: string[]) {
     else if (moduleFlag(o, a, argv[i + 1])) i += a.includes("=") ? 0 : 1;
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
+    else if (a === "--finalization=enabled" || a === "--finalization=disabled") o.finalization = a === "--finalization=enabled";
     else if (a === "--locale-data") o.localeData = true;
     else if (a === "-version") version = true;
     else if (a.startsWith("-Xmx")) {

@@ -251,6 +251,9 @@ export class JClass {
   // descriptor char for primitive classes
   prim: string | null = null;
   hidden = false;
+  // instances are registered for finalization: a non-empty finalize() here or
+  // in a superclass
+  finalizable = false;
   // members the VM added to a class it spun, which reflection does not show
   vmMembers: Set<JField | JMethod> | null = null;
   nestHost: JClass | null = null;
@@ -365,7 +368,7 @@ export class JClass {
     m = null;
     for (let c: JClass | null = this; c; c = c.superclass) {
       const d = c.methodMap.get(key);
-      if (d && !d.isStatic && !(d.isPrivate && c !== this)) { m = d; break; }
+      if (d && !d.isStatic && !d.isPrivate) { m = d; break; }
     }
     if (!m || m.isAbstract) {
       const d = this.maximallySpecific(key);
@@ -423,6 +426,18 @@ export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: (
   allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
+// A JObject made while a collection hands a finalizable object to its Finalizer:
+// it is not an allocation that can fail.
+export function wrapperOver(cls: JClass, f: any[]): JObject {
+  const check = allocationCheck;
+  const was = check?.enabled;
+  if (check) check.enabled = false;
+  try {
+    return new JObject(cls, f);
+  } finally {
+    if (check) check.enabled = was!;
+  }
+}
 export function resetAllocationCheck() {
   if (!allocationCheck) return;
   allocationCheck.baseline = allocationCheck.usage();

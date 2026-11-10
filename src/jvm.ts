@@ -21,6 +21,7 @@ import {
 import type { NativeGen, Request } from "./thread.ts";
 import { intrinsics, natives as builtinNatives } from "./natives/index.ts";
 import { canUnmount, dropOwned, unmountBlocked } from "./natives/continuation.ts";
+import { registerFinalizer } from "./natives/ref.ts";
 import { invokePolymorphic, linkCallSite, resolveConstant } from "./indy.ts";
 import { hostNative, jniNames } from "./hostnatives.ts";
 import { Library } from "./library.ts";
@@ -67,6 +68,8 @@ export interface JvmOptions {
   assertions?: Assertions;
   // run class files that use this release's preview features
   enablePreview?: boolean;
+  // false: finalize() is never called and there is no Finalizer thread
+  finalization?: boolean;
   // class bytes from --patch-module for a boot loader module, which win over the image's
   bootPatch?: (module: string, name: string) => Uint8Array | null;
   // class bytes on the -Xbootclasspath/a path, and the path entry that holds them
@@ -374,6 +377,8 @@ export class JVM {
       c.methods.push(m);
       c.methodMap.set(m.key, m);
     }
+    const fin = c.methodMap.get("finalize()V");
+    c.finalizable = superclass?.finalizable === true || (fin !== undefined && !fin.isStatic && (fin.code?.code.length ?? 0) > 1);
     // Runtime members own the metadata now; discard the parsed member records.
     cf.fields = [];
     cf.methods = [];
@@ -667,7 +672,9 @@ export class JVM {
   // ---- objects -------------------------------------------------------------
 
   newObject(c: JClass): JObject {
-    return new JObject(c, c.template.slice());
+    const o = new JObject(c, c.template.slice());
+    if (c.finalizable) registerFinalizer(this, o);
+    return o;
   }
 
   newArray(component: JClass, n: number): JArray {
@@ -1448,7 +1455,7 @@ export class JVM {
       } else {
         const self = this.newObject(main);
         yield t.call(main.methodMap.get("<init>()V")!, self);
-        const m = main.selectMethod(key)!;
+        const m = main.selectMethod(key) ?? main.methodMap.get(key)!;
         yield noArgs ? t.call(m, self) : t.call(m, self, jargs);
       }
     } catch (e) {

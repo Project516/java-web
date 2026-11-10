@@ -230,7 +230,7 @@ const runtime = {
   virtualTarget(t: JThread, mn: JObject, recv: JObject | null, pc: number): JMethod {
     const m = memberTarget(t, mn);
     if (recv === null) npeAt(pc);
-    const sel = recv.cls.selectMethod(m.key);
+    const sel = m.isPrivate ? m : recv.cls.selectMethod(m.key);
     if (!sel) throw new PendingThrow("java/lang/AbstractMethodError", `${recv.cls.javaName}.${m.name}${m.desc}`);
     return sel;
   },
@@ -934,7 +934,7 @@ function insn(g: Gen, b: Body, pc: number) {
         break;
       }
       const k = cls.rcp[idx2] as JClass | undefined;
-      if (!k || k.state !== INITIALIZED || k.access & 0x0600) { emit(slow(pc, d)); break; }
+      if (!k || k.state !== INITIALIZED || k.access & 0x0600 || k.finalizable) { emit(slow(pc, d)); break; }
       emit(`${S(d)}=new rt.JObject(${K(k)},${K(k)}.template.slice());`);
       break;
     }

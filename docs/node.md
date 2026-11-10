@@ -51,7 +51,7 @@ resolves to the exit code. Its options:
 - `stdout`, `stderr` (byte callbacks; default the process's), `input` (fixed stdin bytes)
 - `env` (what `System.getenv()` returns; default the host's environment)
 - `natives`: Java `native` methods in JS, as in the browser ([browser.md](browser.md))
-- `assertions` (the flags, for example `["-ea"]`), `enablePreview`, `localeData`
+- `assertions` (the flags, for example `["-ea"]`), `enablePreview`, `localeData`, `finalization` (`false` is `--finalization=disabled`)
 - `hostName` (what `InetAddress.getLocalHost()` reports), `maxRssMb`, `jdk`, `debug`
 - `maxDirectMemory` (`-XX:MaxDirectMemorySize`, in bytes), `onOutOfMemoryError` (`-XX:OnOutOfMemoryError` commands),
   `vmOutputToStderr` (`-XX:+DisplayVMOutputToStderr`)
