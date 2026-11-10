@@ -409,20 +409,25 @@ function onOutError(this: NodeJS.WriteStream) {
   broken.add(this);
 }
 // Java closing descriptor 1 or 2 closes the host's, as in HotSpot, so a reader sees end of file.
-// /dev/null takes the number, so no file opened later gets the stream's writes.
+// The null device takes the number, so no file opened later gets the stream's writes.
 const closed = new Set<NodeJS.WriteStream>();
 function closeHostOut(s: NodeJS.WriteStream, fd: number) {
   if (closed.has(s)) return;
   closed.add(s);
+  let done = false;
   const close = () => {
+    if (done) return;
+    done = true;
     try {
       fs.closeSync(fd);
-      const nul = fs.openSync("/dev/null", "w");
+      const nul = fs.openSync(os.devNull, "w");
       if (nul !== fd) fs.closeSync(nul);
     } catch { /* already closed */ }
   };
-  if (s.writableLength) s.once("drain", close);
-  else close();
+  if (s.writableLength) {
+    s.once("drain", close);
+    s.once("error", close);
+  } else close();
 }
 
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
