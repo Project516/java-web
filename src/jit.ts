@@ -501,6 +501,8 @@ function regionInfo(m: JMethod): RegionInfo | null {
     } catch (e) {
       if (!(e instanceof Unsupported)) throw e;
     }
+    // a method that cannot be a region is analyzed again if it is ever compiled
+    if (r === null && m !== generating) analyses.delete(m);
   }
   regionInfos.set(m, r);
   return r;
@@ -611,7 +613,21 @@ interface Gen {
   call: (pc: number, sp: number) => string;
 }
 
+// the method being compiled
+let generating: JMethod | null = null;
+
 function generate(t: JThread, m: JMethod): { src: string; consts: any[] } {
+  generating = m;
+  try {
+    return generateCode(t, m);
+  } finally {
+    generating = null;
+    // inlinable methods keep it in their region info
+    analyses.delete(m);
+  }
+}
+
+function generateCode(t: JThread, m: JMethod): { src: string; consts: any[] } {
   const code = m.code!;
   const a = analyze(m);
   const consts: any[] = [];
