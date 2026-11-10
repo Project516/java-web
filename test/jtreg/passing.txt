@@ -8,12 +8,15 @@ java/awt/geom/Path2D/Path2DCopyConstructor.java
 java/awt/geom/SerialTest.java
 java/beans/Beans/TypoInBeanDescription.java
 java/beans/EventHandler/Test6788531.java
+java/beans/Introspector/7064279/Test7064279.java
 java/beans/Introspector/8159696/UnloadClassBeanInfo.java
 java/beans/Introspector/Test4948761.java
+java/beans/Introspector/Test5102804.java
 java/beans/Introspector/Test8027905.java
 java/beans/Introspector/TestMethodOrderDependence.java
 java/beans/PropertyChangeSupport/Test4682386.java
 java/beans/PropertyEditor/Test4968709.java
+java/beans/PropertyEditor/Test6397609.java
 java/beans/PropertyEditor/TestByteClassValue.java
 java/beans/XMLEncoder/6777487/TestCheckedSet.java
 java/beans/XMLEncoder/Test4646747.java
@@ -108,6 +111,7 @@ java/io/Serializable/serialProxy/SerialProxyClassNotFound.java
 java/io/Serializable/skipWriteObject/Write.java
 java/io/Serializable/skippedObjCNFException/Write.java
 java/io/Serializable/stopCustomDeserialization/Write.java
+java/io/Serializable/subclassGC/SubclassGC.java
 java/io/Serializable/superclassDataLoss/SuperclassDataLossTest.java
 java/io/Serializable/unresolvableObjectStreamClass/UnresolvableObjectStreamClass.java
 java/io/Serializable/unresolvedClassDesc/Write.java
@@ -141,6 +145,7 @@ java/lang/ClassLoader/LoadNullClass.java
 java/lang/ClassLoader/RecursiveSystemLoader.java
 java/lang/ClassLoader/deadlock/DelegateTest.java
 java/lang/ClassLoader/deadlock/GetResource.java
+java/lang/ClassLoader/forNameLeak/ClassForNameLeak.java
 java/lang/ClassLoader/getResource/automaticmodules/Driver.java
 java/lang/Compare.java
 java/lang/Float/Binary16Conversion.java
@@ -164,6 +169,7 @@ java/lang/Math/SqrtTests.java
 java/lang/Math/WorstCaseTests.java
 java/lang/ModuleTests/AnnotationsTest.java
 java/lang/ModuleTests/access/AccessTest.java
+java/lang/Object/FinalizationOption.java
 java/lang/Object/WaitTooLong.java
 java/lang/Package/PackageFromManifest.java
 java/lang/Process/WaitForDuration.java
@@ -271,6 +277,7 @@ java/lang/System/LoggerFinder/modules/JDKLoggerForImageTest.java
 java/lang/System/LoggerFinder/modules/JDKLoggerForJDKTest.java
 java/lang/System/LoggerFinder/modules/NamedLoggerForJDKTest.java
 java/lang/System/Versions.java
+java/lang/System/finalization/FinThreads.java
 java/lang/Thread/BuilderTest.java
 java/lang/Thread/HoldsLock.java
 java/lang/Thread/NullStackTrace.java
@@ -369,6 +376,7 @@ java/lang/invoke/condy/CondyWithGarbageTest.java
 java/lang/invoke/condy/CondyWrongType.java
 java/lang/invoke/condy/ConstantBootstrapsTest.java
 java/lang/invoke/defineHiddenClass/PreviewHiddenClass.java
+java/lang/invoke/defineHiddenClass/UnloadingTest.java
 java/lang/invoke/lambda/InheritedMethodTest.java
 java/lang/invoke/lambda/LambdaAsm.java
 java/lang/invoke/lambda/LambdaReceiver.java
@@ -384,6 +392,7 @@ java/lang/management/ManagementFactory/MXBeanException.java
 java/lang/management/ManagementFactory/MXBeanProxyTest.java
 java/lang/management/ManagementFactory/ThreadMXBeanProxy.java
 java/lang/management/MemoryMXBean/MemoryTest.java#5
+java/lang/management/MemoryMXBean/Pending.java
 java/lang/management/MemoryPoolMXBean/LargeHeapThresholdTest.java
 java/lang/management/MemoryPoolMXBean/ThresholdTest.java
 java/lang/management/OperatingSystemMXBean/GetSystemLoadAverage.java
@@ -410,8 +419,11 @@ java/lang/management/ThreadMXBean/VirtualThreadDeadlocks.java#2
 java/lang/module/ConfigurationTest.java
 java/lang/module/ModuleDescriptorHashCodeTest.java
 java/lang/module/MultiReleaseJarTest.java
+java/lang/ref/Basic.java
+java/lang/ref/FinalizeOverride.java
 java/lang/ref/NullQueue.java
 java/lang/ref/ReferenceRefersTo.java
+java/lang/ref/SoftReference/Pin.java
 java/lang/reflect/AccessFlag/ClassAccessFlagTest.java
 java/lang/reflect/AccessFlag/FieldAccessFlagTest.java
 java/lang/reflect/Array/ExceedMaxDim.java
@@ -903,6 +915,8 @@ java/util/Timer/NameConstructors.java
 java/util/TreeMap/HeadTailTypeError.java
 java/util/UUID/UUIDTest.java
 java/util/Vector/CopyInto.java
+java/util/WeakHashMap/GCDuringIteration.java
+java/util/concurrent/ArrayBlockingQueue/WhiteBox.java
 java/util/concurrent/BlockingQueue/LastElement.java
 java/util/concurrent/CompletableFuture/Basic.java
 java/util/concurrent/CompletableFuture/ThenComposeAsyncTest.java
@@ -943,6 +957,7 @@ java/util/logging/LocalizedLevelName.java
 java/util/logging/LogManager/Configuration/rootLoggerHandlers/BadRootLoggerHandlers.java
 java/util/logging/LogManager/Configuration/rootLoggerHandlers/RootLoggerHandlers.java
 java/util/logging/LogManagerAppContextDeadlock.java
+java/util/logging/Logger/bundleLeak/BundleTest.java
 java/util/logging/Logger/getGlobal/TestGetGlobal.java
 java/util/logging/Logger/getGlobal/TestGetGlobalByName.java
 java/util/logging/Logger/getGlobal/TestGetGlobalConcurrent.java
