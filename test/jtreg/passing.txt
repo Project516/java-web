@@ -798,8 +798,15 @@ java/text/Bidi/Bug7051769.java
 java/text/BreakIterator/NewVSOld_th_TH.java
 java/text/Collator/APITest.java
 java/text/Collator/CollationKeyTest.java
+java/text/Collator/DanishTest.java
+java/text/Collator/FinnishTest.java
+java/text/Collator/FrenchTest.java
+java/text/Collator/G7Test.java
 java/text/Collator/JapaneseTest.java
 java/text/Collator/KoreanTest.java
+java/text/Collator/Regression.java
+java/text/Collator/TurkishTest.java
+java/text/Collator/VietnameseTest.java
 java/text/Format/CompactNumberFormat/TestCompactNumber.java
 java/text/Format/CompactNumberFormat/TestFormatToCharacterIterator.java
 java/text/Format/CompactNumberFormat/TestParseBigDecimal.java

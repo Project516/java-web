@@ -691,6 +691,7 @@
 9792	java/security/KeyStore/ProbeKeystores.java
 9791	java/util/Objects/CheckIndex.java
 9777	java/beans/PropertyEditor/TestIntegerClassNull.java
+9750	java/text/Collator/Regression.java
 9747	java/net/URL/GetContent.java
 9734	java/nio/file/Path/ToRealPath.java
 9732	java/beans/PropertyEditor/TestByteTypeJava.java
@@ -1145,6 +1146,7 @@
 6516	java/util/concurrent/Executors/UnreferencedExecutor.java
 6514	java/util/Locale/TestOf.java
 6513	java/nio/channels/DatagramChannel/InterruptibleOrNot.java
+6500	java/text/Collator/G7Test.java
 6493	java/beans/PropertyEditor/TestLongClassNull.java
 6490	java/net/Socket/TestAfterClose.java
 6485	java/util/Date/DateRegression.java
@@ -1818,6 +1820,7 @@
 4358	java/util/zip/InflaterClose.java
 4354	javax/crypto/EncryptedPrivateKeyInfo/EncryptKey.java
 4353	java/util/Properties/SaveLoadBasher.java
+4350	java/text/Collator/VietnameseTest.java
 4347	java/time/tck/java/time/zone/TCKFixedZoneRules.java
 4343	java/beans/XMLEncoder/java_util_Collections_UnmodifiableCollection.java
 4343	java/util/concurrent/ExecutorCompletionService/ExecutorCompletionServiceLoops.java
@@ -1964,6 +1967,7 @@
 4008	java/util/Formatter/EncodingTest.java
 4006	java/beans/PropertyChangeSupport/TestSerialization.java
 4003	java/net/ServerSocket/ClosedServerSocketTest.java
+4000	java/text/Collator/DanishTest.java
 3999	java/net/httpclient/http2/RedirectTest.java
 3999	javax/xml/jaxp/transform/8004476/XPathExFuncTest.java
 3998	javax/crypto/Cipher/GetMaxAllowed.java
@@ -2178,6 +2182,7 @@
 3459	javax/crypto/CryptoPermission/RSANoLimit.java
 3457	java/net/IDN/UseSTD3ASCIIRules.java
 3457	java/util/ResourceBundle/Control/Bug6530694.java
+3450	java/text/Collator/FrenchTest.java
 3448	java/io/Serializable/oldTests/SerializeWithException.java
 3447	java/nio/channels/FileChannel/Position.java
 3441	java/beans/XMLDecoder/spec/TestJava.java
@@ -2303,6 +2308,7 @@
 3155	javax/xml/jaxp/testng/validation/SpecialCaseErrorHandler.java
 3152	java/beans/XMLEncoder/Test4950122.java
 3150	java/util/logging/DefaultConfigTest.java
+3150	java/text/Collator/TurkishTest.java
 3144	java/security/cert/CertPathBuilder/NoExtensions.java
 3143	java/beans/Introspector/Test4144543.java
 3140	java/io/Serializable/verifyDynamicObjHandleTable/VerifyDynamicObjHandleTable.java
@@ -2488,6 +2494,7 @@
 2806	java/lang/RuntimeTests/exec/ConcurrentRead.java
 2803	java/lang/ref/ReferenceEnqueuePending.java
 2803	java/net/DatagramSocket/SendSize.java
+2800	java/text/Collator/FinnishTest.java
 2798	java/security/cert/CertPathBuilder/zeroLengthPath/ZeroLengthPath.java
 2796	java/io/Serializable/oldTests/ArrayFields.java
 2794	javax/crypto/Cipher/GCMAPI.java
