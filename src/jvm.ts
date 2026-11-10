@@ -131,6 +131,8 @@ const YIELD = (() => {
 // javac compile loads over a thousand.
 const WARM_MIN_CLASSES = 200;
 
+const WOKEN_RUN = 16;
+
 export class JVM {
   readonly opts: JvmOptions;
   readonly fs: VFS;
@@ -153,6 +155,9 @@ export class JVM {
   private slots = new Map<string, Map<string, number>>();
   readonly threads = new Set<JThread>();
   private runQueue: JThread[] = [];
+  // threads another thread woke in its turn: they run before the rotation, so a hand-off does not wait behind spinners
+  private woken: JThread[] = [];
+  private wokenStreak = 0;
   private queued = new Set<JThread>();
   private scheduled = false;
   private hashSeed = 0x2545f491;
@@ -974,7 +979,7 @@ export class JVM {
       this.setThreadStatus(t, STATUS_BLOCKED);
     }
     t.state = WAITING;
-    o.mon!.entry.push(() => this.wake(t));
+    o.mon!.entry.push(() => this.wake(t, true));
     return false;
   }
 
@@ -1029,14 +1034,30 @@ export class JVM {
     this.wake(t);
   }
 
-  wake(t: JThread) {
+  wake(t: JThread, boost = false) {
     if (t.state === TERMINATED) return;
     t.state = RUNNABLE;
     if (!this.queued.has(t)) {
       this.queued.add(t);
-      this.runQueue.push(t);
+      (boost && sched.thread !== null && sched.thread !== t ? this.woken : this.runQueue).push(t);
     }
     this.schedule();
+  }
+
+  // The next thread to run; at most WOKEN_RUN woken ones in a row.
+  private next(): JThread | undefined {
+    if (this.woken.length > 0 && this.wokenStreak < WOKEN_RUN) {
+      this.wokenStreak++;
+      return this.woken.shift();
+    }
+    this.wokenStreak = 0;
+    return this.runQueue.shift() ?? this.woken.shift();
+  }
+
+  // Ends the running thread's turn at its next loop edge or call.
+  endTurn() {
+    sched.yieldNow = true;
+    if (sched.thread) sched.thread.slice = 0;
   }
 
   private schedule() {
@@ -1051,8 +1072,9 @@ export class JVM {
     // wakes during the turn join the queue it is draining
     noteYield();
     const end = performance.now() + 20;
-    while (this.runQueue.length > 0 && this.exitCode === null) {
-      const t = this.runQueue.shift()!;
+    while (this.exitCode === null) {
+      const t = this.next();
+      if (t === undefined) break;
       this.queued.delete(t);
       if (t.state !== RUNNABLE) continue;
       sched.thread = t;
@@ -1062,11 +1084,12 @@ export class JVM {
         this.queued.add(t);
         this.runQueue.push(t);
       }
-      if (performance.now() > end || sched.yieldNow) break;
+      if (performance.now() > end || sched.pause) break;
+      sched.yieldNow = false;
     }
     sched.thread = null;
     this.scheduled = false;
-    if (this.runQueue.length > 0) this.schedule();
+    if (this.runQueue.length > 0 || this.woken.length > 0) this.schedule();
   }
 
   nonDaemonAlive(except: JThread): boolean {

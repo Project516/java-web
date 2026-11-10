@@ -204,7 +204,10 @@ Object.assign(unsafe, {
     const jt = obj?.x as JThread | undefined;
     if (!(jt instanceof JThread)) return;
     jt.parkPermit = true;
-    if (t.vm.state.get(`parked:${jt.id}`)) jt.wake?.();
+    if (t.vm.state.get(`parked:${jt.id}`)) {
+      jt.wake?.();
+      t.vm.endTurn();
+    }
   },
   [`${U}fullFence()V`]: () => undefined,
   [`${U}allocateMemory0(J)J`]: (t: JThread, [, n]: any[]) => BigInt(t.vm.mem.malloc(Number(n))),

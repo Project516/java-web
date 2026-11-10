@@ -806,7 +806,7 @@ function stepNative(t: JThread, f: NativeFrame): boolean {
   } else if (req.kind === "wait") {
     t.state = WAITING;
     req.promise.then(
-      (v: any) => { f.input = v; t.vm.wake(t); },
+      (v: any) => { f.input = v; t.vm.wake(t, true); },
       (e: any) => {
         if (e instanceof JavaThrow) f.thrown = e.obj;
         else if (e instanceof PendingThrow) t.vm.throwNew(t, e.cls, e.msg, e.ctor);
