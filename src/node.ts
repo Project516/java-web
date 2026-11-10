@@ -429,6 +429,7 @@ function closeHostOut(s: NodeJS.WriteStream, fd: number) {
       for (const nul of below) fs.closeSync(nul);
     } catch { /* already closed */ }
   };
+  if (s.destroyed || s.writableEnded) return close();
   // runs once the writes before it are done
   s.write("", close);
   s.once("error", close);
