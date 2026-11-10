@@ -13,7 +13,7 @@ import type { WarmTrace } from "./fs.ts";
 import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
 import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
 import { restoreJit } from "./jit.ts";
-import { Frame, JThread, NativeFrame, STATUS_RUNNABLE } from "./thread.ts";
+import { Frame, JThread, NativeFrame, STATUS_RUNNABLE, Signal } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 
 // Bump when the layout of an image changes; images of another format are ignored.
@@ -501,7 +501,7 @@ function snapshotFds(value: unknown): unknown {
 function* rewait(t: JThread, o: JObject, count: number): NativeGen {
   const mon = o.mon!;
   t.waitingOn = o;
-  while (mon.owner !== null) yield t.block(new Promise<void>((r) => mon.entry.push(r)));
+  while (mon.owner !== null) yield t.block(new Signal((r) => mon.entry.push(r)));
   mon.owner = t;
   mon.count = count;
   t.waitingOn = null;

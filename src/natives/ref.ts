@@ -6,6 +6,7 @@
 
 import { INITIALIZED } from "../runtime.ts";
 import type { JClass, JObject } from "../runtime.ts";
+import { Signal } from "../thread.ts";
 import type { JThread, NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { Natives } from "./util.ts";
@@ -100,7 +101,7 @@ export const natives: Natives = {
   },
   [`${R}.waitForReferencePendingList()V`]: function* (t): NativeGen {
     const s = refs(t.vm);
-    while (s.pending.length === 0) yield t.block(new Promise<void>((r) => s.waiters.push(r)));
+    while (s.pending.length === 0) yield t.block(new Signal((r) => s.waiters.push(r)));
   },
   "java/lang/ref/Finalizer.isFinalizationEnabled()Z": () => 0,
   "java/lang/ref/Finalizer.reportComplete(Ljava/lang/Object;)V": () => undefined,

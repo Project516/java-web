@@ -15,7 +15,7 @@ import {
 } from "./runtime.ts";
 import type { CallSite, NativeFn } from "./runtime.ts";
 import {
-  Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
+  Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, Signal, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
   TERMINATED, WAITING,
 } from "./thread.ts";
 import type { NativeGen, Request } from "./thread.ts";
@@ -131,6 +131,11 @@ const YIELD = (() => {
 // javac compile loads over a thousand.
 const WARM_MIN_CLASSES = 200;
 
+const WOKEN_RUN = 16;
+
+// instructions a thread runs per turn
+const SLICE = 20000;
+
 export class JVM {
   readonly opts: JvmOptions;
   readonly fs: VFS;
@@ -153,6 +158,9 @@ export class JVM {
   private slots = new Map<string, Map<string, number>>();
   readonly threads = new Set<JThread>();
   private runQueue: JThread[] = [];
+  // threads another thread woke in its turn: they run before the rotation, so a hand-off does not wait behind spinners
+  private woken: JThread[] = [];
+  private wokenStreak = 0;
   private queued = new Set<JThread>();
   private scheduled = false;
   private hashSeed = 0x2545f491;
@@ -596,7 +604,7 @@ export class JVM {
       }
       if (c.state === INITIALIZING) {
         if (c.initThread === t) return;
-        yield t.block(new Promise<void>((r) => c.initWaiters.push(r)));
+        yield t.block(new Signal((r) => c.initWaiters.push(r)));
         continue;
       }
       break;
@@ -974,7 +982,7 @@ export class JVM {
       this.setThreadStatus(t, STATUS_BLOCKED);
     }
     t.state = WAITING;
-    o.mon!.entry.push(() => this.wake(t));
+    o.mon!.entry.push(() => this.wake(t, true));
     return false;
   }
 
@@ -1029,14 +1037,33 @@ export class JVM {
     this.wake(t);
   }
 
-  wake(t: JThread) {
+  wake(t: JThread, boost = false) {
     if (t.state === TERMINATED) return;
     t.state = RUNNABLE;
     if (!this.queued.has(t)) {
       this.queued.add(t);
-      this.runQueue.push(t);
+      if (boost && sched.thread !== null && sched.thread !== t) {
+        this.woken.push(t);
+        this.endTurn();
+      } else this.runQueue.push(t);
     }
     this.schedule();
+  }
+
+  // The next thread to run; at most WOKEN_RUN woken ones in a row.
+  private next(): JThread | undefined {
+    if (this.woken.length > 0 && this.wokenStreak < WOKEN_RUN) {
+      this.wokenStreak++;
+      return this.woken.shift();
+    }
+    this.wokenStreak = 0;
+    return this.runQueue.shift() ?? this.woken.shift();
+  }
+
+  // Ends the running thread's turn at its next loop edge or call, so a thread it woke runs soon.
+  endTurn() {
+    sched.yieldNow = true;
+    if (sched.thread) sched.thread.slice = 0;
   }
 
   private schedule() {
@@ -1048,24 +1075,36 @@ export class JVM {
   }
 
   private loop() {
-    this.scheduled = false;
     noteYield();
     const end = performance.now() + 20;
-    while (this.runQueue.length > 0 && this.exitCode === null) {
-      const t = this.runQueue.shift()!;
-      this.queued.delete(t);
-      if (t.state !== RUNNABLE) continue;
-      sched.thread = t;
-      runThread(t, 20000);
-      if (t.unmounting !== null) unmountBlocked(t);
-      if (t.state === RUNNABLE && !this.queued.has(t)) {
-        this.queued.add(t);
-        this.runQueue.push(t);
+    // instructions run since the clock was read: short turns of threads that hand off share one read
+    let spent = 0;
+    try {
+      while (this.exitCode === null) {
+        const t = this.next();
+        if (t === undefined) break;
+        this.queued.delete(t);
+        if (t.state !== RUNNABLE) continue;
+        sched.thread = t;
+        spent += SLICE - runThread(t, SLICE);
+        if (t.unmounting !== null) unmountBlocked(t);
+        if (t.state === RUNNABLE && !this.queued.has(t)) {
+          this.queued.add(t);
+          this.runQueue.push(t);
+        }
+        if (sched.pause) break;
+        if (spent >= SLICE) {
+          if (performance.now() > end) break;
+          spent = 0;
+        }
+        sched.yieldNow = false;
       }
-      if (performance.now() > end || sched.yieldNow) break;
+    } finally {
+      // set here, not on entry, so wakes during the turns do not schedule another loop
+      sched.thread = null;
+      this.scheduled = false;
+      if (this.runQueue.length > 0 || this.woken.length > 0) this.schedule();
     }
-    sched.thread = null;
-    if (this.runQueue.length > 0) this.schedule();
   }
 
   nonDaemonAlive(except: JThread): boolean {
@@ -1127,7 +1166,7 @@ export class JVM {
     // Thread.join waits on the thread object, checking isAlive() under its
     // monitor. Take the monitor first, as HotSpot's ensure_join does, so a
     // joiner between isAlive() and wait() cannot miss the wakeup.
-    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Promise<void>((r) => obj.mon!.entry.push(r)));
+    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => obj.mon!.entry.push(r)));
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     this.setField(holder, "java/lang/Thread$FieldHolder", "threadStatus", STATUS_TERMINATED);
     this.setField(obj, "java/lang/Thread", "eetop", 0n);

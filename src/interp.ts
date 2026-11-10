@@ -753,7 +753,8 @@ function callNested(t: JThread, m: JMethod, args: any[]): any {
 }
 
 // Feeds a native frame its pending input and acts on what it yields.
-function stepNative(t: JThread, f: NativeFrame) {
+// Returns true when the thread gives up its turn.
+function stepNative(t: JThread, f: NativeFrame): boolean {
   let r: IteratorResult<any, any>;
   try {
     if (f.thrown) {
@@ -768,12 +769,12 @@ function stepNative(t: JThread, f: NativeFrame) {
   } catch (e) {
     t.frames.pop();
     handleError(t, f.m ? fromNative(e, f.m) : e);
-    return;
+    return false;
   }
   if (r.done) {
     t.frames.pop();
     deliver(t, r.value, f.ret, f.reexec);
-    return;
+    return false;
   }
   const req = r.value;
   if (req.kind === "invoke") {
@@ -800,10 +801,12 @@ function stepNative(t: JThread, f: NativeFrame) {
     }
   } else if (req.kind === "unmount") {
     unmountNative(t);
+  } else if (req.kind === "yield") {
+    return true;
   } else if (req.kind === "wait") {
     t.state = WAITING;
     req.promise.then(
-      (v: any) => { f.input = v; t.vm.wake(t); },
+      (v: any) => { f.input = v; t.vm.wake(t, true); },
       (e: any) => {
         if (e instanceof JavaThrow) f.thrown = e.obj;
         else if (e instanceof PendingThrow) t.vm.throwNew(t, e.cls, e.msg, e.ctor);
@@ -812,6 +815,7 @@ function stepNative(t: JThread, f: NativeFrame) {
       },
     );
   }
+  return false;
 }
 
 const entryStats = typeof process !== "undefined" && process.env?.JW_JIT_STATS ? new Map<string, number>() : null;
@@ -830,21 +834,21 @@ function countEntry(t: JThread, f: Frame) {
   entryStats!.set(k, (entryStats!.get(k) ?? 0) + 1);
 }
 
-// Runs t for up to budget instructions.
-export function runThread(t: JThread, budget: number) {
+// Runs t for up to budget instructions; returns what is left of it.
+export function runThread(t: JThread, budget: number): number {
   while (budget > 0 && t.state === RUNNABLE && !sched.yieldNow) {
     const f = t.top;
     if (f === undefined) {
       terminate(t);
-      return;
+      return budget;
     }
     if (f instanceof NativeFrame) {
-      stepNative(t, f);
+      if (stepNative(t, f)) return budget;
       budget--;
       continue;
     }
     if (f.needLock) {
-      if (!t.vm.monitorEnter(t, f.lock!)) return;
+      if (!t.vm.monitorEnter(t, f.lock!)) return budget;
       f.needLock = false;
     }
     const jit = f.m.jit;
@@ -861,6 +865,7 @@ export function runThread(t: JThread, budget: number) {
     } else budget = interpret(t, f, budget);
   }
   if (t.frames.length === 0 && t.state !== TERMINATED) terminate(t);
+  return budget;
 }
 
 // The VM forgets a finished thread, so its Thread object and thread locals can be collected.

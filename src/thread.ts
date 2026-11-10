@@ -29,11 +29,37 @@ export class Frame {
   }
 }
 
+// A promise that never rejects and calls its waiter inside resolve, not in a
+// microtask, so a thread blocked on one is runnable again in the same
+// scheduler turn as the thread that woke it. It holds one waiter: only
+// t.block consumes it.
+export class Signal<T = void> implements PromiseLike<T> {
+  private settled = false;
+  private value: T | undefined;
+  private waiter: ((v: T) => void) | null = null;
+  constructor(executor: (resolve: (v?: T) => void) => void) {
+    executor((v) => {
+      if (this.settled) return;
+      this.settled = true;
+      this.value = v;
+      const w = this.waiter;
+      this.waiter = null;
+      w?.(v as T);
+    });
+  }
+  then(ok?: ((v: T) => any) | null): any {
+    if (!ok) return;
+    if (this.settled) ok(this.value as T);
+    else this.waiter = ok;
+  }
+}
+
 // What a generator native can yield. "resume" waits for frames the native
-// pushed itself to return to it.
+// pushed itself to return to it. "yield" ends the thread's turn.
 export type Request =
   | { kind: "invoke"; m: JMethod; args: any[] }
-  | { kind: "wait"; promise: Promise<any> }
+  | { kind: "wait"; promise: PromiseLike<any> }
+  | { kind: "yield" }
   | { kind: "resume" }
   // unmounts the mounted virtual thread, frames of this native included; it
   // continues from the yield when the virtual thread is mounted again
@@ -54,6 +80,8 @@ export class NativeFrame {
   readonly reexec: boolean;
   input: any = undefined;
   thrown: JObject | null = null;
+  // set on the frame of Continuation.enterSpecial while its continuation is mounted
+  entry: { cont: JObject; virtual: boolean } | null = null;
   constructor(gen: NativeGen, m: JMethod | null, ret: string, reexec: boolean) {
     this.gen = gen;
     this.m = m;
@@ -219,7 +247,7 @@ export class JThread {
 
   // Blocks the thread until the promise settles. Resolves to the value, or
   // throws into the generator when the promise rejects with a JavaThrow.
-  block(promise: Promise<any>): Request {
+  block(promise: PromiseLike<any>): Request {
     return { kind: "wait", promise };
   }
 

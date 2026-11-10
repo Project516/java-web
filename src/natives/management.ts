@@ -14,7 +14,6 @@ import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import { openFdCount } from "./io.ts";
 import { box, initialized } from "./reflect.ts";
-import { continuationEntry } from "./continuation.ts";
 import { fillElement } from "./lang.ts";
 import type { Natives } from "./util.ts";
 
@@ -218,13 +217,13 @@ function threadFrames(t: JThread, maxDepth: number): Shown[] {
   if (isCarrier(t)) {
     while (i >= 0) {
       const f = t.frames[i--];
-      if (f instanceof NativeFrame && continuationEntry(t.vm, f)?.virtual) break;
+      if (f instanceof NativeFrame && f.entry?.virtual) break;
     }
   }
   for (; i >= 0 && (maxDepth < 0 || out.length < maxDepth); i--) {
     const f = t.frames[i];
     if (f instanceof NativeFrame) {
-      if (continuationEntry(t.vm, f)) continue;
+      if (f.entry) continue;
       if (f.m) out.push({ m: f.m, pc: -2, at: i });
     } else out.push({ m: f.m, pc: f.pc, at: i });
   }
