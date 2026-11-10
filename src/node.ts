@@ -435,6 +435,7 @@ function closeHostOut(s: NodeJS.WriteStream, fd: number) {
   // runs once the writes before it are done
   s.write("", close);
   s.once("error", close);
+  s.once("close", close);
 }
 
 // What HotSpot does on the first OutOfMemoryError: it prints the commands and
