@@ -10,7 +10,7 @@ import { join, relative } from "node:path";
 import { build } from "esbuild";
 import { MemoryBackend, VFS } from "../src/fs.ts";
 import type { Backend } from "../src/fs.ts";
-import { JVM, LM_CLASS } from "../src/jvm.ts";
+import { JVM, LM_CLASS, LM_JAR } from "../src/jvm.ts";
 import { hotspot } from "./hotspot.ts";
 import { NodeBackend } from "../src/node.ts";
 
@@ -103,8 +103,8 @@ class Recorder implements Backend {
     return d;
   }
 }
-// Runs main over the JDK through rec, with app mounted at /app.
-async function record(rec: Recorder, app: string, classpath: string[], main: string, args: string[] = []) {
+// Runs main (a class, or a jar in LM_JAR mode) over the JDK through rec, with app mounted at /app.
+async function record(rec: Recorder, app: string, classpath: string[], main: string, args: string[] = [], mode = LM_CLASS) {
   const vfs = new VFS();
   vfs.mount("/", new MemoryBackend());
   vfs.mount("/jdk", rec);
@@ -115,7 +115,7 @@ async function record(rec: Recorder, app: string, classpath: string[], main: str
     props: { "java.io.tmpdir": "/tmp", "user.home": "/tmp" },
     stdout: () => {}, stderr: (b) => process.stderr.write(b),
   });
-  const code = await vm.run(LM_CLASS, main, args);
+  const code = await vm.run(mode, main, args);
   if (code !== 0) throw new Error(`${main} exited with ${code}`);
 }
 const recorder = new Recorder(new NodeBackend(jdk));
@@ -134,6 +134,10 @@ javacTo("app", "-cp", join(fixtures, "lib"), join(packs, "App.java"));
 cpSync(join(packs, "app.properties"), join(fixtures, "app", "app.properties"));
 javacTo("driver", join(packs, "Compile.java"));
 for (const d of ["lib", "proc", "app"]) execFileSync(hotspot("jar"), ["cf", join(fixtures, `${d}.jar`), "-C", join(fixtures, d), "."]);
+// A bare start from a jar, by class name and as java -jar, reads a few more classes.
+execFileSync(hotspot("jar"), ["cfe", join(fixtures, "hello.jar"), "Hello", "-C", join(dist, "samples"), "Hello.class"]);
+await record(recorder, fixtures, ["/app/hello.jar"], "Hello");
+await record(recorder, fixtures, ["/app/hello.jar"], "/app/hello.jar", [], LM_JAR);
 cpSync(join(packs, "src"), join(fixtures, "src"), { recursive: true });
 const appRecorder = new Recorder(new NodeBackend(jdk));
 await record(appRecorder, fixtures, ["/app/app.jar", "/app/lib.jar"], "App");
@@ -197,7 +201,7 @@ function intersect(spans: [number, number][], within: [number, number][]): [numb
   }
   return out;
 }
-// boot.pack holds what a bare start reads. app.pack, fetched the first time a
+// boot.pack holds what a bare start reads, from a class folder or a jar. app.pack, fetched the first time a
 // program reads one of its parts, holds what the typical program reads beyond
 // that and every java.base part javac reads. javac.pack holds the rest of what
 // javac reads: the compiler's own modules.

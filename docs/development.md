@@ -10,7 +10,7 @@ at `build/hotspot`. The build links the selected modules into `build/jdk/lib/mod
 `lib/packages.txt` indexes packages for the boot class loader. `pnpm build`
 puts it, with the files around it, in `dist/jdk/image.jar` and, for each module
 but `java.base`, `dist/jdk/<module>.jar`, all read by byte range.
-It packs the byte ranges a bare start reads into `boot.pack`, those the programs
+It packs the byte ranges a bare start reads, from a class folder or a jar, into `boot.pack`, those the programs
 in `scripts/packs` read beyond that into `jdk/app.pack` (with every `java.base`
 part javac reads), and the rest of what their compile reads into `jdk/javac.pack`. Without `localeData`, the VM leaves `jdk.localedata`
 out with `jdk.module.limitmods`, as `--limit-modules` does.
