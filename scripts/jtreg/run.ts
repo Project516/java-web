@@ -615,12 +615,14 @@ function findTests(paths: string[]): string[] {
     }
   };
   for (const p of paths) walk(join(testRoot, p));
-  return files;
+  // a directory and a file in it name the file twice
+  return [...new Set(files)];
 }
 
-// This shard's tests: the slowest first, each to the shard with the least
+// This shard's tests, slowest first: each goes to the shard with the least
 // time so far, by the times in test/jtreg/times.tsv (the median when unknown).
-// Every shard computes the same split.
+// Every shard computes the same split. Running them in that order keeps a long
+// test from starting last and holding up the shard.
 function shard(tests: TestCase[]): TestCase[] {
   if (shardN === 1) return tests;
   const known = new Map<string, number>();
@@ -641,7 +643,7 @@ function shard(tests: TestCase[]): TestCase[] {
     load[k] += ms;
     if (k === shardK - 1) mine.add(tc);
   }
-  return tests.filter((tc) => mine.has(tc));
+  return order.map((o) => o.tc).filter((tc) => mine.has(tc));
 }
 
 // test ids in a list file
