@@ -227,6 +227,46 @@ export class Monitor {
   waiters: { t: JThread; wake: () => void; count: number }[] = [];
 }
 
+// Classes of the boot, platform and application loaders are never unloaded.
+const BUILTIN_LOADERS = new Set(["jdk/internal/loader/ClassLoaders$AppClassLoader", "jdk/internal/loader/ClassLoaders$PlatformClassLoader"]);
+export function dropsWithLoader(loader: JObject | null): boolean {
+  return loader !== null && !BUILTIN_LOADERS.has(loader.cls.name);
+}
+
+// Inline caches and compiled code that name an unloadable class keep it, and
+// its loader, alive. They are registered here and emptied before a collection.
+const pins: WeakRef<JMethod | any[] | { c: JClass | null; m: JMethod | null; p: boolean }>[] = [];
+export function pin(o: JMethod | any[] | { c: JClass | null; m: JMethod | null; p: boolean }) {
+  pins.push(new WeakRef(o));
+}
+// Returns whether there was anything to empty. With a gap, it does nothing
+// within that many ms of the last time: compiled code is dropped, and a
+// program that collects in a loop would compile it again each time.
+let pinsReleased = 0;
+export function releasePins(gapMs = 0): boolean {
+  const now = performance.now();
+  if (now - pinsReleased < gapMs) return false;
+  pinsReleased = now;
+  const all = pins.splice(0);
+  let any = false;
+  for (const r of all) {
+    const o = r.deref();
+    if (!o) continue;
+    any = true;
+    if (o instanceof JMethod) {
+      o.jit = null;
+      o.hot = 0;
+    } else if (Array.isArray(o)) {
+      o[0] = o[1] = null;
+      o[3] = false;
+    } else {
+      o.c = o.m = null;
+      o.p = false;
+    }
+  }
+  return any;
+}
+
 export class JClass {
   readonly name: string;
   readonly loader: JObject | null;
@@ -251,6 +291,9 @@ export class JClass {
   // descriptor char for primitive classes
   prim: string | null = null;
   hidden = false;
+  // defined by a loader the VM can drop, or hidden: caches in other code must
+  // not keep it alive (see pin)
+  unloadable = false;
   // instances are registered for finalization: a non-empty finalize() here or
   // in a superclass
   finalizable = false;
@@ -272,6 +315,7 @@ export class JClass {
     this.loader = loader;
     this.cf = cf;
     this.access = access;
+    this.unloadable = dropsWithLoader(loader);
   }
 
   get isInterface() { return (this.access & ACC_INTERFACE) !== 0; }
@@ -426,12 +470,12 @@ export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: (
   allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
-// Lets go of what the VM holds for the program's sake (soft referents) before an
-// OutOfMemoryError; returns whether there was any.
+// Lets go of what the VM holds for the program's sake (soft referents, caches
+// of unloadable classes) before an OutOfMemoryError; returns whether there was any.
 let reclaim: (() => boolean) | null = null;
 export function setReclaim(f: () => boolean) { reclaim = f; }
 // An allocation that cannot succeed still collects first, as HotSpot does, so
-// the program sees soft references cleared.
+// the program sees soft references cleared and unloaded classes gone.
 function collectBeforeGivingUp() {
   if (reclaim?.()) (allocationCheck?.gc ?? (globalThis as { gc?: () => void }).gc)?.();
 }
@@ -515,7 +559,7 @@ function allocated(bytes: number) {
   check.allocated = 0;
   if (check.usage() - check.baseline > check.cap) check.gc?.();
   let over = check.usage() - check.baseline > check.cap;
-  // soft references go before an OutOfMemoryError, as in HotSpot
+  // soft references and unloadable classes go before an OutOfMemoryError, as in HotSpot
   if (over && reclaim?.() && check.gc) {
     check.gc();
     over = check.usage() - check.baseline > check.cap;

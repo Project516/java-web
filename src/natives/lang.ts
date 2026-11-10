@@ -4,7 +4,7 @@ import { isHidden } from "./stackwalk.ts";
 import { gcStats, javaHeap } from "./management.ts";
 import { assertionsEnabled } from "../assertions.ts";
 import { normalize } from "../fs.ts";
-import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData } from "../runtime.ts";
+import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData, releasePins } from "../runtime.ts";
 import type { Monitor } from "../runtime.ts";
 import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
 import { collect, registerFinalizer, releaseFinalizerCycles, releaseSoftReferences } from "./ref.ts";
@@ -387,6 +387,7 @@ export const natives: Natives = {
     for (const th of t.vm.threads) for (const f of th.frames) if (f instanceof Frame && f.stack) f.stack.fill(undefined, f.sp);
     releaseSoftReferences(t.vm);
     releaseFinalizerCycles(t.vm);
+    releasePins(250);
     const t0 = performance.now();
     yield t.block(collect(t.vm, gc));
     stats.ms += performance.now() - t0;

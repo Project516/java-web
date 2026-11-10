@@ -11,7 +11,7 @@ import { JImage } from "./jimage.ts";
 import {
   ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_NATIVE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
   ACC_STATIC, ACC_SUPER, ACC_VARARGS, ERRONEOUS, INITIALIZED, INITIALIZING, JArray, JClass, JField,
-  JMethod, JObject, LINKED, Monitor, defaultValue, newArrayData, noteYield, sched,
+  JMethod, JObject, LINKED, Monitor, defaultValue, dropsWithLoader, newArrayData, noteYield, sched,
 } from "./runtime.ts";
 import type { CallSite, NativeFn } from "./runtime.ts";
 import {
@@ -253,6 +253,20 @@ export class JVM {
     return (loader.x ??= { classes: new Map(), modules: new Map() });
   }
 
+  // A hidden class defined STRONG lives as long as its loader; the others, as long as they are reachable.
+  private strongHidden = new WeakMap<JObject, JClass[]>();
+  private bootStrongHidden: JClass[] = [];
+  keepWithLoader(loader: JObject | null, c: JClass) {
+    c.unloadable = dropsWithLoader(loader);
+    if (loader === null) {
+      this.bootStrongHidden.push(c);
+      return;
+    }
+    const list = this.strongHidden.get(loader);
+    if (list) list.push(c);
+    else this.strongHidden.set(loader, [c]);
+  }
+
   findLoaded(loader: JObject | null, name: string): JClass | undefined {
     return this.loaderClasses(loader).get(name);
   }
@@ -329,6 +343,7 @@ export class JVM {
     a.superclass = this.loadBoot("java/lang/Object");
     a.interfaces = [this.loadBoot("java/lang/Cloneable")!, this.loadBoot("java/io/Serializable")!];
     a.state = INITIALIZED;
+    a.unloadable = c.unloadable;
     c.arrayClass = a;
     this.loaderClasses(c.loader).set(name, a);
     this.created?.push(a);
@@ -345,6 +360,7 @@ export class JVM {
     const c = new JClass(name, loader, cf, cf.access);
     this.classCount++;
     c.hidden = hidden;
+    if (hidden) c.unloadable = true;
     c.superclass = superclass;
     c.interfaces = interfaces;
     let slot = superclass ? superclass.instanceSlots : 0;

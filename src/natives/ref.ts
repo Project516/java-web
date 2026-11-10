@@ -6,7 +6,7 @@
 // finalizer is watched too: its wrapper is collected, and the Finalizer gets a
 // new wrapper over the same storage.
 
-import { INITIALIZED, MAX_HEAP, freeHeap, hasMaxHeap, setReclaim, wrapperOver } from "../runtime.ts";
+import { INITIALIZED, MAX_HEAP, freeHeap, hasMaxHeap, releasePins, setReclaim, wrapperOver } from "../runtime.ts";
 import { JObject } from "../runtime.ts";
 import type { JClass } from "../runtime.ts";
 import type { JThread, NativeGen } from "../thread.ts";
@@ -71,7 +71,10 @@ function refs(vm: JVM): RefState {
       softs: new WeakMap(),
       softCount: 0,
     };
-    setReclaim(() => clearSoftReferences(vm));
+    setReclaim(() => {
+      const soft = clearSoftReferences(vm);
+      return releasePins() || soft;
+    });
     vm.state.set("refs", s);
   }
   return s;
