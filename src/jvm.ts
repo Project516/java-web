@@ -1039,7 +1039,10 @@ export class JVM {
     t.state = RUNNABLE;
     if (!this.queued.has(t)) {
       this.queued.add(t);
-      (boost && sched.thread !== null && sched.thread !== t ? this.woken : this.runQueue).push(t);
+      if (boost && sched.thread !== null && sched.thread !== t) {
+        this.woken.push(t);
+        this.endTurn();
+      } else this.runQueue.push(t);
     }
     this.schedule();
   }
@@ -1054,7 +1057,7 @@ export class JVM {
     return this.runQueue.shift() ?? this.woken.shift();
   }
 
-  // Ends the running thread's turn at its next loop edge or call.
+  // Ends the running thread's turn at its next loop edge or call, so a thread it woke runs soon.
   endTurn() {
     sched.yieldNow = true;
     if (sched.thread) sched.thread.slice = 0;
