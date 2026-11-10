@@ -420,8 +420,13 @@ function closeHostOut(s: NodeJS.WriteStream, fd: number) {
     done = true;
     try {
       fs.closeSync(fd);
-      const nul = fs.openSync(os.devNull, "w");
-      if (nul !== fd) fs.closeSync(nul);
+      // open takes the lowest free number: fill any free one below fd, then let those go
+      const below: number[] = [];
+      for (let nul = fs.openSync(os.devNull, "w"); nul !== fd; nul = fs.openSync(os.devNull, "w")) {
+        below.push(nul);
+        if (nul > fd) break;
+      }
+      for (const nul of below) fs.closeSync(nul);
     } catch { /* already closed */ }
   };
   // runs once the writes before it are done
