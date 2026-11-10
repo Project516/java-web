@@ -506,6 +506,7 @@
 14547	java/security/KeyStore/TestDisabledAlgorithms.java
 14536	java/net/DatagramSocketImpl/CheckDiscard.java
 14467	java/lang/String/CompactString/LastIndexOf.java
+14443	java/util/concurrent/forkjoin/Starvation.java
 14415	java/lang/RuntimeTests/loadLibrary/LoadLibraryTest.java
 14298	java/lang/invoke/callerSensitive/CallerSensitiveAccess.java
 14273	java/net/Socket/ExceptionText.java
@@ -673,6 +674,7 @@
 10594	java/lang/String/CompactString/ToUpperCase.java
 10560	java/net/httpclient/http2/IdlePooledConnectionTest.java
 10547	java/lang/String/CompactString/SerializationTest.java
+10540	java/lang/Thread/virtual/stress/ParkALot.java
 10528	java/io/FileInputStream/TransferTo.java
 10526	java/net/SocketOption/CachedImplOptions.java
 10500	java/net/URLConnection/ChunkedEncoding.java
@@ -1206,6 +1208,7 @@
 6349	java/net/SocketImpl/SocketImplCombinations.java
 6346	java/util/Locale/bcp47u/CalendarTests.java
 6343	java/util/zip/ZipFile/InvalidBytesInEntryNameOrComment.java
+6343	java/lang/Thread/virtual/StackFrames.java
 6329	java/util/zip/GZIP/GZIPInputStreamAvailable.java
 6329	java/security/KeyStore/PKCS12/EntryProtectionTest.java
 6320	java/text/Format/MessageFormat/Bug4185816Test.java
@@ -2205,6 +2208,7 @@
 3516	java/security/cert/CertPathValidator/OCSP/FailoverToCRL.java
 3515	javax/xml/jaxp/Encodings/CheckEncodingPropertiesFile.java
 3515	java/io/Serializable/cloneArray/CloneArray.java
+3515	java/util/concurrent/locks/LockSupport/ParkLoops.java
 3511	java/util/logging/LogManager/Configuration/rootLoggerHandlers/RootLoggerHandlers.java
 3508	java/util/logging/Logger/getLogger/TestLogger.java
 3507	java/util/Collection/IteratorAtEnd.java
@@ -2973,6 +2977,7 @@
 2253	java/io/Writer/Bug6856817.java
 2252	java/util/EnumSet/LargeEnumIteratorRemoveResilience.java
 2252	java/nio/channels/unixdomain/NonBlockingAccept.java
+2251	java/util/concurrent/forkjoin/SubmissionTest.java
 2250	java/io/PipedReader/ReadToArray.java
 2249	java/io/Externalizable/definesWriteObject/DefinesWriteObject.java
 2248	javax/crypto/SealedObject/TestSealedObjectNull.java

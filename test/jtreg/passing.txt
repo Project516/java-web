@@ -284,10 +284,12 @@ java/lang/Thread/virtual/MonitorEnterWaitOOME.java#3
 java/lang/Thread/virtual/ParkWithFixedThreadPool.java
 java/lang/Thread/virtual/Parking.java#2
 java/lang/Thread/virtual/Reflection.java
+java/lang/Thread/virtual/StackFrames.java
 java/lang/Thread/virtual/TraceVirtualThreadLocals.java
 java/lang/Thread/virtual/stress/GetStackTraceALotWhenBlocking.java
 java/lang/Thread/virtual/stress/LotsOfContendedMonitorEnter.java
 java/lang/Thread/virtual/stress/NotifiedThenTimedOutWait.java
+java/lang/Thread/virtual/stress/ParkALot.java
 java/lang/Thread/virtual/stress/SleepALot.java
 java/lang/Thread/virtual/stress/TimedWaitALot.java
 java/lang/Thread/virtual/stress/TimedWaitALot.java#4
@@ -918,9 +920,12 @@ java/util/concurrent/ThreadPoolExecutor/ThreadRestarts.java
 java/util/concurrent/ThreadPoolExecutor/ThrowingTasks.java
 java/util/concurrent/atomic/Lazy.java
 java/util/concurrent/forkjoin/NQueensCS.java
+java/util/concurrent/forkjoin/Starvation.java
+java/util/concurrent/forkjoin/SubmissionTest.java
 java/util/concurrent/forkjoin/ThreadLessCommon.java
 java/util/concurrent/forkjoin/Uniprocessor.java
 java/util/concurrent/locks/Lock/OOMEInAQS.java
+java/util/concurrent/locks/LockSupport/ParkLoops.java
 java/util/concurrent/locks/ReentrantLock/SimpleReentrantLockLoops.java
 java/util/concurrent/tck/JSR166TestCase.java
 java/util/concurrent/tck/JSR166TestCase.java#2
