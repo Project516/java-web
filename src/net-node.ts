@@ -34,6 +34,9 @@ function parseIp(s: string | undefined): Uint8Array {
 
 const ipString = (a: Uint8Array) => (E.isWildcard(a) ? "0.0.0.0" : `${a[0]}.${a[1]}.${a[2]}.${a[3]}`);
 const peerString = (a: Uint8Array) => (E.isWildcard(a) ? "127.0.0.1" : ipString(a));
+// whether a is an IPv4 address of one of this host's interfaces
+const hostHas = (a: Uint8Array) =>
+  Object.values(os.networkInterfaces()).some((list) => list?.some((i) => i.family === "IPv4" && i.address === ipString(a)));
 
 function sysfs(name: string, file: string): number | null {
   try {
@@ -347,6 +350,8 @@ export class NodeNet implements NetBackend {
       if (found) return undefined;
       found = o;
     }
+    // a wildcard listener matches any address: the connect must go to this host to reach it
+    if (found && E.isWildcard(found.local!.addr) && to[0] !== 127 && !hostHas(to)) return undefined;
     return found;
   }
 
