@@ -186,6 +186,17 @@ function subtract(spans: [number, number][], covered: [number, number][]): [numb
   }
   return out;
 }
+// the parts of spans inside within
+function intersect(spans: [number, number][], within: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [s, e] of spans) {
+    for (const [ws, we] of within) {
+      const a = Math.max(s, ws), b = Math.min(e, we);
+      if (a < b) out.push([a, b]);
+    }
+  }
+  return out;
+}
 // boot.pack holds what a bare start reads. app.pack, fetched the first time a
 // program reads one of its parts, holds what the typical program reads beyond
 // that and every java.base part javac reads. javac.pack holds the rest of what
@@ -197,7 +208,7 @@ const bootRanges = new Map([...recorder.ranges].map(([p, r]) => [p, merge(r)]));
 const beyondBoot = (rec: Recorder) => new Map([...rec.ranges].map(([p, r]) => [p, subtract(merge(r), bootRanges.get(p) ?? [])]));
 const appRanges = beyondBoot(appRecorder), javacRanges = new Map<string, [number, number][]>();
 for (const [p, r] of beyondBoot(javacRecorder)) {
-  const own = p === "/lib/modules" ? subtract(r, subtract(r, compiler)) : [];
+  const own = p === "/lib/modules" ? intersect(r, compiler) : [];
   appRanges.set(p, merge([...(appRanges.get(p) ?? []), ...subtract(r, own)]));
   javacRanges.set(p, own);
 }
