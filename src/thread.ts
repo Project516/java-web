@@ -30,8 +30,9 @@ export class Frame {
 }
 
 // A promise that never rejects and calls its waiter inside resolve, not in a
-// microtask. It holds one waiter, the thread that blocks on it with t.block. A thread blocked on one is runnable again in the same scheduler
-// turn as the thread that woke it.
+// microtask, so a thread blocked on one is runnable again in the same
+// scheduler turn as the thread that woke it. It holds one waiter: only
+// t.block consumes it.
 export class Signal<T = void> implements PromiseLike<T> {
   private settled = false;
   private value: T | undefined;
