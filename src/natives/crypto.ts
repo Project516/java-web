@@ -1,4 +1,4 @@
-// The methods HotSpot replaces with intrinsics for SHA digests, AES blocks,
+// The methods HotSpot replaces with intrinsics for MD5 and SHA digests, AES blocks,
 // BigInteger and elliptic-curve field arithmetic. As bytecode they run on Java
 // longs, which are JS BigInts here, so a 64-bit step allocates; these do the
 // same work on numbers, or in far fewer BigInt steps.
@@ -8,6 +8,7 @@ import type { JThread } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { Natives } from "./util.ts";
 
+const MD5 = "sun/security/provider/MD5";
 const SHA1 = "sun/security/provider/SHA";
 const SHA2 = "sun/security/provider/SHA2";
 const SHA5 = "sun/security/provider/SHA5";
@@ -52,6 +53,30 @@ function sha1(s: Int32Array, b: Int8Array, ofs: number) {
     e = d; d = c; c = (bb << 30) | (bb >>> 2); bb = a; a = tmp;
   }
   s[0] = (s[0] + a) | 0; s[1] = (s[1] + bb) | 0; s[2] = (s[2] + c) | 0; s[3] = (s[3] + d) | 0; s[4] = (s[4] + e) | 0;
+}
+
+const KMD5 = Int32Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296));
+const SMD5 = Uint8Array.from([7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]);
+
+function md5(s: Int32Array, b: Int8Array, ofs: number) {
+  const w = w32;
+  for (let i = 0; i < 16; i++) {
+    const p = ofs + 4 * i;
+    w[i] = (b[p] & 255) | ((b[p + 1] & 255) << 8) | ((b[p + 2] & 255) << 16) | (b[p + 3] << 24);
+  }
+  let a = s[0], bb = s[1], c = s[2], d = s[3];
+  for (let i = 0; i < 64; i++) {
+    let f: number, g: number;
+    if (i < 16) { f = (bb & c) | (~bb & d); g = i; }
+    else if (i < 32) { f = (d & bb) | (~d & c); g = (5 * i + 1) & 15; }
+    else if (i < 48) { f = bb ^ c ^ d; g = (3 * i + 5) & 15; }
+    else { f = c ^ (bb | ~d); g = (7 * i) & 15; }
+    const sum = (a + f + KMD5[i] + w[g]) | 0;
+    const r = SMD5[((i >> 4) << 2) | (i & 3)];
+    a = d; d = c; c = bb;
+    bb = (bb + ((sum << r) | (sum >>> (32 - r)))) | 0;
+  }
+  s[0] = (s[0] + a) | 0; s[1] = (s[1] + bb) | 0; s[2] = (s[2] + c) | 0; s[3] = (s[3] + d) | 0;
 }
 
 const K256 = Int32Array.from([
@@ -340,6 +365,8 @@ export const intrinsics: Natives = {
   [`${AES}.implEncryptBlock([BI[BI)V`]: (t, [self, inp, i, out, o]) =>
     aesEncrypt(t, self, (inp as JArray).a as Int8Array, i, (out as JArray).a as Int8Array, o),
 
+  [`${MD5}.implCompress0([BI)V`]: (t, [self, buf, ofs]) =>
+    md5(state(t, self, MD5).a as Int32Array, (buf as JArray).a as Int8Array, ofs),
   [`${SHA1}.implCompress0([BI)V`]: (t, [self, buf, ofs]) =>
     sha1(state(t, self, SHA1).a as Int32Array, (buf as JArray).a as Int8Array, ofs),
   [`${SHA2}.implCompress0([BI)V`]: (t, [self, buf, ofs]) =>
