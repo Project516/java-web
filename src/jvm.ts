@@ -1143,7 +1143,7 @@ export class JVM {
   *exitThread(t: JThread): NativeGen {
     const obj = t.obj!;
     try {
-      yield t.callVirtual(obj, "exit", "()V");
+      yield t.call(this.loadBoot("java/lang/Thread")!.methodMap.get("exit()V")!, obj);
     } catch {
       // Thread.exit failures are swallowed, see JavaThread::exit
     }
