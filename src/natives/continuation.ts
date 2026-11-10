@@ -23,10 +23,44 @@ const BLOCKING = 12;
 
 type Entry = NonNullable<NativeFrame["entry"]>;
 
+// With this many continuations yielded, new ones keep their frames packed: a
+// Frame and its two arrays cost about 300 bytes, the packed values about 100.
+const PACK_AT = 1024;
+
+// A frame as values: [method, pc, sp, lock, needLock, ...locals, ...stack up to sp].
+type Packed = any[];
+
+function pack(f: AnyFrame): AnyFrame | Packed {
+  if (!(f instanceof Frame) || f.direct || f.locals === null) return f;
+  const max = f.m.code!.maxLocals;
+  const p: Packed = new Array(5 + max + f.sp);
+  p[0] = f.m;
+  p[1] = f.pc;
+  p[2] = f.sp;
+  p[3] = f.lock;
+  p[4] = f.needLock;
+  for (let i = 0; i < max; i++) p[5 + i] = f.locals[i];
+  for (let i = 0; i < f.sp; i++) p[5 + max + i] = f.stack[i];
+  return p;
+}
+
+function unpack(p: AnyFrame | Packed): AnyFrame {
+  if (!Array.isArray(p)) return p;
+  const f = new Frame(p[0]);
+  f.pc = p[1];
+  f.sp = p[2];
+  f.lock = p[3];
+  f.needLock = p[4];
+  const max = f.locals.length;
+  for (let i = 0; i < max; i++) f.locals[i] = p[5 + i];
+  for (let i = 0; i < f.sp; i++) f.stack[i] = p[5 + max + i];
+  return f;
+}
+
 // What a yielded continuation needs to resume, kept in its object's x.
 interface Frozen {
   // its frames, bottom first
-  frames: AnyFrame[];
+  frames: (AnyFrame | Packed)[];
   // the top frame re-executes its instruction instead of taking a result
   retry: boolean;
   // monitors its virtual thread owns, and the owner standing in for it
@@ -52,7 +86,7 @@ function state(vm: JVM): State {
 // The continuation a native frame is the entry of, if it is one.
 // The frames of a yielded continuation, bottom first.
 export function frozenFrames(c: JObject): AnyFrame[] | undefined {
-  return (c.x as Frozen | undefined)?.frames;
+  return (c.x as Frozen | undefined)?.frames.map(unpack);
 }
 
 // Index in t.frames of the innermost mounted continuation's entry frame.
@@ -106,7 +140,8 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
       info.owner = owner;
     }
   }
-  info.frames = t.frames.splice(e + 1, count);
+  const frames = t.frames.splice(e + 1, count);
+  info.frames = s.frozenCount >= PACK_AT ? frames.map(pack) : frames;
   entry.cont.x = info;
   s.frozenCount++;
   s.busy = true;
@@ -180,7 +215,7 @@ export const natives: Natives = {
       c.x = undefined;
       s.frozenCount--;
       setChunk(t, c, false);
-      t.frames.push(...info.frames);
+      for (const f of info.frames) t.frames.push(unpack(f));
       if (info.owner) {
         for (const o of info.monitors) o.mon!.owner = t;
         t.owned = info.monitors;
