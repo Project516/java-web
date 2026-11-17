@@ -7,23 +7,31 @@ out=build/jdk
 modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.security.jgss,jdk.unsupported,jdk.zipfs,jdk.localedata,jdk.management,jdk.net,jdk.nio.mapmode,jdk.internal.md,javaweb.tls}
 
 # Builds from one pinned JDK release so every machine makes the same image.
-# Renovate bumps the release.
-release=25.0.5+8
+# Update the release, checksums and OpenJDK source tag together.
+release=25.0.5.1.2
+source_release=25.0.5.1+2
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/java-web
 
-# Prints the home of the Temurin JDK for a platform, downloading it on first use.
+# Prints the home of the Corretto JDK for a platform, downloading it on first use.
 jdk_home() {
   local platform=$1 home=$cache/jdk-$release-$1
   if [ ! -d "$home" ]; then
     mkdir -p "$cache"
-    local url=https://github.com/adoptium/temurin25-binaries/releases/download/jdk-${release/+/%2B}/OpenJDK25U-jdk_${platform}_hotspot_${release/+/_}.tar.gz
-    local tgz=$cache/jdk-$release-$platform.tar.gz want got
+    local want
+    case "$platform" in
+      linux-x64) want=8d2be3f035dbdb7f7475e2f7009b7dc20683bfc351ad41064218c8de596c9644 ;;
+      linux-aarch64) want=9370d3e5bcf0d165e6be4a78c3f6b57160af16d3033319af583800251eb91df2 ;;
+      macosx-x64) want=e511959cc5a403d47a126925bf5c359a8bec73d7fe486a633b83c336bfa850a5 ;;
+      macosx-aarch64) want=e81e71c375ae39b85f509d31d17e74edc8e4fd7277c375c7b4b77fe26f73f233 ;;
+      *) echo "unsupported JDK platform: $platform" >&2; return 1 ;;
+    esac
+    local url=https://corretto.aws/downloads/resources/$release/amazon-corretto-$release-$platform.tar.gz
+    local tgz=$cache/jdk-$release-$platform.tar.gz got
     curl -fsSL -o "$tgz" "$url"
-    want=$(curl -fsSL "$url.sha256.txt" | cut -d' ' -f1)
     got=$( (sha256sum "$tgz" 2>/dev/null || shasum -a 256 "$tgz") | cut -d' ' -f1)
     if [ "$got" != "$want" ]; then
       rm -f "$tgz"
-      echo "JDK download has sha256 $got, Temurin publishes $want" >&2
+      echo "JDK download has sha256 $got, expected $want" >&2
       exit 1
     fi
     rm -rf "$home.tmp"
@@ -38,11 +46,11 @@ jdk_home() {
 
 # The host JDK is the reference VM the tests run, and supplies the tools.
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64) host=x64_linux ;;
-  Linux-aarch64) host=aarch64_linux ;;
-  Darwin-x86_64) host=x64_mac ;;
-  Darwin-arm64) host=aarch64_mac ;;
-  *) echo "no Temurin JDK for $(uname -s) $(uname -m)" >&2; exit 1 ;;
+  Linux-x86_64) host=linux-x64 ;;
+  Linux-aarch64) host=linux-aarch64 ;;
+  Darwin-x86_64) host=macosx-x64 ;;
+  Darwin-arm64) host=macosx-aarch64 ;;
+  *) echo "no Corretto JDK for $(uname -s) $(uname -m)" >&2; exit 1 ;;
 esac
 JAVA_HOME=$(jdk_home "$host")
 mkdir -p build
@@ -51,7 +59,7 @@ ln -sfn "$JAVA_HOME" build/hotspot
 # The image comes from the Linux x64 JDK on every host, since the natives are
 # the Linux ones. Extract its modules for jlink and restore their original
 # contents before linking.
-linux=$(jdk_home x64_linux)
+linux=$(jdk_home linux-x64)
 src=build/jdk-src
 rm -rf "$src" "$out" build/jdk-linked
 mkdir -p "$src" "$out"
@@ -69,7 +77,7 @@ mkdir -p "$src" "$out"
 # those modules' versions out of stack traces. jlink cannot hash module
 # directories, so the modules go into jmods (with fixed timestamps, so the image
 # comes out the same every time) and java.base.jmod records their hashes anew,
-# for the modules Temurin's java.base records.
+# for the modules java.base records.
 linked=$(sed -n 's/^MODULES="\(.*\)"/\1/p' "$out/release")
 hashed=$("$JAVA_HOME/bin/java" scripts/HashedModules.java "$src/java.base/module-info.class" "$linked")
 "$JAVA_HOME/bin/java" scripts/ExplodedModuleInfo.java "$src"/*/module-info.class

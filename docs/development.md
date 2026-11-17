@@ -1,7 +1,7 @@
 # Development
 
 You need Node 23.6 or newer, pnpm, curl, bzip2, and Linux or macOS. `pnpm jdk`
-downloads a pinned Temurin 25 release for your host and one for Linux x64 (the
+downloads a pinned Corretto 25 release for your host and one for Linux x64 (the
 same download on Linux x64) into `~/.cache/java-web`, and checks each SHA-256.
 The runtime image comes from the Linux x64 JDK, so every machine, a Mac
 included, builds the same image, with the Linux class library whose natives
@@ -42,8 +42,8 @@ node scripts/jtreg/run.ts <jdk-source> java/lang
 ```
 
 `<jdk-source>` is a checkout of `openjdk/jdk25u` at the pinned JDK's tag:
-`jdk-<version>-ga`, where `<version>` is `release=` in `scripts/build-jdk.sh`
-without the `+build` part. A sparse checkout of `test/lib`, the test
+`jdk-<version>`, where `<version>` is `source_release=` in `scripts/build-jdk.sh`.
+A sparse checkout of `test/lib`, the test
 directories, the `@library` directories they name and the Unicode and language
 data under `src/java.base/share/data` (`lsrdata`, `unicodedata`) is enough;
 `--only-passing --library-dirs` prints the `@library` directories of the listed
