@@ -73,8 +73,9 @@ function refs(vm: JVM): RefState {
       softCount: 0,
     };
     setReclaim(() => {
+      const cycles = forgetCycles(s!, SCAN_AT_GC);
       const soft = clearSoftReferences(vm);
-      return releasePins() || soft;
+      return releasePins() || soft || cycles;
     });
     vm.state.set("refs", s);
   }
@@ -217,7 +218,8 @@ function leadsBack(w: JObject, f: any[], budget: { left: number }): boolean {
   return false;
 }
 
-function forgetCycles(s: RefState, scan: number) {
+// Returns whether it released any.
+function forgetCycles(s: RefState, scan: number): boolean {
   const budget = { left: scan };
   const list = s.fins;
   const kept: Fin[] = [];
@@ -229,7 +231,9 @@ function forgetCycles(s: RefState, scan: number) {
     if (leadsBack(w, h.f!, budget)) h.f = null;
     else kept.push(h);
   }
+  const released = i - kept.length;
   s.fins = list.slice(i).concat(kept);
+  return released > 0;
 }
 
 export function releaseFinalizerCycles(vm: JVM) {

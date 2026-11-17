@@ -76,7 +76,7 @@ export function restoreJit(vm: JVM, m: JMethod, code: SavedJit) {
 
 // A constant of compiled code that holds a class another loader can drop.
 function namesUnloadable(v: unknown, caller: JClass): boolean {
-  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject && v.x instanceof JClass ? v.x : null;
+  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (v.x instanceof JClass ? v.x : v.cls) : null;
   return c !== null && c !== caller && c.unloadable && (c.hidden || c.loader !== caller.loader);
 }
 
