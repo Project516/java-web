@@ -1385,7 +1385,7 @@ function genGuardMiss(g: Gen, pc: number, next: number, d: number, target: JMeth
   const args = Array.from({ length: n }, (_, i) => `s${base + i}`);
   const ret = target.ret;
   const xp = g.xcode(pc, base, EXIT_SUSPEND), xi = g.xcode(pc, d, EXIT_INTERPRET);
-  const cell = g.K([null, null, target.key]);
+  const cell = g.K([null, null, target.key, false]);
   const call = n <= 4 ? `rt.callv(t,f,${cell},${pc},${xp},${xi},${args})` : `rt.callvMany(t,f,${cell},[${args}],${pc},${xp},${xi})`;
   return `v=${call};if(v===rt.E){x=rt.xc;break X;}${ret === "V" ? "" : `s${base}=v;`}` +
     `if(t.state!==0)${g.exit(next, ret === "V" ? base : base + (isWide(ret) ? 2 : 1), EXIT_SUSPEND)}`;
