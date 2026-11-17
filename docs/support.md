@@ -56,7 +56,10 @@ java-web targets headless Java: console apps, libraries and javac.
   fields back to it (JS cannot finalize such an object): the VM drops the
   finalizer of an object it finds on such a cycle, so the object is freed
   without `finalize()` running, and a cycle it does not find (a class loader
-  with a `finalize()`) keeps the object for good. In the browser `System.gc()` is a hint and the engine collects when it chooses.
+  with a `finalize()`) keeps the object for good. A local variable keeps its
+  object reachable until the method returns or the variable is overwritten,
+  even after its last use, so such an object is cleared or finalized later
+  than on HotSpot. In the browser `System.gc()` is a hint and the engine collects when it chooses.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
   processes in the browser, and native libraries other than JS natives.
 
