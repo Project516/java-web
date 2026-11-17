@@ -16,7 +16,7 @@
 
 import { cpB, cpTag, cpValue, Tag, utf8 } from "./classfile.ts";
 import {
-  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc,
+  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc, pin,
 } from "./runtime.ts";
 import { memberTarget } from "./natives/invoke.ts";
 import { concatStrings } from "./natives/strings.ts";
@@ -74,6 +74,12 @@ export function restoreJit(vm: JVM, m: JMethod, code: SavedJit) {
   m.hot = THRESHOLD - 1;
 }
 
+// A constant of compiled code that holds a class another loader can drop.
+function namesUnloadable(v: unknown, caller: JClass): boolean {
+  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (v.x instanceof JClass ? v.x : v.cls) : null;
+  return c !== null && c !== caller && c.unloadable && (c.hidden || c.loader !== caller.loader);
+}
+
 function compile(t: JThread, m: JMethod) {
   if (disabled || m.noJit || !m.code || m.name === "<clinit>" || m.code.code.length > MAX_CODE) return;
   const vm = t.vm;
@@ -85,6 +91,7 @@ function compile(t: JThread, m: JMethod) {
       if (vm.keepJit && !stats && !noInline) vm.jitCode.set(m, code);
     }
     const { src, consts } = code;
+    if (consts.some((v) => namesUnloadable(v, m.cls))) pin(m);
     if (dump && m.toString().includes(dump)) console.error(`// ${m}\n${src}`);
     m.jit = new Function("rt", "K", src)(runtime, consts) as Compiled;
     if (stats) stats.set(`compiled ${m}`, src.length);
@@ -230,7 +237,7 @@ const runtime = {
   virtualTarget(t: JThread, mn: JObject, recv: JObject | null, pc: number): JMethod {
     const m = memberTarget(t, mn);
     if (recv === null) npeAt(pc);
-    const sel = recv.cls.selectMethod(m.key);
+    const sel = m.isPrivate ? m : recv.cls.selectMethod(m.key);
     if (!sel) throw new PendingThrow("java/lang/AbstractMethodError", `${recv.cls.javaName}.${m.name}${m.desc}`);
     return sel;
   },
@@ -348,7 +355,7 @@ const runtime = {
   },
   fcmp(a: number, b: number, nan: number) { return a > b ? 1 : a < b ? -1 : a === b ? 0 : nan; },
   lcmp(a: bigint, b: bigint) { return a > b ? 1 : a < b ? -1 : 0; },
-  // cell: the inline cache, [receiver class, method, method key]
+  // cell: the inline cache, [receiver class, method, method key, registered by pin]
   select(o: JObject | null, cell: any[], pc: number): JMethod {
     if (o === null) return runtime.npe(pc);
     if (cell[0] === o.cls) return cell[1];
@@ -357,6 +364,10 @@ const runtime = {
     if (!m) throw new PendingThrow("java/lang/AbstractMethodError", `${o.cls.javaName}.${key}`);
     cell[0] = o.cls;
     cell[1] = m;
+    if (o.cls.unloadable && !cell[3]) {
+      cell[3] = true;
+      pin(cell);
+    }
     return m;
   },
   isGen(r: any) { return r !== null && typeof r === "object" && typeof r.next === "function" && typeof r.throw === "function"; },
@@ -1043,7 +1054,7 @@ function insnCode(g: Gen, b: Body, pc: number) {
         break;
       }
       const k = cls.rcp[idx2] as JClass | undefined;
-      if (!k || k.state !== INITIALIZED || k.access & 0x0600) { emit(slow(pc, d)); break; }
+      if (!k || k.state !== INITIALIZED || k.access & 0x0600 || k.finalizable) { emit(slow(pc, d)); break; }
       emit(`${S(d)}=new rt.JObject(${K(k)},${K(k)}.template.slice());`);
       break;
     }
@@ -1146,7 +1157,7 @@ function regionInvoke(g: Gen, b: Body, op: number, pc: number, d: number, target
   let guard: JClass | null = null;
   if (op === 0xb9 || !isFixed(op, callee)) {
     const site = b.m.cache?.[pc];
-    if (!site || !site.m.code || site.m.isAbstract || site.m.polymorphic) throw new NoInline();
+    if (!site?.m?.code || site.m.isAbstract || site.m.polymorphic) throw new NoInline();
     callee = site.m;
     guard = site.c;
   }
@@ -1314,7 +1325,7 @@ function genInvoke(
     let seen = false;
     if (guard !== null && !target.isPrivate) {
       const site = g.top.m.cache?.[pc];
-      if (site && site.m.code && !site.m.isAbstract && !site.m.polymorphic) {
+      if (site?.m?.code && !site.m.isAbstract && !site.m.polymorphic) {
         callee = site.m;
         guard = site.c;
         seen = true;
@@ -1345,7 +1356,7 @@ function genInvoke(
   if (op === 0xb6 || op === 0xb9) {
     if (target.isPrivate) parts.push(`tm=${K(target)};${known ? "" : `if(${args[0]}===null)np(${pc});`}`);
     else {
-      const cell = K([null, null, target.key]);
+      const cell = K([null, null, target.key, false]);
       parts.push(`ic=${cell};tm=${args[0]}!==null&&${args[0]}.cls===ic[0]?ic[1]:rt.select(${args[0]},ic,${pc});`);
     }
   } else if (op === 0xb7) {
@@ -1374,7 +1385,7 @@ function genGuardMiss(g: Gen, pc: number, next: number, d: number, target: JMeth
   const args = Array.from({ length: n }, (_, i) => `s${base + i}`);
   const ret = target.ret;
   const xp = g.xcode(pc, base, EXIT_SUSPEND), xi = g.xcode(pc, d, EXIT_INTERPRET);
-  const cell = g.K([null, null, target.key]);
+  const cell = g.K([null, null, target.key, false]);
   const call = n <= 4 ? `rt.callv(t,f,${cell},${pc},${xp},${xi},${args})` : `rt.callvMany(t,f,${cell},[${args}],${pc},${xp},${xi})`;
   return `v=${call};if(v===rt.E){x=rt.xc;break X;}${ret === "V" ? "" : `s${base}=v;`}` +
     `if(t.state!==0)${g.exit(next, ret === "V" ? base : base + (isWide(ret) ? 2 : 1), EXIT_SUSPEND)}`;

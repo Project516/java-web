@@ -7,7 +7,8 @@ import * as os from "node:os";
 import { isMainThread } from "node:worker_threads";
 import * as path from "node:path";
 import { deserialize, serialize, setFlagsFromString } from "node:v8";
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext, runInNewContext } from "node:vm";
+import type { Context } from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { bootClassPath, bootPatches } from "./bootpath.ts";
 import { VFS } from "./fs.ts";
@@ -343,6 +344,8 @@ export interface NodeRunOptions {
   // the process exits when its resident memory goes past this
   maxRssMb?: number;
   enablePreview?: boolean;
+  // --finalization=disabled leaves finalize() uncalled (true by default)
+  finalization?: boolean;
   // -XX:OnOutOfMemoryError commands, run through /bin/sh on the first OutOfMemoryError the VM throws
   onOutOfMemoryError?: string[];
   // -XX:+DisplayVMOutputToStderr: the VM's own messages go to stderr, not stdout
@@ -383,16 +386,29 @@ function fixedInput(data: Uint8Array) {
 const bridges = new WeakMap<object, Bridge>();
 
 // The host file system is the VFS root, with the JDK image mounted at /jdk.
-// System.gc() calls globalThis.gc, which node defines only under --expose-gc
+// System.gc() calls globalThis.gc, which node defines only under --expose-gc.
+// The engine keeps a WeakRef's target alive until the job that made or read it
+// ends, so a collection from inside running Java code would miss what Java
+// just dropped; a microtask checkpoint of another context ends the job.
+let jobEnd: Context | null = null;
 function exposeGc() {
   const g = globalThis as { gc?: unknown };
-  if (typeof g.gc === "function") return;
-  // V8 aborts on a flag change once flags are frozen
-  if (/(^|\s)--freeze-flags-after-init\b/.test([...process.execArgv, process.env.NODE_OPTIONS ?? ""].join(" "))) return;
-  setFlagsFromString("--expose-gc");
-  // absent when --expose-gc-as gave it another name
-  const gc = runInNewContext("typeof gc === 'function' ? gc : undefined");
-  if (gc) g.gc = gc;
+  if (typeof g.gc !== "function") {
+    // V8 aborts on a flag change once flags are frozen
+    if (/(^|\s)--freeze-flags-after-init\b/.test([...process.execArgv, process.env.NODE_OPTIONS ?? ""].join(" "))) return;
+    setFlagsFromString("--expose-gc");
+    // absent when --expose-gc-as gave it another name
+    const gc = runInNewContext("typeof gc === 'function' ? gc : undefined");
+    if (!gc) return;
+    g.gc = gc;
+  }
+  const gc = g.gc as (() => void) & { endsJob?: true };
+  if (gc.endsJob) return;
+  const endingJob = Object.assign(() => {
+    runInContext("0", (jobEnd ??= createContext({}, { microtaskMode: "afterEvaluate" })));
+    gc();
+  }, { endsJob: true as const });
+  g.gc = endingJob;
 }
 
 // Once the reader goes away (a closed pipe), writes fail with an IOException as
@@ -615,6 +631,7 @@ export function nodeVm(o: LauncherOptions): JVM {
     debug: o.debug,
     assertions: o.assertions && parseAssertions(o.assertions),
     enablePreview: o.enablePreview,
+    finalization: o.finalization,
     bootClassPath: bootClassPath(o.props?.["jdk.boot.class.path.append"]),
     bootPatch: bootPatches(o.props),
     osVersion: os.release(),
@@ -767,6 +784,7 @@ export function main(argv: string[]) {
     else if (moduleFlag(o, a, argv[i + 1])) i += a.includes("=") ? 0 : 1;
     else if (isAssertionFlag(a)) (o.assertions ??= []).push(a);
     else if (a === "--enable-preview") o.enablePreview = true;
+    else if (a === "--finalization=enabled" || a === "--finalization=disabled") o.finalization = a === "--finalization=enabled";
     else if (a === "--locale-data") o.localeData = true;
     else if (a === "-version") version = true;
     else if (a.startsWith("-Xmx")) {

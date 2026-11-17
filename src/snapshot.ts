@@ -95,7 +95,7 @@ export function snapshotKey(vm: JVM, build: string): string {
   if (i >= 0 && i % 2 === 0) vmProps[i + 1] = "";
   const o = vm.opts;
   const modules = [...new Set(vm.bootPackages.values())].sort();
-  return JSON.stringify([build, modules, platformProperties(vm), vmProps, o.assertions ?? null, !!o.enablePreview, MAX_HEAP]);
+  return JSON.stringify([build, modules, platformProperties(vm), vmProps, o.assertions ?? null, !!o.enablePreview, o.finalization !== false, MAX_HEAP]);
 }
 
 const WAIT0 = "java/lang/Object.wait0(J)V";

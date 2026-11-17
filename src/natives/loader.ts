@@ -7,7 +7,7 @@ import { jstr, u8 } from "./util.ts";
 import type { Natives } from "./util.ts";
 
 const CL = "java/lang/ClassLoader";
-const HIDDEN_CLASS = 0x2, NESTMATE_CLASS = 0x1;
+const HIDDEN_CLASS = 0x2, NESTMATE_CLASS = 0x1, STRONG_LOADER_LINK = 0x4;
 
 function internalName(t: JThread, name: JObject | null): string | null {
   return name === null ? null : jstr(t, name)!.replace(/\./g, "/");
@@ -70,6 +70,7 @@ export const natives: Natives = {
       const vm = t.vm;
       const hidden = (flags & HIDDEN_CLASS) !== 0;
       const c = yield* vm.defineClassGen(t, loader, u8(b, off, len).slice(), internalName(t, name), pd, hidden);
+      if (hidden && flags & STRONG_LOADER_LINK) vm.keepWithLoader(loader, c);
       if (flags & NESTMATE_CLASS) {
         c.nestHost = yield* nestHostOf(t, vm.classOf(lookup));
       }

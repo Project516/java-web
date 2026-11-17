@@ -46,6 +46,17 @@ java-web targets headless Java: console apps, libraries and javac.
   processes do to a watched host directory, with Node's `fs.watch` (so a short-lived
   entry can show as a delete without its create). Elsewhere it does not see
   changes made outside the VM.
+- Garbage collection is the JS engine's. Under Node, `System.gc()` collects: weak and
+  phantom references are cleared and enqueued, finalizers (off with
+  `--finalization=disabled`) and Cleaners run, and a class loader that nothing
+  refers to is unloaded with its classes and hidden classes. Soft references
+  are cleared before an `OutOfMemoryError`, and by `System.gc()` when more than
+  half the heap limit is in use.
+  An object with a finalizer is finalized only if no cycle leads from its own
+  fields back to it (JS cannot finalize such an object): the VM drops the
+  finalizer of an object it finds on such a cycle, so the object is freed
+  without `finalize()` running, and a cycle it does not find (a class loader
+  with a `finalize()`) keeps the object for good. In the browser `System.gc()` is a hint and the engine collects when it chooses.
 - Not supported: GUI apps (AWT and Swing windows), `ConvolveOp`, child
   processes in the browser, and native libraries other than JS natives.
 

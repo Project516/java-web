@@ -236,6 +236,46 @@ export class Monitor {
   waiters: { t: JThread; wake: () => void; count: number }[] = [];
 }
 
+// Classes of the boot, platform and application loaders are never unloaded.
+const BUILTIN_LOADERS = new Set(["jdk/internal/loader/ClassLoaders$AppClassLoader", "jdk/internal/loader/ClassLoaders$PlatformClassLoader"]);
+export function dropsWithLoader(loader: JObject | null): boolean {
+  return loader !== null && !BUILTIN_LOADERS.has(loader.cls.name);
+}
+
+// Inline caches and compiled code that name an unloadable class keep it, and
+// its loader, alive. They are registered here and emptied before a collection.
+const pins: WeakRef<JMethod | any[] | { c: JClass | null; m: JMethod | null; p: boolean }>[] = [];
+export function pin(o: JMethod | any[] | { c: JClass | null; m: JMethod | null; p: boolean }) {
+  pins.push(new WeakRef(o));
+}
+// Returns whether there was anything to empty. With a gap, it does nothing
+// within that many ms of the last time: compiled code is dropped, and a
+// program that collects in a loop would compile it again each time.
+let pinsReleased = -Infinity;
+export function releasePins(gapMs = 0): boolean {
+  const now = performance.now();
+  if (now - pinsReleased < gapMs) return false;
+  pinsReleased = now;
+  const all = pins.splice(0);
+  let any = false;
+  for (const r of all) {
+    const o = r.deref();
+    if (!o) continue;
+    any = true;
+    if (o instanceof JMethod) {
+      o.jit = null;
+      o.hot = 0;
+    } else if (Array.isArray(o)) {
+      o[0] = o[1] = null;
+      o[3] = false;
+    } else {
+      o.c = o.m = null;
+      o.p = false;
+    }
+  }
+  return any;
+}
+
 export class JClass {
   readonly name: string;
   readonly loader: JObject | null;
@@ -260,6 +300,12 @@ export class JClass {
   // descriptor char for primitive classes
   prim: string | null = null;
   hidden = false;
+  // defined by a loader the VM can drop, or hidden: caches in other code must
+  // not keep it alive (see pin)
+  unloadable = false;
+  // instances are registered for finalization: a non-empty finalize() here or
+  // in a superclass
+  finalizable = false;
   // members the VM added to a class it spun, which reflection does not show
   vmMembers: Set<JField | JMethod> | null = null;
   nestHost: JClass | null = null;
@@ -278,6 +324,7 @@ export class JClass {
     this.loader = loader;
     this.cf = cf;
     this.access = access;
+    this.unloadable = dropsWithLoader(loader);
   }
 
   get isInterface() { return (this.access & ACC_INTERFACE) !== 0; }
@@ -374,7 +421,7 @@ export class JClass {
     m = null;
     for (let c: JClass | null = this; c; c = c.superclass) {
       const d = c.methodMap.get(key);
-      if (d && !d.isStatic && !(d.isPrivate && c !== this)) { m = d; break; }
+      if (d && !d.isStatic && !d.isPrivate) { m = d; break; }
     }
     if (!m || m.isAbstract) {
       const d = this.maximallySpecific(key);
@@ -432,6 +479,32 @@ export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: (
   allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
 export function clearAllocationCheck() { allocationCheck = null; }
+// Lets go of what the VM holds for the program's sake (soft referents, caches
+// of unloadable classes) before an OutOfMemoryError; returns whether there was any.
+let reclaim: (() => boolean) | null = null;
+export function setReclaim(f: () => boolean) { reclaim = f; }
+// An allocation that cannot succeed still collects first, as HotSpot does, so
+// the program sees soft references cleared and unloaded classes gone.
+function collectBeforeGivingUp() {
+  if (reclaim?.()) (allocationCheck?.gc ?? (globalThis as { gc?: () => void }).gc)?.();
+}
+// A JObject made while a collection hands a finalizable object to its Finalizer:
+// it is not an allocation that can fail.
+export function wrapperOver(cls: JClass, f: any[]): JObject {
+  const check = allocationCheck;
+  const was = check?.enabled;
+  if (check) check.enabled = false;
+  try {
+    return new JObject(cls, f);
+  } finally {
+    if (check) check.enabled = was!;
+  }
+}
+// Java heap bytes still free under the cap, measured as the cap is.
+export function freeHeap(): number {
+  const check = allocationCheck;
+  return check?.enabled ? MAX_HEAP - (check.usage() - check.baseline) : MAX_HEAP;
+}
 export function resetAllocationCheck() {
   if (!allocationCheck) return;
   allocationCheck.baseline = allocationCheck.usage();
@@ -494,7 +567,12 @@ function allocated(bytes: number) {
   if (check.allocated < (check.gc || check.lazy ? check.step : check.cap)) return;
   check.allocated = 0;
   if (check.usage() - check.baseline > check.cap) check.gc?.();
-  const over = check.usage() - check.baseline > check.cap;
+  let over = check.usage() - check.baseline > check.cap;
+  // soft references and unloadable classes go before an OutOfMemoryError, as in HotSpot
+  if (over && reclaim?.() && check.gc) {
+    check.gc();
+    over = check.usage() - check.baseline > check.cap;
+  }
   if (!over) {
     check.over = false;
     return;
@@ -530,7 +608,10 @@ function store(bytes: number): [ArrayBuffer, number] | null {
 export function newArrayData(elem: string, n: number): ArrayData {
   if (n > 0x7ffffffd) throw new PendingThrow("java/lang/OutOfMemoryError", "Requested array size exceeds VM limit");
   const bytes = n * ELEM_SIZE[elem];
-  if (bytes > MAX_HEAP) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  if (bytes > MAX_HEAP) {
+    collectBeforeGivingUp();
+    throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+  }
   const at = elem === "L" ? null : store(bytes);
   try {
     switch (elem) {
@@ -545,7 +626,10 @@ export function newArrayData(elem: string, n: number): ArrayData {
     }
   } catch (e) {
     // the JS engine's own size limits, below MAX_HEAP for object arrays
-    if (e instanceof RangeError) throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+    if (e instanceof RangeError) {
+      collectBeforeGivingUp();
+      throw new PendingThrow("java/lang/OutOfMemoryError", "Java heap space");
+    }
     throw e;
   }
 }
