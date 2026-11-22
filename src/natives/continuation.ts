@@ -29,7 +29,7 @@ type Entry = NonNullable<NativeFrame["entry"]>;
 const PACK_AT = 1024;
 
 // Frames as values in one array, bottom first. A frame without a monitor is
-// [method, pc, sp, ...locals, ...stack up to sp]; any other frame is itself.
+// [method, pc + sp * 65536, ...locals, ...stack up to sp]; any other frame is itself.
 type Packed = any[];
 
 function packable(f: AnyFrame): f is Frame {
@@ -38,7 +38,7 @@ function packable(f: AnyFrame): f is Frame {
 
 function pack(frames: AnyFrame[]): Packed {
   let n = 0;
-  for (const f of frames) n += packable(f) ? 3 + f.locals.length + f.sp : 1;
+  for (const f of frames) n += packable(f) ? 2 + f.locals.length + f.sp : 1;
   const p: Packed = new Array(n);
   let i = 0;
   for (const f of frames) {
@@ -47,8 +47,7 @@ function pack(frames: AnyFrame[]): Packed {
       continue;
     }
     p[i++] = f.m;
-    p[i++] = f.pc;
-    p[i++] = f.sp;
+    p[i++] = f.pc + f.sp * 65536;
     for (let j = 0; j < f.locals.length; j++) p[i++] = f.locals[j];
     for (let j = 0; j < f.sp; j++) p[i++] = f.stack[j];
   }
@@ -64,9 +63,10 @@ function unpackInto(out: AnyFrame[], p: Packed) {
       continue;
     }
     const f = new Frame(x);
-    f.pc = p[i + 1];
-    f.sp = p[i + 2];
-    i += 3;
+    const at = p[i + 1];
+    f.pc = at & 0xffff;
+    f.sp = at >>> 16;
+    i += 2;
     for (let j = 0; j < f.locals.length; j++) f.locals[j] = p[i++];
     for (let j = 0; j < f.sp; j++) f.stack[j] = p[i++];
     out.push(f);
@@ -77,15 +77,16 @@ function unpackInto(out: AnyFrame[], p: Packed) {
 interface Frozen {
   // its frames, bottom first, or packed
   frames: AnyFrame[] | Packed;
-  packed: boolean;
   // the top frame re-executes its instruction instead of taking a result
-  retry: boolean;
+  flags: number;
   // monitors its virtual thread owns, and the owner standing in for it
   monitors: JObject[];
   owner: JThread | null;
 }
 
 const NO_MONITORS: JObject[] = [];
+// Frozen.flags
+const RETRY = 1, PACKED = 2;
 
 interface State {
   // virtual threads whose monitor was released, for the unblocker thread
@@ -109,7 +110,7 @@ function state(vm: JVM): State {
 export function frozenFrames(c: JObject): AnyFrame[] | undefined {
   const info = c.x as Frozen | undefined;
   if (!info) return undefined;
-  if (!info.packed) return info.frames as AnyFrame[];
+  if (!(info.flags & PACKED)) return info.frames as AnyFrame[];
   const out: AnyFrame[] = [];
   unpackInto(out, info.frames);
   return out;
@@ -153,7 +154,7 @@ export function dropOwned(t: JThread, o: JObject) {
 function freeze(t: JThread, e: number, count: number, retry: boolean) {
   const s = state(t.vm);
   const entry = (t.frames[e] as NativeFrame).entry!;
-  const info: Frozen = { frames: [], packed: false, retry, monitors: NO_MONITORS, owner: null };
+  const info: Frozen = { frames: [], flags: retry ? RETRY : 0, monitors: NO_MONITORS, owner: null };
   if (entry.virtual) {
     const monitors = [...new Set(t.owned)].filter((o) => o.mon?.owner === t);
     t.owned = [];
@@ -169,7 +170,7 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
   const frames = t.frames.splice(e + 1, count);
   if (s.frozenCount >= PACK_AT) {
     info.frames = pack(frames);
-    info.packed = true;
+    info.flags |= PACKED;
   } else info.frames = frames;
   entry.cont.x = info;
   s.frozenCount++;
@@ -247,7 +248,7 @@ export const natives: Natives = {
       c.x = undefined;
       s.frozenCount--;
       setChunk(t, c, false);
-      if (info.packed) unpackInto(t.frames, info.frames);
+      if (info.flags & PACKED) unpackInto(t.frames, info.frames);
       else for (const f of info.frames as AnyFrame[]) t.frames.push(f);
       if (info.owner) {
         for (const o of info.monitors) o.mon!.owner = t;
@@ -256,7 +257,7 @@ export const natives: Natives = {
       const top = t.top;
       // a native resumes with the thread it now runs on; a frame that yielded gets the result
       if (top instanceof NativeFrame) top.input = t;
-      else if (!info.retry) {
+      else if (!(info.flags & RETRY)) {
         top.stack[top.sp++] = 0;
         top.pc += 3;
       }
