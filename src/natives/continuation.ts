@@ -94,11 +94,13 @@ interface State {
   active: number;
   frozenCount: number;
   busy: boolean;
+  // the chunk of a yielded continuation and of a mounted one
+  chunks: (JObject | undefined)[];
 }
 
 function state(vm: JVM): State {
   let s = vm.state.get("continuations") as State | undefined;
-  if (!s) vm.state.set("continuations", (s = { unblock: [], unblocker: null, active: 0, frozenCount: 0, busy: false }));
+  if (!s) vm.state.set("continuations", (s = { unblock: [], unblocker: null, active: 0, frozenCount: 0, busy: false, chunks: [] }));
   return s;
 }
 
@@ -211,16 +213,19 @@ export function unmountNative(t: JThread) {
 }
 
 // Continuation.tail: isStarted() and isEmpty() read it, so a yielded
-// continuation has a chunk that is not empty, and a mounted one an empty chunk.
+// continuation has a chunk that is not empty, and a mounted one an empty
+// chunk. All continuations share the two chunks.
 function setChunk(t: JThread, c: JObject, frozen: boolean) {
   const vm = t.vm;
-  let chunk = vm.getField(c, C, "tail") as JObject | null;
+  const s = state(vm);
+  const i = frozen ? 0 : 1;
+  let chunk = s.chunks[i];
   if (!chunk) {
-    chunk = vm.newObject(vm.loadBoot(CHUNK)!);
-    vm.setField(c, C, "tail", chunk);
+    chunk = s.chunks[i] = vm.newObject(vm.loadBoot(CHUNK)!);
+    vm.setField(chunk, CHUNK, "bottom", 1);
+    vm.setField(chunk, CHUNK, "sp", i);
   }
-  vm.setField(chunk, CHUNK, "bottom", 1);
-  vm.setField(chunk, CHUNK, "sp", frozen ? 0 : 1);
+  vm.setField(c, C, "tail", chunk);
 }
 
 export const natives: Natives = {
