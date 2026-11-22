@@ -191,7 +191,7 @@ function queueUnblock(vm: JVM, vt: JObject) {
 
 // Queues vt for the unblocker thread when mon is released.
 export function unblockOnRelease(vm: JVM, vt: JObject, mon: Monitor) {
-  mon.entry.push(() => queueUnblock(vm, vt));
+  mon.enqueue(() => queueUnblock(vm, vt));
 }
 
 // A virtual thread that tried to take o's monitor and cannot: unmounts it,

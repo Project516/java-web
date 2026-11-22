@@ -248,7 +248,7 @@ class Encoder {
       if (k === undefined) throw new Error(`snapshot: unknown thread in ${path}`);
       t = { $: "T", i: k };
     } else if (v instanceof Monitor) {
-      if (v.entry.length) throw new Error(`snapshot: a thread is blocked entering a monitor in ${path}`);
+      if (v.entry?.length) throw new Error(`snapshot: a thread is blocked entering a monitor in ${path}`);
       t = { $: "N", n: v.count };
       this.work.push(() => (t.o = this.child(v.owner, path, next)));
     } else if (v instanceof Map) {
@@ -464,7 +464,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
       if (key === REF_WAIT) return { $: "native", m: e.enc(f.m, p) };
       if (key === WAIT0) {
         const o = (t.frames[i - 1] as Frame).locals[0] as JObject;
-        const w = o.mon?.waiters.find((x) => x.t === t);
+        const w = o.mon?.waiters?.find((x) => x.t === t);
         if (!w) throw new Error(`snapshot: ${p} in wait0 is not a waiter`);
         return { $: "rewait", m: e.enc(f.m, p), o: e.enc(o, p), n: w.count };
       }
@@ -501,7 +501,7 @@ function snapshotFds(value: unknown): unknown {
 function* rewait(t: JThread, o: JObject, count: number): NativeGen {
   const mon = o.mon!;
   t.waitingOn = o;
-  while (mon.owner !== null) yield t.block(new Signal((r) => mon.entry.push(r)));
+  while (mon.owner !== null) yield t.block(new Signal((r) => mon.enqueue(r)));
   mon.owner = t;
   mon.count = count;
   t.waitingOn = null;
