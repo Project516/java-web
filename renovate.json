@@ -11,9 +11,10 @@
       "managerFilePatterns": ["/^scripts/build-jdk\\.sh$/"],
       "matchStrings": ["\\nrelease=(?<currentValue>\\S+)\\n"],
       "depNameTemplate": "temurin-jdk-25",
-      "packageNameTemplate": "java-jdk?os=linux&architecture=x64",
-      "datasourceTemplate": "java-version",
-      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+\\+\\d+)"
+      "datasourceTemplate": "github-releases",
+      "packageNameTemplate": "adoptium/temurin25-binaries",
+      "extractVersionTemplate": "^jdk-(?<version>\\d+\\.\\d+\\.\\d+(\\.\\d+)?\\+\\d+)$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(\\.(?<build>\\d+))?\\+(?<revision>\\d+)$"
     }
   ],
   "packageRules": [
@@ -22,11 +23,6 @@
       "groupName": "build tools",
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["minor", "patch"]
-    },
-    {
-      "description": "java-web runs Java 25 bytecode, so the JDK stays on 25",
-      "matchDepNames": ["temurin-jdk-25"],
-      "allowedVersions": "<26"
     }
   ]
 }

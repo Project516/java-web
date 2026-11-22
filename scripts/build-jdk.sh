@@ -8,7 +8,7 @@ modules=${JDK_MODULES:-java.se,jdk.compiler,jdk.httpserver,jdk.jartool,jdk.secur
 
 # Builds from one pinned JDK release so every machine makes the same image.
 # Renovate bumps the release.
-release=25.0.5+8
+release=25.0.5.1+2
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/java-web
 
 # Prints the home of the Temurin JDK for a platform, downloading it on first use.
