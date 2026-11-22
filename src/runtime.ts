@@ -229,12 +229,26 @@ const EMPTY: any[] = [];
 export class Monitor {
   owner: JThread | null = null;
   count = 0;
-  // threads blocked entering the monitor
-  entry: (() => void)[] = [];
-  // threads in wait(), woken by notify
+  // threads blocked entering the monitor; the queues exist while they are used
+  entry: (() => void)[] | null = null;
   // threads in wait(), woken by notify, with the entry count they gave up
-  waiters: { t: JThread; wake: () => void; count: number }[] = [];
+  waiters: Waiter[] | null = null;
+
+  enqueue(wake: () => void) {
+    (this.entry ??= []).push(wake);
+  }
+
+  addWaiter(w: Waiter) {
+    (this.waiters ??= []).push(w);
+  }
+
+  removeWaiter(w: Waiter) {
+    const i = this.waiters?.indexOf(w) ?? -1;
+    if (i >= 0) this.waiters!.splice(i, 1);
+  }
 }
+
+export type Waiter = { t: JThread; wake: () => void; count: number };
 
 // Classes of the boot, platform and application loaders are never unloaded.
 const BUILTIN_LOADERS = new Set(["jdk/internal/loader/ClassLoaders$AppClassLoader", "jdk/internal/loader/ClassLoaders$PlatformClassLoader"]);

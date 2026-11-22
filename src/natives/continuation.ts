@@ -6,6 +6,7 @@
 // virtual thread while it is not (JEP 491): a yield, a contended enter and
 // Object.wait all unmount it, and the monitors move to a stand-in owner.
 
+import { JMethod } from "../runtime.ts";
 import type { JObject, Monitor } from "../runtime.ts";
 import { Frame, JThread, NativeFrame, PendingThrow, RUNNABLE, Signal, WAITING } from "../thread.ts";
 import type { AnyFrame, NativeGen } from "../thread.ts";
@@ -27,46 +28,65 @@ type Entry = NonNullable<NativeFrame["entry"]>;
 // Frame and its two arrays cost about 300 bytes, the packed values about 100.
 const PACK_AT = 1024;
 
-// A frame as values: [method, pc, sp, lock, needLock, ...locals, ...stack up to sp].
+// Frames as values in one array, bottom first. A frame without a monitor is
+// [method, pc + sp * 65536, ...locals, ...stack up to sp]; any other frame is itself.
 type Packed = any[];
 
-function pack(f: AnyFrame): AnyFrame | Packed {
-  if (!(f instanceof Frame) || f.direct || f.locals === null) return f;
-  const max = f.m.code!.maxLocals;
-  const p: Packed = new Array(5 + max + f.sp);
-  p[0] = f.m;
-  p[1] = f.pc;
-  p[2] = f.sp;
-  p[3] = f.lock;
-  p[4] = f.needLock;
-  for (let i = 0; i < max; i++) p[5 + i] = f.locals[i];
-  for (let i = 0; i < f.sp; i++) p[5 + max + i] = f.stack[i];
+function packable(f: AnyFrame): f is Frame {
+  return f instanceof Frame && !f.direct && f.locals !== null && f.lock === null && !f.needLock;
+}
+
+function pack(frames: AnyFrame[]): Packed {
+  let n = 0;
+  for (const f of frames) n += packable(f) ? 2 + f.locals.length + f.sp : 1;
+  const p: Packed = new Array(n);
+  let i = 0;
+  for (const f of frames) {
+    if (!packable(f)) {
+      p[i++] = f;
+      continue;
+    }
+    p[i++] = f.m;
+    p[i++] = f.pc + f.sp * 65536;
+    for (let j = 0; j < f.locals.length; j++) p[i++] = f.locals[j];
+    for (let j = 0; j < f.sp; j++) p[i++] = f.stack[j];
+  }
   return p;
 }
 
-function unpack(p: AnyFrame | Packed): AnyFrame {
-  if (!Array.isArray(p)) return p;
-  const f = new Frame(p[0]);
-  f.pc = p[1];
-  f.sp = p[2];
-  f.lock = p[3];
-  f.needLock = p[4];
-  const max = f.locals.length;
-  for (let i = 0; i < max; i++) f.locals[i] = p[5 + i];
-  for (let i = 0; i < f.sp; i++) f.stack[i] = p[5 + max + i];
-  return f;
+function unpackInto(out: AnyFrame[], p: Packed) {
+  for (let i = 0; i < p.length; ) {
+    const x = p[i];
+    if (!(x instanceof JMethod)) {
+      out.push(x);
+      i++;
+      continue;
+    }
+    const f = new Frame(x);
+    const at = p[i + 1];
+    f.pc = at & 0xffff;
+    f.sp = at >>> 16;
+    i += 2;
+    for (let j = 0; j < f.locals.length; j++) f.locals[j] = p[i++];
+    for (let j = 0; j < f.sp; j++) f.stack[j] = p[i++];
+    out.push(f);
+  }
 }
 
 // What a yielded continuation needs to resume, kept in its object's x.
 interface Frozen {
-  // its frames, bottom first
-  frames: (AnyFrame | Packed)[];
+  // its frames, bottom first, or packed
+  frames: AnyFrame[] | Packed;
   // the top frame re-executes its instruction instead of taking a result
-  retry: boolean;
+  flags: number;
   // monitors its virtual thread owns, and the owner standing in for it
   monitors: JObject[];
   owner: JThread | null;
 }
+
+const NO_MONITORS: JObject[] = [];
+// Frozen.flags
+const RETRY = 1, PACKED = 2;
 
 interface State {
   // virtual threads whose monitor was released, for the unblocker thread
@@ -75,18 +95,25 @@ interface State {
   active: number;
   frozenCount: number;
   busy: boolean;
+  // the chunk of a yielded continuation and of a mounted one
+  chunks: (JObject | undefined)[];
 }
 
 function state(vm: JVM): State {
   let s = vm.state.get("continuations") as State | undefined;
-  if (!s) vm.state.set("continuations", (s = { unblock: [], unblocker: null, active: 0, frozenCount: 0, busy: false }));
+  if (!s) vm.state.set("continuations", (s = { unblock: [], unblocker: null, active: 0, frozenCount: 0, busy: false, chunks: [] }));
   return s;
 }
 
 // The continuation a native frame is the entry of, if it is one.
 // The frames of a yielded continuation, bottom first.
 export function frozenFrames(c: JObject): AnyFrame[] | undefined {
-  return (c.x as Frozen | undefined)?.frames.map(unpack);
+  const info = c.x as Frozen | undefined;
+  if (!info) return undefined;
+  if (!(info.flags & PACKED)) return info.frames as AnyFrame[];
+  const out: AnyFrame[] = [];
+  unpackInto(out, info.frames);
+  return out;
 }
 
 // Index in t.frames of the innermost mounted continuation's entry frame.
@@ -127,7 +154,7 @@ export function dropOwned(t: JThread, o: JObject) {
 function freeze(t: JThread, e: number, count: number, retry: boolean) {
   const s = state(t.vm);
   const entry = (t.frames[e] as NativeFrame).entry!;
-  const info: Frozen = { frames: [], retry, monitors: [], owner: null };
+  const info: Frozen = { frames: [], flags: retry ? RETRY : 0, monitors: NO_MONITORS, owner: null };
   if (entry.virtual) {
     const monitors = [...new Set(t.owned)].filter((o) => o.mon?.owner === t);
     t.owned = [];
@@ -141,7 +168,10 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
     }
   }
   const frames = t.frames.splice(e + 1, count);
-  info.frames = s.frozenCount >= PACK_AT ? frames.map(pack) : frames;
+  if (s.frozenCount >= PACK_AT) {
+    info.frames = pack(frames);
+    info.flags |= PACKED;
+  } else info.frames = frames;
   entry.cont.x = info;
   s.frozenCount++;
   s.busy = true;
@@ -162,7 +192,7 @@ function queueUnblock(vm: JVM, vt: JObject) {
 
 // Queues vt for the unblocker thread when mon is released.
 export function unblockOnRelease(vm: JVM, vt: JObject, mon: Monitor) {
-  mon.entry.push(() => queueUnblock(vm, vt));
+  mon.enqueue(() => queueUnblock(vm, vt));
 }
 
 // A virtual thread that tried to take o's monitor and cannot: unmounts it,
@@ -184,16 +214,19 @@ export function unmountNative(t: JThread) {
 }
 
 // Continuation.tail: isStarted() and isEmpty() read it, so a yielded
-// continuation has a chunk that is not empty, and a mounted one an empty chunk.
+// continuation has a chunk that is not empty, and a mounted one an empty
+// chunk. All continuations share the two chunks.
 function setChunk(t: JThread, c: JObject, frozen: boolean) {
   const vm = t.vm;
-  let chunk = vm.getField(c, C, "tail") as JObject | null;
+  const s = state(vm);
+  const i = frozen ? 0 : 1;
+  let chunk = s.chunks[i];
   if (!chunk) {
-    chunk = vm.newObject(vm.loadBoot(CHUNK)!);
-    vm.setField(c, C, "tail", chunk);
+    chunk = s.chunks[i] = vm.newObject(vm.loadBoot(CHUNK)!);
+    vm.setField(chunk, CHUNK, "bottom", 1);
+    vm.setField(chunk, CHUNK, "sp", i);
   }
-  vm.setField(chunk, CHUNK, "bottom", 1);
-  vm.setField(chunk, CHUNK, "sp", frozen ? 0 : 1);
+  vm.setField(c, C, "tail", chunk);
 }
 
 export const natives: Natives = {
@@ -215,7 +248,8 @@ export const natives: Natives = {
       c.x = undefined;
       s.frozenCount--;
       setChunk(t, c, false);
-      for (const f of info.frames) t.frames.push(unpack(f));
+      if (info.flags & PACKED) unpackInto(t.frames, info.frames);
+      else for (const f of info.frames as AnyFrame[]) t.frames.push(f);
       if (info.owner) {
         for (const o of info.monitors) o.mon!.owner = t;
         t.owned = info.monitors;
@@ -223,7 +257,7 @@ export const natives: Natives = {
       const top = t.top;
       // a native resumes with the thread it now runs on; a frame that yielded gets the result
       if (top instanceof NativeFrame) top.input = t;
-      else if (!info.retry) {
+      else if (!(info.flags & RETRY)) {
         top.stack[top.sp++] = 0;
         top.pc += 3;
       }

@@ -72,12 +72,11 @@ function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   let entry: { t: JThread; wake: () => void; count: number } | null = null;
   yield t.block(interruptibleWait(t, ms > 0n ? Number(ms) : null, (wake) => {
     entry = { t, wake, count };
-    mon.waiters.push(entry);
+    mon.addWaiter(entry);
   }));
-  const i = mon.waiters.indexOf(entry!);
-  if (i >= 0) mon.waiters.splice(i, 1);
+  mon.removeWaiter(entry!);
   if (mon.owner !== null) setThreadStatus(t, STATUS_BLOCKED);
-  while (mon.owner !== null) yield t.block(new Signal((r) => mon.entry.push(r)));
+  while (mon.owner !== null) yield t.block(new Signal((r) => mon.enqueue(r)));
   mon.owner = t;
   mon.count = count;
   t.waitingOn = null;
@@ -109,10 +108,9 @@ function* waitUnmounted(t: JThread, self: JObject, mon: Monitor, ms: bigint): Na
     unblockOnRelease(vm, vt, mon);
   };
   const waiter = { t, wake, count };
-  mon.waiters.push(waiter);
+  mon.addWaiter(waiter);
   t = (yield { kind: "unmount" }) as JThread;
-  const i = mon.waiters.indexOf(waiter);
-  if (i >= 0) mon.waiters.splice(i, 1);
+  mon.removeWaiter(waiter);
   while (mon.owner !== null) {
     vm.setField(vt, VT, "state", VT_BLOCKING);
     unblockOnRelease(vm, vt, mon);
@@ -220,7 +218,7 @@ export const natives: Natives = {
   "java/lang/Object.notify()V": (t, [o]) => {
     const mon = o.mon;
     if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
-    mon.waiters.shift()?.wake();
+    mon.waiters?.shift()?.wake();
   },
   "java/lang/Object.notifyAll()V": (t, [o]) => {
     if (!o.mon || o.mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");

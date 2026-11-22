@@ -1005,7 +1005,7 @@ export class JVM {
       this.setThreadStatus(t, STATUS_BLOCKED);
     }
     t.state = WAITING;
-    o.mon!.entry.push(() => this.wake(t, true));
+    o.mon!.enqueue(() => this.wake(t, true));
     return false;
   }
 
@@ -1044,8 +1044,8 @@ export class JVM {
     mon.owner = null;
     mon.count = 0;
     const entry = mon.entry;
-    if (entry.length === 0) return;
-    mon.entry = [];
+    if (entry === null) return;
+    mon.entry = null;
     for (const w of entry) w();
   }
 
@@ -1189,7 +1189,7 @@ export class JVM {
     // Thread.join waits on the thread object, checking isAlive() under its
     // monitor. Take the monitor first, as HotSpot's ensure_join does, so a
     // joiner between isAlive() and wait() cannot miss the wakeup.
-    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => obj.mon!.entry.push(r)));
+    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => obj.mon!.enqueue(r)));
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     this.setField(holder, "java/lang/Thread$FieldHolder", "threadStatus", STATUS_TERMINATED);
     this.setField(obj, "java/lang/Thread", "eetop", 0n);
@@ -1201,7 +1201,8 @@ export class JVM {
     const mon = o.mon;
     if (!mon) return;
     const w = mon.waiters;
-    mon.waiters = [];
+    if (w === null) return;
+    mon.waiters = null;
     for (const x of w) x.wake();
   }
 
