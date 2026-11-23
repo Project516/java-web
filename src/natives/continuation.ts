@@ -6,7 +6,7 @@
 // virtual thread while it is not (JEP 491): a yield, a contended enter and
 // Object.wait all unmount it, and the monitors move to a stand-in owner.
 
-import { JMethod } from "../runtime.ts";
+import { JMethod, dataOf, monitorOf, setData } from "../runtime.ts";
 import type { JObject, Monitor } from "../runtime.ts";
 import { Frame, JThread, NativeFrame, PendingThrow, RUNNABLE, Signal, WAITING } from "../thread.ts";
 import type { AnyFrame, NativeGen } from "../thread.ts";
@@ -108,7 +108,7 @@ function state(vm: JVM): State {
 // The continuation a native frame is the entry of, if it is one.
 // The frames of a yielded continuation, bottom first.
 export function frozenFrames(c: JObject): AnyFrame[] | undefined {
-  const info = c.x as Frozen | undefined;
+  const info = dataOf(c) as Frozen | undefined;
   if (!info) return undefined;
   if (!(info.flags & PACKED)) return info.frames as AnyFrame[];
   const out: AnyFrame[] = [];
@@ -156,13 +156,13 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
   const entry = (t.frames[e] as NativeFrame).entry!;
   const info: Frozen = { frames: [], flags: retry ? RETRY : 0, monitors: NO_MONITORS, owner: null };
   if (entry.virtual) {
-    const monitors = [...new Set(t.owned)].filter((o) => o.mon?.owner === t);
+    const monitors = [...new Set(t.owned)].filter((o) => monitorOf(o)?.owner === t);
     t.owned = [];
     if (monitors.length > 0) {
       const owner = new JThread(t.vm);
       owner.obj = t.mounted;
       owner.state = WAITING;
-      for (const o of monitors) o.mon!.owner = owner;
+      for (const o of monitors) monitorOf(o)!.owner = owner;
       info.monitors = monitors;
       info.owner = owner;
     }
@@ -172,7 +172,7 @@ function freeze(t: JThread, e: number, count: number, retry: boolean) {
     info.frames = pack(frames);
     info.flags |= PACKED;
   } else info.frames = frames;
-  entry.cont.x = info;
+  setData(entry.cont, info);
   s.frozenCount++;
   s.busy = true;
   setChunk(t, entry.cont, true);
@@ -203,7 +203,7 @@ export function unmountBlocked(t: JThread) {
   const e = innermost(t);
   freeze(t, e, t.frames.length - e - 1, true);
   t.vm.setField(t.mounted!, VT, "state", BLOCKING);
-  unblockOnRelease(t.vm, t.mounted!, o.mon!);
+  unblockOnRelease(t.vm, t.mounted!, monitorOf(o)!);
   t.state = RUNNABLE;
 }
 
@@ -243,15 +243,15 @@ export const natives: Natives = {
         yield t.call(enter, c, 0);
         return;
       }
-      const info = c.x as Frozen | undefined;
+      const info = dataOf(c) as Frozen | undefined;
       if (!info) throw new PendingThrow("java/lang/IllegalStateException", "Continuation has no frames");
-      c.x = undefined;
+      setData(c, undefined);
       s.frozenCount--;
       setChunk(t, c, false);
       if (info.flags & PACKED) unpackInto(t.frames, info.frames);
       else for (const f of info.frames as AnyFrame[]) t.frames.push(f);
       if (info.owner) {
-        for (const o of info.monitors) o.mon!.owner = t;
+        for (const o of info.monitors) monitorOf(o)!.owner = t;
         t.owned = info.monitors;
       }
       const top = t.top;

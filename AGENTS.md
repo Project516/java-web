@@ -107,6 +107,12 @@ Node, which is how the tests run.
 - **PendingThrow**: thrown by JS code to raise a new Java exception; the
   interpreter builds it with its real constructor.
 - **mirror**: the `java.lang.Class` object of a runtime class.
+- **object layout**: a Java object is a JS object with `cls`, `s` (identity
+  hash, monitor and VM data, once it has any) and its instance fields as
+  properties `f0`, `f1`, ... (`JField.key`). Classes whose fields have the same
+  kinds share one generated constructor, so one JS shape. An object whose class
+  has a finalizer keeps its fields in a second object, `st`, that the Finalizer
+  also holds.
 - **handle**: how the VM names a Java object it gave to JS; the page's proxy
   holds it until the proxy is dropped.
 - **wire value**: a value as it crosses between the VM and JS (library.ts).

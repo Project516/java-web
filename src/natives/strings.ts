@@ -6,7 +6,7 @@
 // The jimage string reader is here too.
 
 import { JArray, MAX_HEAP, newArrayData } from "../runtime.ts";
-import type { JClass, JObject } from "../runtime.ts";
+import type { FieldKey, JClass, JObject } from "../runtime.ts";
 import { PendingThrow } from "../thread.ts";
 import type { JThread } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
@@ -17,16 +17,16 @@ const SOFT_MAX = 0x7fffffff - 8;
 
 let slotVm: JVM | null = null;
 let strClass: JClass;
-let sbValue = 0, sbCoder = 0, sbCount = 0, sbMaybeLatin1 = 0, strValue = 0, strCoder = 0;
+let sbValue: FieldKey = "f0", sbCoder: FieldKey = "f0", sbCount: FieldKey = "f0", sbMaybeLatin1: FieldKey = "f0", strValue: FieldKey = "f0", strCoder: FieldKey = "f0";
 
 function slots(vm: JVM) {
   if (slotVm === vm) return;
-  sbValue = vm.slotOf(ASB, "value");
-  sbCoder = vm.slotOf(ASB, "coder");
-  sbCount = vm.slotOf(ASB, "count");
-  sbMaybeLatin1 = vm.slotOf(ASB, "maybeLatin1");
-  strValue = vm.slotOf(STR, "value");
-  strCoder = vm.slotOf(STR, "coder");
+  sbValue = vm.keyOf(ASB, "value");
+  sbCoder = vm.keyOf(ASB, "coder");
+  sbCount = vm.keyOf(ASB, "count");
+  sbMaybeLatin1 = vm.keyOf(ASB, "maybeLatin1");
+  strValue = vm.keyOf(STR, "value");
+  strCoder = vm.keyOf(STR, "coder");
   strClass = vm.loadBootOrFail(STR);
   slotVm = vm;
 }
@@ -61,12 +61,12 @@ function appendString(t: JThread, args: any[]): JObject {
   const vm = t.vm;
   slots(vm);
   const s = str ?? vm.intern("null");
-  const sBytes = (s.f[strValue] as JArray).a as Int8Array;
-  const sCoder = s.f[strCoder] as number;
+  const sBytes = (s[strValue] as JArray).a as Int8Array;
+  const sCoder = s[strCoder] as number;
   const len = sBytes.length >> sCoder;
-  const coder = self.f[sbCoder] as number;
-  const count = self.f[sbCount] as number;
-  let value = (self.f[sbValue] as JArray).a as Int8Array;
+  const coder = self[sbCoder] as number;
+  const count = self[sbCount] as number;
+  let value = (self[sbValue] as JArray).a as Int8Array;
   const newCoder = coder | sCoder;
   const min = (count + len) | 0;
   const old = value.length >> coder;
@@ -83,12 +83,12 @@ function appendString(t: JThread, args: any[]): JObject {
       inflate(value, count, buf, 0);
       value = buf;
     }
-    self.f[sbValue] = new JArray((self.f[sbValue] as JArray).cls, value);
-    self.f[sbCoder] = newCoder;
+    self[sbValue] = new JArray((self[sbValue] as JArray).cls, value);
+    self[sbCoder] = newCoder;
   }
   if (sCoder === newCoder) value.set(sBytes, count << newCoder);
   else inflate(sBytes, len, value, count);
-  self.f[sbCount] = min;
+  self[sbCount] = min;
   return self;
 }
 
@@ -96,11 +96,11 @@ function appendString(t: JThread, args: any[]): JObject {
 function stringFromBuilder(t: JThread, args: any[]) {
   const self: JObject = args[0], sb: JObject = args[1];
   slots(t.vm);
-  const src = (sb.f[sbValue] as JArray).a as Int8Array;
-  const count = sb.f[sbCount] as number;
-  let coder = sb.f[sbCoder] as number;
+  const src = (sb[sbValue] as JArray).a as Int8Array;
+  const count = sb[sbCount] as number;
+  let coder = sb[sbCoder] as number;
   let value: Int8Array;
-  if (coder === 1 && sb.f[sbMaybeLatin1]) {
+  if (coder === 1 && sb[sbMaybeLatin1]) {
     let i = 0;
     while (i < count && src[i * 2 + 1] === 0) i++;
     if (i === count) {
@@ -113,8 +113,8 @@ function stringFromBuilder(t: JThread, args: any[]) {
 }
 
 function fill(vm: JVM, s: JObject, value: Int8Array, coder: number) {
-  s.f[strValue] = new JArray(vm.primArrayClass("B"), value);
-  s.f[strCoder] = coder;
+  s[strValue] = new JArray(vm.primArrayClass("B"), value);
+  s[strCoder] = coder;
 }
 
 function copy(src: Int8Array, n: number): Int8Array {
@@ -133,9 +133,9 @@ export function concatStrings(t: JThread, pc: number, parts: (JObject | null)[])
   let chars = 0, coder = 0;
   for (let i = 0; i < parts.length; i++) {
     const s = parts[i] ?? nul!;
-    const c = s.f[strCoder] as number;
+    const c = s[strCoder] as number;
     coder |= c;
-    chars += (s.f[strValue] as JArray).a.length >> c;
+    chars += (s[strValue] as JArray).a.length >> c;
   }
   let value: Int8Array;
   try {
@@ -147,8 +147,8 @@ export function concatStrings(t: JThread, pc: number, parts: (JObject | null)[])
   let at = 0;
   for (let i = 0; i < parts.length; i++) {
     const s = parts[i] ?? nul!;
-    const bytes = (s.f[strValue] as JArray).a as Int8Array;
-    const c = s.f[strCoder] as number;
+    const bytes = (s[strValue] as JArray).a as Int8Array;
+    const c = s[strCoder] as number;
     const len = bytes.length >> c;
     if (c === coder) value.set(bytes, at << coder);
     else inflate(bytes, len, value, at);
@@ -166,15 +166,15 @@ function imageString(t: JThread, args: any[]): JObject {
   const vm = t.vm;
   const buf: JObject | null = args[0], offset: number = args[1];
   if (buf === null) throw new PendingThrow("java/lang/NullPointerException");
-  const limit = buf.f[vm.slotOf("java/nio/Buffer", "limit")] as number;
-  const hb = buf.f[vm.slotOf("java/nio/ByteBuffer", "hb")] as JArray | null;
+  const limit = buf[vm.keyOf("java/nio/Buffer", "limit")] as number;
+  const hb = buf[vm.keyOf("java/nio/ByteBuffer", "hb")] as JArray | null;
   let bytes: ArrayLike<number>, base: number;
   if (hb) {
     bytes = hb.a as Int8Array;
-    base = buf.f[vm.slotOf("java/nio/ByteBuffer", "offset")] as number;
+    base = buf[vm.keyOf("java/nio/ByteBuffer", "offset")] as number;
   } else {
     bytes = vm.mem.u8;
-    base = Number(buf.f[vm.slotOf("java/nio/Buffer", "address")] as bigint);
+    base = Number(buf[vm.keyOf("java/nio/Buffer", "address")] as bigint);
   }
   if (offset < 0) {
     throw new PendingThrow("java/lang/IndexOutOfBoundsException", `Index ${offset} out of bounds for length ${limit}`);

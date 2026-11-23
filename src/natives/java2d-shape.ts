@@ -5,6 +5,7 @@ import type { JArray, JObject } from "../runtime.ts";
 import { PendingThrow } from "../thread.ts";
 import type { JThread } from "../thread.ts";
 import type { Natives } from "./util.ts";
+import { dataOf, setData } from "../runtime.ts";
 
 const SSI = "sun/java2d/pipe/ShapeSpanIterator";
 const SCR = "sun/java2d/pipe/SpanClipRenderer";
@@ -503,7 +504,8 @@ function minmax4(v1: number, v2: number, v3: number, v4: number): [number, numbe
 }
 
 export function spanIterOf(o: JObject): SpanIter | null {
-  return o.x instanceof Path ? o.x : null;
+  const p = dataOf(o);
+  return p instanceof Path ? p : null;
 }
 
 function internal(msg: string): never {
@@ -515,7 +517,7 @@ function npe(msg: string): never {
 }
 
 function data(o: JObject, min: number, max: number): Path {
-  const p = o.x;
+  const p = dataOf(o);
   if (!(p instanceof Path)) return npe("private data");
   if (p.state < min || p.state > max) return internal("bad path delivery sequence");
   return p;
@@ -634,8 +636,8 @@ function fillTile(t: JThread, ri: JObject | null, alphaTile: JArray | null, offs
 
 export const natives: Natives = {
   [`${SSI}.setNormalize(Z)V`]: (_t, [self, adjust]) => {
-    if (self.x instanceof Path) internal("private data already initialized");
-    self.x = new Path(!!adjust);
+    if (dataOf(self) instanceof Path) internal("private data already initialized");
+    setData(self, new Path(!!adjust));
   },
   [`${SSI}.setOutputAreaXYXY(IIII)V`]: (_t, [self, lox, loy, hix, hiy]) => {
     const p = data(self, STATE_INIT, STATE_INIT);
@@ -682,7 +684,7 @@ export const natives: Natives = {
   },
   [`${SSI}.getNativeIterator()J`]: () => 1n,
   [`${SSI}.dispose()V`]: (_t, [self]) => {
-    self.x = null;
+    setData(self, null);
   },
   [`${SSI}.appendPoly([I[IIII)V`]: (_t, [self, xArray, yArray, nPoints, xoff, yoff]) => {
     const p = data(self, STATE_HAVE_CLIP, STATE_HAVE_CLIP);

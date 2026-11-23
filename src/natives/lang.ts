@@ -4,7 +4,7 @@ import { isHidden } from "./stackwalk.ts";
 import { gcStats, javaHeap } from "./management.ts";
 import { assertionsEnabled } from "../assertions.ts";
 import { normalize } from "../fs.ts";
-import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData, releasePins } from "../runtime.ts";
+import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, dataOf, fieldsOf, monitorOf, newArrayData, releasePins, setData, setFields } from "../runtime.ts";
 import type { Monitor } from "../runtime.ts";
 import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
 import { collect, registerFinalizer, releaseFinalizerCycles, releaseSoftReferences } from "./ref.ts";
@@ -60,7 +60,7 @@ const MAX_DELAY = 0x7fffffff;
 
 function* waitImpl(t: JThread, self: JObject, ms: bigint): NativeGen {
   const vm = t.vm;
-  const mon = self.mon;
+  const mon = monitorOf(self);
   if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
   checkInterrupt(t);
   if (t.mounted !== null && canUnmount(t)) return yield* waitUnmounted(t, self, mon, ms);
@@ -200,8 +200,9 @@ export function cloneObject(t: JThread, o: JObject): JObject {
   if (!o.cls.allSupers().has(t.vm.loadBoot("java/lang/Cloneable")!)) {
     throw new PendingThrow("java/lang/CloneNotSupportedException", o.cls.javaName);
   }
-  const copy = new JObject(o.cls, o.f.slice());
-  copy.x = o.x;
+  const copy = new o.cls.ctor(o.cls);
+  setFields(copy, fieldsOf(o));
+  setData(copy, dataOf(o));
   if (copy.cls.finalizable) registerFinalizer(t.vm, copy);
   return copy;
 }
@@ -216,12 +217,12 @@ export const natives: Natives = {
   "java/lang/Object.hashCode()I": (t, [o]) => t.vm.identityHash(o),
   "java/lang/Object.clone()Ljava/lang/Object;": (t, [o]) => cloneObject(t, o),
   "java/lang/Object.notify()V": (t, [o]) => {
-    const mon = o.mon;
+    const mon = monitorOf(o);
     if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
     mon.waiters?.shift()?.wake();
   },
   "java/lang/Object.notifyAll()V": (t, [o]) => {
-    if (!o.mon || o.mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
+    if (monitorOf(o)?.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException", "current thread is not owner");
     t.vm.notifyAll(o);
   },
   "java/lang/Object.wait0(J)V": (t, [o, ms]) => waitImpl(t, o, ms),
@@ -311,12 +312,12 @@ export const natives: Natives = {
     t.vm.setField(holder, "java/lang/Thread$FieldHolder", "threadStatus", STATUS_RUNNABLE);
     t.vm.startThread(nt);
   },
-  "java/lang/Thread.holdsLock(Ljava/lang/Object;)Z": (t, [o]) => nonNull<JObject>(o).mon?.owner === t,
+  "java/lang/Thread.holdsLock(Ljava/lang/Object;)Z": (t, [o]) => monitorOf(nonNull<JObject>(o))?.owner === t,
   "java/lang/Thread.getThreads()[Ljava/lang/Thread;": (t) => t.vm.newObjectArray("java/lang/Thread",
     [...t.vm.threads].filter((x) => x.state !== TERMINATED && x.obj).map((x) => x.obj!)),
   "java/lang/Thread.setPriority0(I)V": () => undefined,
   "java/lang/Thread.interrupt0()V": (t, [obj]) => {
-    const target = obj.x as JThread | undefined;
+    const target = dataOf(obj) as JThread | undefined;
     target?.wake?.();
   },
   "java/lang/Thread.clearInterruptEvent()V": () => undefined,
@@ -412,7 +413,7 @@ export function fillElement(t: JThread, e: JObject, c: JClass, method: string, p
       vm.setField(e, S, "moduleName", name);
       // every version, as java_lang_StackTraceElement::fill_in sets it;
       // toString leaves out the JDK's own
-      const version = mod.x?.version as string | null | undefined;
+      const version = dataOf(mod)?.version as string | null | undefined;
       if (version) vm.setField(e, S, "moduleVersion", vm.intern(version));
     }
   }

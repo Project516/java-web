@@ -6,6 +6,7 @@ import { PendingThrow } from "../thread.ts";
 import type { JThread } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import { Surf, extraAlpha8 } from "./java2d-loops.ts";
+import { dataOf } from "../runtime.ts";
 
 export const LOOPS = "sun/java2d/loops/";
 export const GP = LOOPS + "GraphicsPrimitive";
@@ -33,7 +34,7 @@ export function add(cls: string, src: string, comp: string, dst: string, fn: any
 
 export function surfOf(t: JThread, sd: JObject | null): Surf | null {
   if (sd === null) throw new PendingThrow("java/lang/NullPointerException", "surfaceData");
-  const s = sd.x as Surf | undefined;
+  const s = dataOf(sd) as Surf | undefined;
   if (s) return s;
   if (sd.cls.name === "sun/java2d/NullSurfaceData") return null;
   if (!t.vm.getField(sd, "sun/java2d/SurfaceData", "valid")) throw new PendingThrow("sun/java2d/InvalidPipeException", "invalid data");

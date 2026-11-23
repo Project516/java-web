@@ -6,7 +6,7 @@
 // finalizer is watched too: its wrapper is collected, and the Finalizer gets a
 // new wrapper over the same storage.
 
-import { INITIALIZED, MAX_HEAP, freeHeap, hasMaxHeap, releasePins, setReclaim, wrapperOver } from "../runtime.ts";
+import { INITIALIZED, MAX_HEAP, dataOf, fieldsOf, freeHeap, hasMaxHeap, releasePins, setData, setHash, setReclaim, wrapperOver } from "../runtime.ts";
 import { JObject } from "../runtime.ts";
 import type { JClass } from "../runtime.ts";
 import { Signal } from "../thread.ts";
@@ -18,11 +18,12 @@ import type { Natives } from "./util.ts";
 const R = "java/lang/ref/Reference";
 
 // What a finalizable object's new wrapper needs. It must not lead back to the
-// object: f is null once its fields are found to lead back to it (see forgetCycles).
+// object: st, the object that holds its fields, is null once they are found to
+// lead back to it (see forgetCycles).
 interface Fin {
   fin: JObject;
   cls: JClass;
-  f: any[] | null;
+  st: JObject | null;
   hash: number;
   x: any;
 }
@@ -61,8 +62,8 @@ function refs(vm: JVM): RefState {
         if (typeof held === "function") return held();
         if ("cls" in held) return resurrect(vm, s!, held);
         const ref = held.deref();
-        if (!ref || !(ref.x instanceof WeakRef)) return;
-        ref.x = null;
+        if (!ref || !(dataOf(ref) instanceof WeakRef)) return;
+        setData(ref, null);
         addPending(s!, ref);
       }),
       weak: vm.loadBoot("java/lang/ref/WeakReference")!,
@@ -88,24 +89,25 @@ function addPending(s: RefState, ref: JObject) {
 }
 
 function referent(t: JThread, r: JObject): JObject | null {
-  if (r.x instanceof WeakRef) return r.x.deref() ?? null;
+  const x = dataOf(r);
+  if (x instanceof WeakRef) return x.deref() ?? null;
   return t.vm.getField(r, R, "referent");
 }
 
 function clear(t: JThread, r: JObject) {
-  if (r.x instanceof WeakRef) {
+  if (dataOf(r) instanceof WeakRef) {
     const s = refs(t.vm);
     s.registry.unregister(r);
     s.softs.delete(r);
   }
-  r.x = null;
+  setData(r, null);
   t.vm.setField(r, R, "referent", null);
 }
 
 // A weak, soft or phantom reference to obj; a reference with a queue is
 // enqueued when obj is collected.
 function watch(s: RefState, self: JObject, obj: JObject, queued: boolean) {
-  self.x = new WeakRef(obj);
+  setData(self, new WeakRef(obj));
   if (self.cls.isSubclassOf(s.soft)) {
     s.softs.set(self, obj);
     s.softCount++;
@@ -157,16 +159,16 @@ function probe(s: RefState, done: () => void) {
 // storage, and the Reference Handler passes it on to finalize().
 function resurrect(vm: JVM, s: RefState, h: Fin) {
   const fin = h.fin;
-  if (!(fin.x instanceof WeakRef)) return;
-  if (h.f === null) {
+  if (!(dataOf(fin) instanceof WeakRef)) return;
+  if (h.st === null) {
     // nothing to finalize: the Finalizer thread unlinks it, and its finalize(null) fails quietly
-    fin.x = null;
+    setData(fin, null);
     return addPending(s, fin);
   }
-  const o = wrapperOver(h.cls, h.f);
-  o.hash = h.hash;
-  o.x = h.x;
-  fin.x = null;
+  const o = wrapperOver(h.cls, h.st);
+  setHash(o, h.hash);
+  setData(o, h.x);
+  setData(fin, null);
   vm.setField(fin, R, "referent", o);
   addPending(s, fin);
 }
@@ -195,9 +197,9 @@ export function registerFinalizer(vm: JVM, obj: JObject) {
 // it had no finalizer: the fields of an object found on a cycle are dropped.
 const CHECK_EVERY = 2048, SCAN_PER_OBJECT = 2000, SCAN_WHILE_RUNNING = 20000, SCAN_AT_GC = 200000;
 
-function leadsBack(w: JObject, f: any[], budget: { left: number }): boolean {
+function leadsBack(w: JObject, st: JObject, budget: { left: number }): boolean {
   const seen = new Set<JObject>();
-  const todo: any[][] = [f];
+  const todo: any[][] = [fieldsOf(st)];
   let scanned = 0;
   while (todo.length) {
     for (const v of todo.pop()!) {
@@ -209,7 +211,7 @@ function leadsBack(w: JObject, f: any[], budget: { left: number }): boolean {
         budget.left -= scanned;
         return false;
       }
-      todo.push(v.f);
+      todo.push(fieldsOf(v));
       const a = (v as { a?: unknown }).a;
       if (Array.isArray(a)) todo.push(a);
     }
@@ -226,9 +228,10 @@ function forgetCycles(s: RefState, scan: number): boolean {
   let i = 0;
   for (; i < list.length && budget.left > 0; i++) {
     const h = list[i];
-    const w = h.f !== null && h.fin.x instanceof WeakRef ? h.fin.x.deref() : undefined;
+    const fx = h.st !== null ? dataOf(h.fin) : undefined;
+    const w = fx instanceof WeakRef ? fx.deref() : undefined;
     if (w === undefined) continue;
-    if (leadsBack(w, h.f!, budget)) h.f = null;
+    if (leadsBack(w, h.st!, budget)) h.st = null;
     else kept.push(h);
   }
   const released = i - kept.length;
@@ -241,8 +244,8 @@ export function releaseFinalizerCycles(vm: JVM) {
 }
 
 function watchFinalizer(vm: JVM, s: RefState, fin: JObject, obj: JObject) {
-  fin.x = new WeakRef(obj);
-  const h: Fin = { fin, cls: obj.cls, f: obj.f, hash: vm.identityHash(obj), x: obj.x };
+  setData(fin, new WeakRef(obj));
+  const h: Fin = { fin, cls: obj.cls, st: (obj as unknown as { st: JObject }).st, hash: vm.identityHash(obj), x: dataOf(obj) };
   s.fins.push(h);
   s.registry.register(obj, h, fin);
 }

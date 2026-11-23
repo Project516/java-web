@@ -3,7 +3,7 @@
 // longs, which are JS BigInts here, so a 64-bit step allocates; these do the
 // same work on numbers, or in far fewer BigInt steps.
 
-import type { JArray, JObject } from "../runtime.ts";
+import type { FieldKey, JArray, JObject } from "../runtime.ts";
 import type { JThread } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
 import type { Natives } from "./util.ts";
@@ -17,13 +17,13 @@ const AES = "com/sun/crypto/provider/AESCrypt";
 const P256 = "sun/security/util/math/intpoly/MontgomeryIntegerPolynomialP256";
 
 // the `state` field's slot in each digest class
-const stateSlots = new WeakMap<JVM, Map<string, number>>();
+const stateSlots = new WeakMap<JVM, Map<string, FieldKey>>();
 function state(t: JThread, self: JObject, cls: string): JArray {
   let m = stateSlots.get(t.vm);
   if (!m) stateSlots.set(t.vm, (m = new Map()));
   let slot = m.get(cls);
-  if (slot === undefined) m.set(cls, (slot = t.vm.slotOf(cls, "state")));
-  return self.f[slot] as JArray;
+  if (slot === undefined) m.set(cls, (slot = t.vm.keyOf(cls, "state")));
+  return self[slot] as JArray;
 }
 
 // big-endian 32-bit word of a byte array
@@ -263,7 +263,7 @@ function montgomery(a: bigint, b: bigint, nArr: Int32Array, len: number, inv: bi
 }
 
 // AESCrypt's round tables and the slots of its key schedule fields
-interface Aes { T1: Int32Array; T2: Int32Array; T3: Int32Array; T4: Int32Array; S: Int8Array; K: number; limit: number }
+interface Aes { T1: Int32Array; T2: Int32Array; T3: Int32Array; T4: Int32Array; S: Int8Array; K: FieldKey; limit: FieldKey }
 const aesTables = new WeakMap<JVM, Aes>();
 function aes(t: JThread, self: JObject): Aes {
   let a = aesTables.get(t.vm);
@@ -272,7 +272,7 @@ function aes(t: JThread, self: JObject): Aes {
     const table = (name: string) => (vm.getStatic(c, name) as JArray).a as any;
     a = {
       T1: table("T1"), T2: table("T2"), T3: table("T3"), T4: table("T4"), S: table("S"),
-      K: vm.slotOf(AES, "K"), limit: vm.slotOf(AES, "limit"),
+      K: vm.keyOf(AES, "K"), limit: vm.keyOf(AES, "limit"),
     };
     aesTables.set(vm, a);
   }
@@ -291,7 +291,7 @@ function aesLast(out: Int8Array, o: number, S: Int8Array, a: number, b: number, 
 // its callers (FeedbackCipher.encrypt and the modes) make them.
 function aesEncrypt(t: JThread, self: JObject, inp: Int8Array, i: number, out: Int8Array, o: number) {
   const { T1, T2, T3, T4, S, K: kSlot, limit: limitSlot } = aes(t, self);
-  const K = (self.f[kSlot] as JArray).a as Int32Array, limit = self.f[limitSlot] as number;
+  const K = (self[kSlot] as JArray).a as Int32Array, limit = self[limitSlot] as number;
   let t0 = word(inp, i) ^ K[0], t1 = word(inp, i + 4) ^ K[1], t2 = word(inp, i + 8) ^ K[2], t3 = word(inp, i + 12) ^ K[3];
   let k = 4;
   while (k < limit) {

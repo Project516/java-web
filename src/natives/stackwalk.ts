@@ -7,6 +7,7 @@ import { fillElement } from "./lang.ts";
 import { annotationTypes, isCallerSensitive, resolvedMethodName } from "./invoke.ts";
 import { javaFrames } from "./util.ts";
 import type { Natives } from "./util.ts";
+import { dataOf } from "../runtime.ts";
 
 const CLASS_INFO_ONLY = 0x2, SHOW_HIDDEN_FRAMES = 0x20;
 const IS_METHOD = 0x10000, IS_CONSTRUCTOR = 0x20000, CALLER_SENSITIVE = 0x100000, HIDDEN_MEMBER = 0x400000;
@@ -68,7 +69,7 @@ function fill(t: JThread, mode: number, w: Walk, frames: JArray, start: number, 
 }
 
 function methodOfInfo(t: JThread, sfi: JObject): JMethod {
-  return (t.vm.getField(sfi, CFI, "classOrMemberName") as JObject).x as JMethod;
+  return dataOf(t.vm.getField(sfi, CFI, "classOrMemberName") as JObject) as JMethod;
 }
 
 export const natives: Natives = {
@@ -118,7 +119,7 @@ export const natives: Natives = {
 
 function stackOf(t: JThread, thread: JObject): JObject | null {
   // a mounted virtual thread's frames are on its carrier
-  const own = thread.x as JThread | undefined;
+  const own = dataOf(thread) as JThread | undefined;
   const target = own ?? [...t.vm.threads].find((c) => c.mounted === thread);
   if (!target) return null;
   const ste = t.vm.loadBoot("java/lang/StackTraceElement")!;

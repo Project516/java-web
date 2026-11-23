@@ -3,7 +3,7 @@
 // ({ m } or { f }); methods also get a ResolvedMethodName holding the JMethod,
 // so clones of the MemberName share it as they do in HotSpot.
 
-import { ACC_FINAL, ACC_STATIC, INITIALIZED, JClass, JField, JMethod, JObject, STATIC_OFFSET_BASE } from "../runtime.ts";
+import { ACC_FINAL, ACC_STATIC, INITIALIZED, JClass, JField, JMethod, JObject, STATIC_OFFSET_BASE, dataOf, setData } from "../runtime.ts";
 import { JThread, PendingThrow } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import { fieldOf } from "./misc.ts";
@@ -21,13 +21,14 @@ const REF_invokeVirtual = 5, REF_invokeStatic = 6, REF_invokeSpecial = 7, REF_ne
 const METHOD_MODIFIERS = 0x1dff, FIELD_MODIFIERS = 0x50df;
 
 export function memberTarget(t: JThread, mn: JObject): JMethod {
-  const m = mn.x?.m ?? (t.vm.getField(mn, MN, "method") as JObject | null)?.x;
+  const rn = t.vm.getField(mn, MN, "method") as JObject | null;
+  const m = dataOf(mn)?.m ?? (rn ? dataOf(rn) : undefined);
   if (!m) throw new PendingThrow("java/lang/InternalError", "unresolved MemberName");
   return m;
 }
 
 export function memberField(mn: JObject): JField {
-  const f = mn.x?.f;
+  const f = dataOf(mn)?.f;
   if (!f) throw new PendingThrow("java/lang/InternalError", "unresolved field MemberName");
   return f;
 }
@@ -75,7 +76,7 @@ export function resolvedMethodName(t: JThread, m: JMethod): JObject {
   const vm = t.vm;
   const o = vm.newObject(vm.loadBoot("java/lang/invoke/ResolvedMethodName")!);
   vm.setField(o, "java/lang/invoke/ResolvedMethodName", "vmholder", vm.mirror(m.cls));
-  o.x = m;
+  setData(o, m);
   return o;
 }
 
@@ -99,7 +100,7 @@ export function initMethodMember(t: JThread, mn: JObject, m: JMethod, refKind: n
   vm.setField(mn, MN, "flags", flags | (kind << KIND_SHIFT));
   vm.setField(mn, MN, "clazz", vm.mirror(m.cls));
   vm.setField(mn, MN, "method", resolvedMethodName(t, m));
-  mn.x = { m };
+  setData(mn, { m });
 }
 
 export function initFieldMember(t: JThread, mn: JObject, f: JField, setter: boolean) {
@@ -110,7 +111,7 @@ export function initFieldMember(t: JThread, mn: JObject, f: JField, setter: bool
   const kind = (f.isStatic ? REF_getStatic : REF_getField) + (setter ? REF_putField - REF_getField : 0);
   vm.setField(mn, MN, "flags", flags | (kind << KIND_SHIFT));
   vm.setField(mn, MN, "clazz", vm.mirror(f.cls));
-  mn.x = { f };
+  setData(mn, { f });
 }
 
 function findMethodIn(c: JClass, key: string, refKind: number): JMethod | null {
@@ -160,7 +161,7 @@ export const natives: Natives = {
   },
   "java/lang/invoke/MethodHandleNatives.expand(Ljava/lang/invoke/MemberName;)V": (t, [mn]) => {
     const vm = t.vm;
-    const x = mn.x;
+    const x = dataOf(mn);
     if (!x) throw new PendingThrow("java/lang/IllegalArgumentException", "MemberName not resolved");
     const member = x.m ?? x.f;
     if (!vm.getField(mn, MN, "clazz")) vm.setField(mn, MN, "clazz", vm.mirror(member.cls));
@@ -178,12 +179,13 @@ export const natives: Natives = {
     const vm = t.vm;
     const long = vm.loadBoot("java/lang/Long")!;
     if (long.state !== INITIALIZED) yield* vm.initGen(t, long);
-    const isField = !!mn.x?.f;
+    const field = dataOf(mn)?.f as JField | undefined;
+    const isField = !!field;
     // a method reference that dispatches has a vtable index; others none
     const kind = (vm.getField(mn, MN, "flags") >> KIND_SHIFT) & 0xf;
-    const index = isField ? BigInt(mn.x.f.slot) : kind === REF_invokeVirtual || kind === REF_invokeInterface ? 0n : -2n;
+    const index = isField ? BigInt(field!.slot) : kind === REF_invokeVirtual || kind === REF_invokeInterface ? 0n : -2n;
     const boxed = yield t.call(long.methodMap.get("valueOf(J)Ljava/lang/Long;")!, index);
-    return vm.newObjectArray("java/lang/Object", [boxed, isField ? vm.mirror(mn.x.f.cls) : mn]);
+    return vm.newObjectArray("java/lang/Object", [boxed, isField ? vm.mirror(field!.cls) : mn]);
   },
   "java/lang/invoke/MethodHandleNatives.setCallSiteTargetNormal(Ljava/lang/invoke/CallSite;Ljava/lang/invoke/MethodHandle;)V":
     (t, [site, target]) => t.vm.setField(site, "java/lang/invoke/CallSite", "target", target),

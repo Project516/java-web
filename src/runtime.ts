@@ -80,6 +80,8 @@ export class JField {
   private attrsRaw: Map<string, Uint8Array> | number;
   readonly wide: boolean;
   slot = -1;
+  // the property of an instance field's object
+  key: FieldKey = "f0";
   index = 0;
   constructor(cls: JClass, m: Member) {
     this.cls = cls;
@@ -171,18 +173,206 @@ export class JMethod {
   }
 }
 
+// Instance fields are properties f0, f1, ... of the object. Classes whose fields
+// have the same kinds share one constructor, and so one engine shape.
+export type FieldKey = `f${number}`;
+const KEYS: FieldKey[] = [];
+export function fieldKey(slot: number): FieldKey {
+  return KEYS[slot] ?? (KEYS[slot] = `f${slot}`);
+}
+
 export class JObject {
   cls: JClass;
-  f: any[];
-  mon: Monitor | null = null;
-  hash = 0;
-  // VM-side data: the JClass of a Class mirror, the JThread of a Thread, ...
-  x: any = undefined;
-  constructor(cls: JClass, f: any[]) {
+  // what most objects never need: null, the identity hash once taken, or a
+  // Monitor (which also holds the hash and the VM-side data)
+  s: number | Monitor | null = null;
+  [field: FieldKey]: any;
+  constructor(cls: JClass) {
     this.cls = cls;
-    this.f = f;
-    if (allocationCheck?.enabled) allocated(32);
+    if (alloc.check?.enabled) allocated(32);
   }
+}
+
+// A field by slot number, for offsets that arrive as numbers (Unsafe). Each
+// slot has its own functions, so the engine caches the property per slot, not
+// per call site, and a read-modify-write touches the object once.
+const MAX_FAST_SLOT = 4096;
+type SlotFns = { read: (o: JObject) => any; write: (o: JObject, v: any) => void; cas: (o: JObject, e: any, v: any) => any; swap: (o: JObject, v: any) => any; add: (o: JObject, d: any) => any; addLong: (o: JObject, d: bigint) => bigint };
+const slotFns: SlotFns[] = [];
+function fnsFor(slot: number): SlotFns | null {
+  if (!(slot >= 0 && slot < MAX_FAST_SLOT && Number.isInteger(slot))) return null;
+  return (slotFns[slot] ??= {
+    read: new Function("o", `return o.f${slot}`) as SlotFns["read"],
+    write: new Function("o", "v", `o.f${slot}=v`) as SlotFns["write"],
+    cas: new Function("o", "e", "v", `const c=o.f${slot};if(c===e)o.f${slot}=v;return c`) as SlotFns["cas"],
+    swap: new Function("o", "v", `const c=o.f${slot};o.f${slot}=v;return c`) as SlotFns["swap"],
+    add: new Function("o", "d", `const c=o.f${slot};o.f${slot}=(c+d)|0;return c`) as SlotFns["add"],
+    addLong: new Function("o", "d", `const c=o.f${slot};o.f${slot}=BigInt.asIntN(64,c+d);return c`) as SlotFns["addLong"],
+  });
+}
+export function readField(o: JObject, slot: number): any {
+  const f = fnsFor(slot);
+  return f ? f.read(o) : o[fieldKey(slot)];
+}
+export function writeField(o: JObject, slot: number, v: any) {
+  const f = fnsFor(slot);
+  if (f) f.write(o, v);
+  else o[fieldKey(slot)] = v;
+}
+// the old value; the field is set to v when it was e
+export function casField(o: JObject, slot: number, e: any, v: any): any {
+  const f = fnsFor(slot);
+  if (f) return f.cas(o, e, v);
+  const c = o[fieldKey(slot)];
+  if (c === e) o[fieldKey(slot)] = v;
+  return c;
+}
+// the old value; the field is set to v
+export function swapField(o: JObject, slot: number, v: any): any {
+  const f = fnsFor(slot);
+  if (f) return f.swap(o, v);
+  const c = o[fieldKey(slot)];
+  o[fieldKey(slot)] = v;
+  return c;
+}
+// the old value; an int field gets old + d, a long field the 64-bit sum
+export function addField(o: JObject, slot: number, d: any, long: boolean): any {
+  const f = fnsFor(slot);
+  if (f) return long ? f.addLong(o, d) : f.add(o, d);
+  const c = o[fieldKey(slot)];
+  o[fieldKey(slot)] = long ? BigInt.asIntN(64, c + d) : (c + d) | 0;
+  return c;
+}
+
+// dump and load read and write all instance fields at once, by slot.
+export interface ObjCtor {
+  new (cls: JClass): JObject;
+  dump(o: JObject): any[];
+  load(o: JObject, f: ArrayLike<any>): void;
+}
+const ctors = new Map<string, ObjCtor>();
+
+// One character per instance field slot: J long, L reference, D float or
+// double, I the rest.
+function kindOf(desc: string): string {
+  const c = desc[0];
+  return c === "[" ? "L" : c === "F" ? "D" : c === "B" || c === "C" || c === "S" || c === "Z" ? "I" : c;
+}
+
+function kindsOf(c: JClass): string {
+  const chain: JClass[] = [];
+  for (let k: JClass | null = c; k; k = k.superclass) chain.push(k);
+  let kinds = "";
+  for (let i = chain.length - 1; i >= 0; i--) for (const f of chain[i].fields) if (!f.isStatic) kinds += kindOf(f.desc);
+  return kinds;
+}
+
+function withAccess(C: unknown, kinds: string): ObjCtor {
+  const T = C as ObjCtor;
+  // generated on first use: boot does not need them
+  T.dump = (o) => {
+    let body = "return[";
+    for (let i = 0; i < kinds.length; i++) body += `o.f${i},`;
+    return (T.dump = new Function("o", `${body}]`) as ObjCtor["dump"])(o);
+  };
+  T.load = (o, f) => {
+    let body = "";
+    for (let i = 0; i < kinds.length; i++) body += `o.f${i}=f[${i}];`;
+    (T.load = new Function("o", "f", body) as ObjCtor["load"])(o, f);
+  };
+  return T;
+}
+
+function ctorFor(kinds: string): ObjCtor {
+  let C = ctors.get(kinds);
+  if (C) return C;
+  if (kinds === "") C = withAccess(JObject, kinds);
+  else {
+    let body = "this.cls=cls;this.s=null;";
+    for (let i = 0; i < kinds.length; i++) body += `this.f${i}=${kinds[i] === "J" ? "0n" : kinds[i] === "L" ? "null" : "0"};`;
+    const Obj = new Function("A", "T", `return function Obj(cls){${body}if(A.check!==null&&A.check.enabled)T(32);}`)(alloc, allocated);
+    Obj.prototype = JObject.prototype;
+    C = withAccess(Obj, kinds);
+  }
+  ctors.set(kinds, C);
+  return C;
+}
+
+// An object whose class has a finalizer keeps its fields in a second object,
+// st, which the Finalizer holds too: the engine collects the object, and the
+// fields live on for finalize(). The fields are accessors over st.
+const finalizableCtors = new Map<string, ObjCtor>();
+function finalizableCtorFor(kinds: string): ObjCtor {
+  let C = finalizableCtors.get(kinds);
+  if (C) return C;
+  const Storage = ctorFor(kinds);
+  let accessors = "";
+  for (let i = 0; i < kinds.length; i++) accessors += `get f${i}(){return this.st.f${i}},set f${i}(v){this.st.f${i}=v},`;
+  const Obj = new Function("P", "S", "A", "T", `
+    const proto = Object.create(P, Object.getOwnPropertyDescriptors({${accessors}}));
+    function Obj(cls){this.cls=cls;this.s=null;this.st=new S(cls);if(A.check!==null&&A.check.enabled)T(32);}
+    Obj.prototype = proto;
+    return Obj;`)(JObject.prototype, Storage, alloc, allocated);
+  C = withAccess(Obj, kinds);
+  finalizableCtors.set(kinds, C);
+  return C;
+}
+
+// A class's constructor is made the first time one of its objects is.
+const lazyCtor = function (cls: JClass): JObject {
+  return new (ensureCtor(cls))(cls);
+} as unknown as ObjCtor;
+
+export function ensureCtor(c: JClass): ObjCtor {
+  if (c.ctor !== lazyCtor) return c.ctor;
+  const kinds = kindsOf(c);
+  return (c.ctor = c.finalizable ? finalizableCtorFor(kinds) : ctorFor(kinds));
+}
+
+// The values of an object's instance fields, by slot.
+export function fieldsOf(o: JObject): any[] {
+  return ensureCtor(o.cls).dump(o);
+}
+
+export function setFields(o: JObject, f: ArrayLike<any>) {
+  ensureCtor(o.cls).load(o, f);
+}
+
+export function monitorOf(o: JObject): Monitor | null {
+  const s = o.s;
+  return typeof s === "object" ? s : null;
+}
+
+export function monitorFor(o: JObject): Monitor {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) return s;
+  const m = new Monitor();
+  if (s !== null) m.hash = s;
+  o.s = m;
+  return m;
+}
+
+export function hashOf(o: JObject): number {
+  const s = o.s;
+  return s === null ? 0 : typeof s === "number" ? s : s.hash;
+}
+
+export function setHash(o: JObject, h: number) {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) s.hash = h;
+  else o.s = h === 0 ? null : h;
+}
+
+// VM-side data: the JClass of a Class mirror, the JThread of a Thread, ...
+export function dataOf(o: JObject): any {
+  const s = o.s;
+  return typeof s === "object" && s !== null ? s.x : undefined;
+}
+
+export function setData(o: JObject, x: any) {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) s.x = x;
+  else if (x !== undefined) monitorFor(o).x = x;
 }
 
 export type ArrayData =
@@ -211,9 +401,9 @@ export function trackArrays(): () => number {
 export class JArray extends JObject {
   a: ArrayData;
   constructor(cls: JClass, a: ArrayData) {
-    super(cls, EMPTY);
+    super(cls);
     this.a = a;
-    if (allocationCheck?.enabled) {
+    if (alloc.check?.enabled) {
       const bytes = ArrayBuffer.isView(a) ? a.byteLength : a.length * 8;
       allocated(bytes);
       if (trackingArrays && bytes >= TRACK_MIN) {
@@ -224,8 +414,6 @@ export class JArray extends JObject {
   }
 }
 
-const EMPTY: any[] = [];
-
 export class Monitor {
   owner: JThread | null = null;
   count = 0;
@@ -233,6 +421,9 @@ export class Monitor {
   entry: (() => void)[] | null = null;
   // threads in wait(), woken by notify, with the entry count they gave up
   waiters: Waiter[] | null = null;
+  // the object's identity hash and VM-side data, kept here to cost the other objects nothing
+  hash = 0;
+  x: any = undefined;
 
   enqueue(wake: () => void) {
     (this.entry ??= []).push(wake);
@@ -301,7 +492,7 @@ export class JClass {
   methods: JMethod[] = [];
   methodMap = new Map<string, JMethod>();
   instanceSlots = 0;
-  template: any[] = [];
+  ctor: ObjCtor = lazyCtor;
   statics: any[] = [];
   state = LOADED;
   initThread: JThread | null = null;
@@ -488,11 +679,11 @@ interface AllocationCheck {
   // no gc(): the engine frees garbage between tasks, see lazyOver
   lazy: boolean;
 }
-let allocationCheck: AllocationCheck | null = null;
+const alloc: { check: AllocationCheck | null } = { check: null };
 export function setAllocationCheck(cap: number, usage: () => number, o: { gc?: () => void; lazy?: boolean } = {}) {
-  allocationCheck = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
+  alloc.check = { cap, step: Math.min(cap, Math.max(4 << 20, cap / 16)), allocated: 0, baseline: 0, enabled: false, over: false, usage, gc: o.gc, lazy: !!o.lazy };
 }
-export function clearAllocationCheck() { allocationCheck = null; }
+export function clearAllocationCheck() { alloc.check = null; }
 // Lets go of what the VM holds for the program's sake (soft referents, caches
 // of unloadable classes) before an OutOfMemoryError; returns whether there was any.
 let reclaim: (() => boolean) | null = null;
@@ -500,30 +691,32 @@ export function setReclaim(f: () => boolean) { reclaim = f; }
 // An allocation that cannot succeed still collects first, as HotSpot does, so
 // the program sees soft references cleared and unloaded classes gone.
 function collectBeforeGivingUp() {
-  if (reclaim?.()) (allocationCheck?.gc ?? (globalThis as { gc?: () => void }).gc)?.();
+  if (reclaim?.()) (alloc.check?.gc ?? (globalThis as { gc?: () => void }).gc)?.();
 }
 // A JObject made while a collection hands a finalizable object to its Finalizer:
 // it is not an allocation that can fail.
-export function wrapperOver(cls: JClass, f: any[]): JObject {
-  const check = allocationCheck;
+export function wrapperOver(cls: JClass, st: JObject): JObject {
+  const check = alloc.check;
   const was = check?.enabled;
   if (check) check.enabled = false;
   try {
-    return new JObject(cls, f);
+    const o = new (ensureCtor(cls))(cls);
+    (o as unknown as { st: JObject }).st = st;
+    return o;
   } finally {
     if (check) check.enabled = was!;
   }
 }
 // Java heap bytes still free under the cap, measured as the cap is.
 export function freeHeap(): number {
-  const check = allocationCheck;
+  const check = alloc.check;
   return check?.enabled ? MAX_HEAP - (check.usage() - check.baseline) : MAX_HEAP;
 }
 export function resetAllocationCheck() {
-  if (!allocationCheck) return;
-  allocationCheck.baseline = allocationCheck.usage();
-  allocationCheck.allocated = 0;
-  allocationCheck.enabled = true;
+  if (!alloc.check) return;
+  alloc.check.baseline = alloc.check.usage();
+  alloc.check.allocated = 0;
+  alloc.check.enabled = true;
 }
 
 // Browsers have no gc(). Arrays the program dropped keep counting until the
@@ -575,7 +768,7 @@ function lazyOver(check: AllocationCheck) {
 }
 
 function allocated(bytes: number) {
-  const check = allocationCheck;
+  const check = alloc.check;
   if (!check?.enabled || bytes <= 0) return;
   check.allocated += bytes;
   if (check.allocated < (check.gc || check.lazy ? check.step : check.cap)) return;

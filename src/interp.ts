@@ -332,7 +332,19 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
           if (fld === undefined) { f.pc = ipc; f.sp = sp; return budget; }
           o = stack[sp - 1];
           if (o === null) npe();
-          stack[sp - 1] = o.f[fld.slot];
+          // a named load per slot: the engine caches each by shape, which a computed key cannot
+          switch (fld.slot) {
+            case 0: v = o.f0; break;
+            case 1: v = o.f1; break;
+            case 2: v = o.f2; break;
+            case 3: v = o.f3; break;
+            case 4: v = o.f4; break;
+            case 5: v = o.f5; break;
+            case 6: v = o.f6; break;
+            case 7: v = o.f7; break;
+            default: v = o[fld.key];
+          }
+          stack[sp - 1] = v;
           if (fld.wide) stack[sp++] = undefined;
           pc += 3;
           break;
@@ -345,7 +357,17 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
           v = stack[--sp];
           o = stack[--sp];
           if (o === null) npe();
-          o.f[fld.slot] = v;
+          switch (fld.slot) {
+            case 0: o.f0 = v; break;
+            case 1: o.f1 = v; break;
+            case 2: o.f2 = v; break;
+            case 3: o.f3 = v; break;
+            case 4: o.f4 = v; break;
+            case 5: o.f5 = v; break;
+            case 6: o.f6 = v; break;
+            case 7: o.f7 = v; break;
+            default: o[fld.key] = v;
+          }
           pc += 3;
           break;
         }
@@ -412,7 +434,7 @@ export function interpret(t: JThread, f: Frame, budget: number): number {
           if (c === undefined) { f.pc = ipc; f.sp = sp; return budget; }
           if (c.state !== INITIALIZED && !vm.initialize(t, c)) { f.pc = ipc; f.sp = sp; return budget; }
           if (c.access & 0x0600) throw new PendingThrow("java/lang/InstantiationError", c.javaName);
-          const o = new JObject(c, c.template.slice());
+          const o = new c.ctor(c);
           if (c.finalizable) registerFinalizer(vm, o);
           stack[sp++] = o;
           pc += 3;

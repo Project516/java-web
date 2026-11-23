@@ -464,7 +464,7 @@ export class Library {
       case "setStatic": case "set": {
         const { f, obj } = yield* this.field(t, req.op === "set" ? req.obj : req.cls, req.field);
         const value = yield* this.toJava(t, f.desc, yield* this.resolve(t, req.value), f.cls.loader);
-        if (obj) obj.f[f.slot] = value;
+        if (obj) obj[f.key] = value;
         else f.cls.statics[f.slot] = value;
         return { value: undefined };
       }
@@ -491,7 +491,7 @@ export class Library {
   // A field's Java value and descriptor.
   private *readField(t: JThread, target: number | string | FieldRef, name: string): Generator<Request, [any, string]> {
     const { f, obj } = yield* this.field(t, target, name);
-    return [obj ? obj.f[f.slot] : f.cls.statics[f.slot], f.desc];
+    return [obj ? obj[f.key] : f.cls.statics[f.slot], f.desc];
   }
 
   private methodsOf(cls: JClass, name: string, isStatic: boolean): JMethod[] {

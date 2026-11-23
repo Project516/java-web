@@ -1,6 +1,6 @@
 // java.lang.ClassLoader and java.lang.Module natives.
 
-import { INITIALIZED, JArray, JObject } from "../runtime.ts";
+import { INITIALIZED, JArray, JObject, setData } from "../runtime.ts";
 import type { JThread, NativeGen } from "../thread.ts";
 import { nestHostOf } from "./reflect.ts";
 import { jstr, u8 } from "./util.ts";
@@ -21,7 +21,7 @@ function* define(t: JThread, loader: JObject | null, name: JObject | null, bytes
 function defineModule(t: JThread, m: JObject, version: JObject | null, location: JObject | null, pns: JArray) {
   const vm = t.vm;
   const name = jstr(t, vm.getField(m, "java/lang/Module", "name"));
-  m.x = { version: jstr(t, version), location: jstr(t, location) };
+  setData(m, { version: jstr(t, version), location: jstr(t, location) });
   const loader = vm.getField(m, "java/lang/Module", "loader") as JObject | null;
   const pkgs = (pns.a as JObject[]).map((p) => vm.jsString(p).replace(/\./g, "/"));
   if (loader === null) {

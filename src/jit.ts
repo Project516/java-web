@@ -15,9 +15,7 @@
 // interpreted call.
 
 import { cpB, cpTag, cpValue, Tag, utf8 } from "./classfile.ts";
-import {
-  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc, pin,
-} from "./runtime.ts";
+import { ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc, pin, dataOf } from "./runtime.ts";
 import { memberTarget } from "./natives/invoke.ts";
 import { concatStrings } from "./natives/strings.ts";
 import { Frame, JavaThrow, NativeFrame, PendingThrow, fromNative } from "./thread.ts";
@@ -76,7 +74,7 @@ export function restoreJit(vm: JVM, m: JMethod, code: SavedJit) {
 
 // A constant of compiled code that holds a class another loader can drop.
 function namesUnloadable(v: unknown, caller: JClass): boolean {
-  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (v.x instanceof JClass ? v.x : v.cls) : null;
+  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (dataOf(v) instanceof JClass ? dataOf(v) : v.cls) : null;
   return c !== null && c !== caller && c.unloadable && (c.hidden || c.loader !== caller.loader);
 }
 
@@ -1021,11 +1019,11 @@ function insnCode(g: Gen, b: Body, pc: number) {
     case 0xb4: case 0xb5: {
       const fld = cls.rcp[idx2] as JField | undefined;
       if (!fld) { emit(slow(pc, d)); break; }
-      if (op === 0xb4) emit(`${b.nn.has(d - 1) ? "" : `if(${top()}===null)np(${pc});`}${top()}=${top()}.f[${fld.slot}];`);
+      if (op === 0xb4) emit(`${b.nn.has(d - 1) ? "" : `if(${top()}===null)np(${pc});`}${top()}=${top()}.${fld.key};`);
       else {
         const k = fld.wide ? 2 : 1;
         const obj = top(k);
-        emit(`${b.nn.has(d - 1 - k) ? "" : `if(${obj}===null)np(${pc});`}${obj}.f[${fld.slot}]=${fld.wide ? top(1) : top()};`);
+        emit(`${b.nn.has(d - 1 - k) ? "" : `if(${obj}===null)np(${pc});`}${obj}.${fld.key}=${fld.wide ? top(1) : top()};`);
       }
       break;
     }
@@ -1055,7 +1053,7 @@ function insnCode(g: Gen, b: Body, pc: number) {
       }
       const k = cls.rcp[idx2] as JClass | undefined;
       if (!k || k.state !== INITIALIZED || k.access & 0x0600 || k.finalizable) { emit(slow(pc, d)); break; }
-      emit(`${S(d)}=new rt.JObject(${K(k)},${K(k)}.template.slice());`);
+      emit(`${S(d)}=new ${K(k)}.ctor(${K(k)});`);
       break;
     }
     case 0xbc: {
@@ -1088,11 +1086,12 @@ function insnCode(g: Gen, b: Body, pc: number) {
     }
     case 0xc2:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)np(${pc});if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}`);
+      // an idle or own monitor is taken inline, so the object's shape is seen by this site alone
+      emit(`if(${top()}===null)np(${pc});{const mo=${top()}.s;if(mo!==null&&typeof mo==="object"&&mo.owner===null&&t.mounted===null&&!t.blockedOnMonitor){mo.owner=t;mo.count=1}else if(mo!==null&&typeof mo==="object"&&mo.owner===t)mo.count++;else if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}}`);
       break;
     case 0xc3:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)np(${pc});vm.monitorExit(t,${top()});`);
+      emit(`if(${top()}===null)np(${pc});{const mo=${top()}.s;if(mo!==null&&typeof mo==="object"&&mo.owner===t){if(mo.count>1)mo.count--;else if(mo.entry===null&&t.mounted===null){mo.owner=null;mo.count=0}else vm.monitorExit(t,${top()})}else vm.monitorExit(t,${top()})}`);
       break;
     case 0xc4: {
       const wop = c[pc + 1], i = u16(c, pc + 2);
@@ -1190,7 +1189,7 @@ function numLit(v: number): string {
 
 // Bodies that can be inlined at a call site: they neither call nor throw.
 type Trivial =
-  | { kind: "empty" } | { kind: "get"; slot: number } | { kind: "set"; slot: number } | { kind: "const"; value: string }
+  | { kind: "empty" } | { kind: "get"; key: string } | { kind: "set"; key: string } | { kind: "const"; value: string }
   | { kind: "expr"; build: (args: string[]) => string };
 
 // Pure arithmetic on parameters, as one JS expression, or null. Only
@@ -1219,7 +1218,7 @@ function leafExpr(m: JMethod): ((args: string[]) => string) | null {
   const c = code.code;
   if (c.length > 32 || code.handlers.length > 0) return null;
   // the expression is built from tokens: ["arg", slot] refers to a parameter
-  type Tok = string | ["arg", number] | ["field", number, number];
+  type Tok = string | ["arg", number] | ["field", number, string];
   const stack: Tok[][] = [];
   // negative literals in parentheses, so "a - -5" cannot become "a--5"
   const lit = (s: string): Tok[] => [s.startsWith("-") ? `(${s})` : s];
@@ -1249,7 +1248,7 @@ function leafExpr(m: JMethod): ((args: string[]) => string) | null {
       const a = stack.pop();
       const fld = m.cls.rcp[(c[pc + 1] << 8) | c[pc + 2]] as JField | undefined;
       if (!a || !fld || a.length !== 1 || !Array.isArray(a[0]) || a[0][0] !== "arg" || a[0][1] !== 0) return null;
-      push = [["field", 0, fld.slot]];
+      push = [["field", 0, fld.key]];
       len = 3;
     } else if (op >= 0xac && op <= 0xb0) {
       if (pc + 1 !== c.length || stack.length !== 1) return null;
@@ -1264,7 +1263,7 @@ function leafExpr(m: JMethod): ((args: string[]) => string) | null {
   function render(toks: Tok[], args: string[]): string {
     return toks.map((x: any) => {
       if (typeof x === "string") return x;
-      if (Array.isArray(x)) return x[0] === "arg" ? args[x[1]] : `${args[x[1]]}.f[${x[2]}]`;
+      if (Array.isArray(x)) return x[0] === "arg" ? args[x[1]] : `${args[x[1]]}.${x[2]}`;
       if (x.op) return x.op(render(x.a, args), render(x.b, args));
       return x.op1(render(x.a, args));
     }).join("");
@@ -1286,12 +1285,12 @@ function trivialBody(m: JMethod): Trivial | null {
   // aload_0 getfield xreturn
   if (c.length === 5 && c[1] === 0xb4 && c[4] >= 0xac && c[4] <= 0xb0) {
     const f = field();
-    return f ? { kind: "get", slot: f.slot } : null;
+    return f ? { kind: "get", key: f.key } : null;
   }
   // aload_0 xload_1 putfield return
   if (c.length === 6 && [0x1b, 0x1f, 0x23, 0x27, 0x2b].includes(c[1]) && c[2] === 0xb5 && c[5] === 0xb1) {
     const f = m.cls.rcp[(c[3] << 8) | c[4]] as JField | undefined;
-    return f ? { kind: "set", slot: f.slot } : null;
+    return f ? { kind: "set", key: f.key } : null;
   }
   const build = leafExpr(m);
   return build ? { kind: "expr", build } : null;
@@ -1302,8 +1301,8 @@ function genInline(body: Trivial, res: string, args: string[], pc: number, check
   switch (body.kind) {
     case "empty": return nullCheck;
     case "const": return `${nullCheck}${res}=${body.value};`;
-    case "get": return `${nullCheck}${res}=${args[0]}.f[${body.slot}];`;
-    case "set": return `${nullCheck}${args[0]}.f[${body.slot}]=${args[1]};`;
+    case "get": return `${nullCheck}${res}=${args[0]}.${body.key};`;
+    case "set": return `${nullCheck}${args[0]}.${body.key}=${args[1]};`;
     case "expr": return `${nullCheck}${res}=${body.build(args)};`;
   }
 }
