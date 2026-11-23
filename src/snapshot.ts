@@ -11,13 +11,13 @@ import { restorePending, restoreReference } from "./natives/ref.ts";
 import { MAX_HEAP } from "./runtime.ts";
 import type { WarmTrace } from "./fs.ts";
 import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
-import { JArray, JClass, JField, JMethod, JObject, Monitor, dataOf, hashOf, monitorOf, setData, setHash } from "./runtime.ts";
+import { JArray, JClass, JField, JMethod, JObject, Monitor, dataOf, fieldsOf, hashOf, monitorOf, setData, setFields, setHash } from "./runtime.ts";
 import { restoreJit } from "./jit.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE, Signal } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
 
 // Bump when the layout of an image changes; images of another format are ignored.
-export const SNAPSHOT_FORMAT = 3;
+export const SNAPSHOT_FORMAT = 4;
 
 export interface SnapshotImage {
   format: number;
@@ -217,7 +217,7 @@ class Encoder {
 
   private isLeaf(v: JObject): boolean {
     if (monitorOf(v) !== null) return false;
-    const list = v instanceof JArray ? v.a : v.f;
+    const list = v instanceof JArray ? v.a : fieldsOf(v);
     if (!Array.isArray(list)) return true;
     for (const e of list) if (e !== null && (typeof e === "function" || (typeof e === "object" && !ArrayBuffer.isView(e) && !(e instanceof ArrayBuffer)))) return false;
     return true;
@@ -233,7 +233,7 @@ class Encoder {
       this.work.push(() => {
         if (array && !Array.isArray(v.a)) t.a = v.a;
         else {
-          const { v: list, r } = this.values(array ? (v.a as unknown[]) : v.f, path, next);
+          const { v: list, r } = this.values(array ? (v.a as unknown[]) : fieldsOf(v), path, next);
           t[array ? "a" : "f"] = list;
           if (r) t.r = r;
         }
@@ -313,7 +313,7 @@ class Decoder {
       case "O": case "A": {
         const cls = this.classes[v.c];
         if (!cls) throw new Error(`snapshot: object of class #${v.c} before its class`);
-        o = v.$ === "A" ? new JArray(cls, v.a) : new JObject(cls, v.f);
+        o = v.$ === "A" ? new JArray(cls, v.a) : new cls.ctor(cls);
         if (v.h) setHash(o, v.h);
         break;
       }
@@ -357,6 +357,7 @@ class Decoder {
     }
     switch (v.$) {
       case "O": case "A":
+        if (v.$ === "O") setFields(o, list!);
         if (v.n) {
           const m: Monitor = this.dec(v.n);
           m.hash = hashOf(o);

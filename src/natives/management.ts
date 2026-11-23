@@ -4,7 +4,7 @@
 // collector. Heap usage is the JS heap's; collections are the explicit
 // System.gc() calls, which HotSpot counts as full collections.
 
-import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP, dataOf, monitorOf } from "../runtime.ts";
+import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP, dataOf, fieldsOf, monitorOf } from "../runtime.ts";
 import type { JMethod } from "../runtime.ts";
 import {
   Frame, JThread, NativeFrame, PendingThrow, STATUS_BLOCKED, STATUS_NEW, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE,
@@ -382,7 +382,7 @@ function* threadInfo(t: JThread, s: Snapshot, withStack: boolean, locks: Locks |
 // which keeps the lock and unlock paths as they are.
 function ownedSynchronizers(vm: JVM): Map<JObject, JObject[]> {
   const aos = vm.loadBoot(AOS)!;
-  const slot = aos.findField("exclusiveOwnerThread")!.slot;
+  const ownerKey = aos.findField("exclusiveOwnerThread")!.key;
   const isSync = new Map<JClass, boolean>();
   const seen = new Set<JObject>();
   const classes = new Set<JClass>();
@@ -417,7 +417,7 @@ function ownedSynchronizers(vm: JVM): Map<JObject, JObject[]> {
     let sync = isSync.get(o.cls);
     if (sync === undefined) isSync.set(o.cls, (sync = o.cls.isAssignableTo(aos)));
     if (sync) {
-      const owner = o.f[slot];
+      const owner = o[ownerKey];
       if (owner) {
         const list = out.get(owner);
         if (list) list.push(o);
@@ -427,7 +427,7 @@ function ownedSynchronizers(vm: JVM): Map<JObject, JObject[]> {
     visitClass(o.cls);
     if (o instanceof JArray) {
       if (Array.isArray(o.a)) for (const v of o.a) visit(v);
-    } else for (const v of o.f) visit(v);
+    } else for (const v of fieldsOf(o)) visit(v);
     // a class loader keeps the classes it defined
     const x = dataOf(o);
     if (x instanceof JClass) visitClass(x);

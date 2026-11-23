@@ -12,9 +12,9 @@ import {
   ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_NATIVE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
   ACC_STATIC, ACC_SUPER, ACC_VARARGS, ERRONEOUS, INITIALIZED, INITIALIZING, JArray, JClass, JField,
   JMethod, JObject, LINKED, Monitor, dataOf, defaultValue, dropsWithLoader, hashOf, monitorFor, monitorOf, newArrayData, noteYield,
-  sched, setData, setHash,
+  fieldKey, sched, setData, setHash,
 } from "./runtime.ts";
-import type { CallSite, NativeFn } from "./runtime.ts";
+import type { CallSite, FieldKey, NativeFn } from "./runtime.ts";
 import {
   Frame, JThread, JavaThrow, NativeFrame, PendingThrow, RUNNABLE, Signal, STATUS_BLOCKED, STATUS_RUNNABLE, STATUS_TERMINATED,
   TERMINATED, WAITING,
@@ -162,7 +162,7 @@ export class JVM {
   private interned = new Map<string, JObject>();
   readonly prims = new Map<string, JClass>();
   // owner -> field name -> slot; two lookups of literal strings beat building a key
-  private slots = new Map<string, Map<string, number>>();
+  private keys = new Map<string, Map<string, FieldKey>>();
   readonly threads = new Set<JThread>();
   private runQueue: JThread[] = [];
   // threads another thread woke in its turn: they run before the rotation, so a hand-off does not wait behind spinners
@@ -379,7 +379,6 @@ export class JVM {
     c.superclass = superclass;
     c.interfaces = interfaces;
     let slot = superclass ? superclass.instanceSlots : 0;
-    const template = superclass ? superclass.template.slice() : [];
     for (const [i, fm] of cf.fields.entries()) {
       const f = new JField(c, fm);
       f.index = i;
@@ -388,12 +387,11 @@ export class JVM {
         c.statics.push(defaultValue(f.desc));
       } else {
         f.slot = slot++;
-        template.push(defaultValue(f.desc));
+        f.key = fieldKey(f.slot);
       }
       c.fields.push(f);
     }
     c.instanceSlots = slot;
-    c.template = template;
     const withIntrinsics = loader === null && intrinsicClasses.has(cf.name);
     const poly = cf.name === "java/lang/invoke/MethodHandle" || cf.name === "java/lang/invoke/VarHandle";
     for (const [i, mm] of cf.methods.entries()) {
@@ -703,7 +701,7 @@ export class JVM {
   // ---- objects -------------------------------------------------------------
 
   newObject(c: JClass): JObject {
-    const o = new JObject(c, c.template.slice());
+    const o = new c.ctor(c);
     if (c.finalizable) registerFinalizer(this, o);
     return o;
   }
@@ -823,25 +821,25 @@ export class JVM {
 
   // ---- fields by name ------------------------------------------------------
 
-  slotOf(owner: string, name: string): number {
-    let byName = this.slots.get(owner);
-    if (!byName) this.slots.set(owner, (byName = new Map()));
+  keyOf(owner: string, name: string): FieldKey {
+    let byName = this.keys.get(owner);
+    if (!byName) this.keys.set(owner, (byName = new Map()));
     let s = byName.get(name);
     if (s === undefined) {
       const f = this.loadBootOrFail(owner).findField(name);
       if (!f) throw new Error(`no field ${owner}.${name}`);
-      s = f.slot;
+      s = f.key;
       byName.set(name, s);
     }
     return s;
   }
 
   getField(o: JObject, owner: string, name: string): any {
-    return o.f[this.slotOf(owner, name)];
+    return o[this.keyOf(owner, name)];
   }
 
   setField(o: JObject, owner: string, name: string, v: any) {
-    o.f[this.slotOf(owner, name)] = v;
+    o[this.keyOf(owner, name)] = v;
   }
 
   getStatic(c: JClass, name: string): any {
@@ -872,14 +870,14 @@ export class JVM {
       const u16 = new Uint16Array(bytes.buffer);
       for (let i = 0; i < s.length; i++) u16[i] = s.charCodeAt(i);
     }
-    o.f[this.slotOf("java/lang/String", "value")] = new JArray(this.primArrayClass("B"), bytes);
-    o.f[this.slotOf("java/lang/String", "coder")] = latin1 ? 0 : 1;
+    o[this.keyOf("java/lang/String", "value")] = new JArray(this.primArrayClass("B"), bytes);
+    o[this.keyOf("java/lang/String", "coder")] = latin1 ? 0 : 1;
     return o;
   }
 
   jsString(o: JObject): string {
-    const bytes = (o.f[this.slotOf("java/lang/String", "value")] as JArray).a as Int8Array;
-    const coder = o.f[this.slotOf("java/lang/String", "coder")];
+    const bytes = (o[this.keyOf("java/lang/String", "value")] as JArray).a as Int8Array;
+    const coder = o[this.keyOf("java/lang/String", "coder")];
     let units: ArrayLike<number>;
     if (coder === 0) units = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length);
     else if (bytes.byteOffset % 2 === 0) units = new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1);

@@ -1,7 +1,7 @@
 // jdk.internal.misc (Unsafe, VM, CDS, Signal), system properties and other
 // low-level natives.
 
-import { ARRAY_BASE_OFFSET, INITIALIZED, JArray, JClass, JMethod, JObject, STATIC_OFFSET_BASE, dataOf, setData } from "../runtime.ts";
+import { ARRAY_BASE_OFFSET, INITIALIZED, JArray, JClass, JMethod, JObject, STATIC_OFFSET_BASE, addField, casField, dataOf, readField, setData, swapField, writeField } from "../runtime.ts";
 import { JThread, JavaThrow, PendingThrow, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
@@ -122,9 +122,11 @@ export function unsafeGet(t: JThread, o: JObject | null, offset: bigint, k: stri
     if (sameKind(elem, k)) return o.a[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]];
     return arrayRead(o, off - ARRAY_BASE_OFFSET, k);
   }
-  const c = dataOf(o);
-  if (off >= STATIC_OFFSET_BASE && c instanceof JClass) return c.statics[off - STATIC_OFFSET_BASE];
-  return o.f[off];
+  if (off >= STATIC_OFFSET_BASE) {
+    const c = dataOf(o);
+    if (c instanceof JClass) return c.statics[off - STATIC_OFFSET_BASE];
+  }
+  return readField(o, off);
 }
 
 export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: string, v: any) {
@@ -140,12 +142,19 @@ export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: stri
     else arrayWrite(o, off - ARRAY_BASE_OFFSET, k, v);
     return;
   }
-  const c = dataOf(o);
-  if (off >= STATIC_OFFSET_BASE && c instanceof JClass) c.statics[off - STATIC_OFFSET_BASE] = v;
-  else o.f[off] = v;
+  const c = off >= STATIC_OFFSET_BASE ? dataOf(o) : undefined;
+  if (c instanceof JClass) c.statics[off - STATIC_OFFSET_BASE] = v;
+  else writeField(o, off, v);
+}
+
+// an instance field of an object, as against an array element, a static or memory
+function isInstanceField(o: JObject | null, off: number): o is JObject {
+  return o !== null && off < STATIC_OFFSET_BASE && !(o instanceof JArray);
 }
 
 function cas(t: JThread, o: JObject | null, off: bigint, k: string, expect: any, v: any): any {
+  const n = Number(off);
+  if (isInstanceField(o, n)) return casField(o, n, expect, v);
   const cur = unsafeGet(t, o, off, k);
   if (cur === expect) unsafePut(t, o, off, k, v);
   return cur;
@@ -211,12 +220,16 @@ for (const [name, k, desc] of [["Int", "I", "I"], ["Long", "J", "J"], ["Referenc
   }
   for (const suffix of ["", "Acquire", "Release"]) {
     intrinsics[`${U}getAndSet${name}${suffix}(Ljava/lang/Object;J${desc})${desc}`] = (t, [, o, off, x]) => {
+      const n = Number(off);
+      if (isInstanceField(o, n)) return swapField(o, n, x);
       const old = unsafeGet(t, o, off, k);
       unsafePut(t, o, off, k, x);
       return old;
     };
     if (k === "L") continue;
     intrinsics[`${U}getAndAdd${name}${suffix}(Ljava/lang/Object;J${desc})${desc}`] = (t, [, o, off, d]) => {
+      const n = Number(off);
+      if (isInstanceField(o, n)) return addField(o, n, d, k === "J");
       const old = unsafeGet(t, o, off, k);
       unsafePut(t, o, off, k, k === "I" ? (old + d) | 0 : BigInt.asIntN(64, old + d));
       return old;

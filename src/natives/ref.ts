@@ -6,7 +6,7 @@
 // finalizer is watched too: its wrapper is collected, and the Finalizer gets a
 // new wrapper over the same storage.
 
-import { INITIALIZED, MAX_HEAP, dataOf, freeHeap, hasMaxHeap, releasePins, setData, setHash, setReclaim, wrapperOver } from "../runtime.ts";
+import { INITIALIZED, MAX_HEAP, dataOf, fieldsOf, freeHeap, hasMaxHeap, releasePins, setData, setHash, setReclaim, wrapperOver } from "../runtime.ts";
 import { JObject } from "../runtime.ts";
 import type { JClass } from "../runtime.ts";
 import { Signal } from "../thread.ts";
@@ -18,11 +18,12 @@ import type { Natives } from "./util.ts";
 const R = "java/lang/ref/Reference";
 
 // What a finalizable object's new wrapper needs. It must not lead back to the
-// object: f is null once its fields are found to lead back to it (see forgetCycles).
+// object: st, the object that holds its fields, is null once they are found to
+// lead back to it (see forgetCycles).
 interface Fin {
   fin: JObject;
   cls: JClass;
-  f: any[] | null;
+  st: JObject | null;
   hash: number;
   x: any;
 }
@@ -159,12 +160,12 @@ function probe(s: RefState, done: () => void) {
 function resurrect(vm: JVM, s: RefState, h: Fin) {
   const fin = h.fin;
   if (!(dataOf(fin) instanceof WeakRef)) return;
-  if (h.f === null) {
+  if (h.st === null) {
     // nothing to finalize: the Finalizer thread unlinks it, and its finalize(null) fails quietly
     setData(fin, null);
     return addPending(s, fin);
   }
-  const o = wrapperOver(h.cls, h.f);
+  const o = wrapperOver(h.cls, h.st);
   setHash(o, h.hash);
   setData(o, h.x);
   setData(fin, null);
@@ -196,9 +197,9 @@ export function registerFinalizer(vm: JVM, obj: JObject) {
 // it had no finalizer: the fields of an object found on a cycle are dropped.
 const CHECK_EVERY = 2048, SCAN_PER_OBJECT = 2000, SCAN_WHILE_RUNNING = 20000, SCAN_AT_GC = 200000;
 
-function leadsBack(w: JObject, f: any[], budget: { left: number }): boolean {
+function leadsBack(w: JObject, st: JObject, budget: { left: number }): boolean {
   const seen = new Set<JObject>();
-  const todo: any[][] = [f];
+  const todo: any[][] = [fieldsOf(st)];
   let scanned = 0;
   while (todo.length) {
     for (const v of todo.pop()!) {
@@ -210,7 +211,7 @@ function leadsBack(w: JObject, f: any[], budget: { left: number }): boolean {
         budget.left -= scanned;
         return false;
       }
-      todo.push(v.f);
+      todo.push(fieldsOf(v));
       const a = (v as { a?: unknown }).a;
       if (Array.isArray(a)) todo.push(a);
     }
@@ -227,10 +228,10 @@ function forgetCycles(s: RefState, scan: number): boolean {
   let i = 0;
   for (; i < list.length && budget.left > 0; i++) {
     const h = list[i];
-    const fx = h.f !== null ? dataOf(h.fin) : undefined;
+    const fx = h.st !== null ? dataOf(h.fin) : undefined;
     const w = fx instanceof WeakRef ? fx.deref() : undefined;
     if (w === undefined) continue;
-    if (leadsBack(w, h.f!, budget)) h.f = null;
+    if (leadsBack(w, h.st!, budget)) h.st = null;
     else kept.push(h);
   }
   const released = i - kept.length;
@@ -244,7 +245,7 @@ export function releaseFinalizerCycles(vm: JVM) {
 
 function watchFinalizer(vm: JVM, s: RefState, fin: JObject, obj: JObject) {
   setData(fin, new WeakRef(obj));
-  const h: Fin = { fin, cls: obj.cls, f: obj.f, hash: vm.identityHash(obj), x: dataOf(obj) };
+  const h: Fin = { fin, cls: obj.cls, st: (obj as unknown as { st: JObject }).st, hash: vm.identityHash(obj), x: dataOf(obj) };
   s.fins.push(h);
   s.registry.register(obj, h, fin);
 }

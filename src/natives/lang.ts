@@ -4,7 +4,7 @@ import { isHidden } from "./stackwalk.ts";
 import { gcStats, javaHeap } from "./management.ts";
 import { assertionsEnabled } from "../assertions.ts";
 import { normalize } from "../fs.ts";
-import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, newArrayData, releasePins, dataOf, monitorOf, setData } from "../runtime.ts";
+import { ACC_INTERFACE, JArray, JClass, JObject, MAX_HEAP, dataOf, fieldsOf, monitorOf, newArrayData, releasePins, setData, setFields } from "../runtime.ts";
 import type { Monitor } from "../runtime.ts";
 import { canUnmount, dropOwned, unblockOnRelease } from "./continuation.ts";
 import { collect, registerFinalizer, releaseFinalizerCycles, releaseSoftReferences } from "./ref.ts";
@@ -200,7 +200,8 @@ export function cloneObject(t: JThread, o: JObject): JObject {
   if (!o.cls.allSupers().has(t.vm.loadBoot("java/lang/Cloneable")!)) {
     throw new PendingThrow("java/lang/CloneNotSupportedException", o.cls.javaName);
   }
-  const copy = new JObject(o.cls, o.f.slice());
+  const copy = new o.cls.ctor(o.cls);
+  setFields(copy, fieldsOf(o));
   setData(copy, dataOf(o));
   if (copy.cls.finalizable) registerFinalizer(t.vm, copy);
   return copy;
