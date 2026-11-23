@@ -136,8 +136,11 @@ const WARM_MIN_CLASSES = 200;
 
 const WOKEN_RUN = 16;
 
-// instructions a thread runs per turn
+// instructions a thread runs per turn, at most and at least
 const SLICE = 20000;
+const MIN_SLICE = 200;
+// a turn this long (ms) is a spin or a long computation
+const LONG_TURN = 0.05;
 
 export class JVM {
   readonly opts: JvmOptions;
@@ -164,6 +167,7 @@ export class JVM {
   // threads another thread woke in its turn: they run before the rotation, so a hand-off does not wait behind spinners
   private woken: JThread[] = [];
   private wokenStreak = 0;
+  private shortTurns = 0;
   private queued = new Set<JThread>();
   private scheduled = false;
   private hashSeed = 0x2545f491;
@@ -1109,12 +1113,32 @@ export class JVM {
         this.queued.delete(t);
         if (t.state !== RUNNABLE) continue;
         sched.thread = t;
-        spent += SLICE - runThread(t, SLICE);
+        const q = t.quantum || SLICE;
+        // only a thread that stayed runnable is timed, so hand-offs read no clock
+        const t0 = t.timed ? performance.now() : 0;
+        spent += q - runThread(t, q);
         if (t.unmounting !== null) unmountBlocked(t);
-        if (t.state === RUNNABLE && !this.queued.has(t)) {
-          this.queued.add(t);
-          this.runQueue.push(t);
+        if (t.state !== RUNNABLE) {
+          this.shortTurns++;
+          t.quantum = SLICE;
+          t.timed = false;
+        } else {
+          // a thread that runs long turns while others run short ones gets shorter turns
+          const now = performance.now();
+          const dt = now - t0;
+          const others = this.shortTurns !== t.shortSeen && (this.runQueue.length > 0 || this.woken.length > 0);
+          const long = t.timed && dt > LONG_TURN;
+          if (t.timed && q === SLICE && !long) this.shortTurns++;
+          t.quantum = !others ? SLICE : long ? Math.max(MIN_SLICE, q >> 1) : q;
+          t.timed = true;
+          if (!this.queued.has(t)) {
+            this.queued.add(t);
+            this.runQueue.push(t);
+          }
+          if (now > end) break;
+          spent = 0;
         }
+        t.shortSeen = this.shortTurns;
         if (sched.pause) break;
         if (spent >= SLICE) {
           if (performance.now() > end) break;
