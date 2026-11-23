@@ -175,6 +175,8 @@ export class JThread {
   // instructions of its next turn, and the VM's count of short turns when it last ran
   quantum = 0;
   shortSeen = 0;
+  // its last turn ended with it still runnable
+  timed = false;
   // wakes the thread early from sleep, park or wait, for interrupt/unpark
   wake: (() => void) | null = null;
   // set when the bottom frame finishes

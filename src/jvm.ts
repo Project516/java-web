@@ -1104,7 +1104,8 @@ export class JVM {
   private loop() {
     noteYield();
     const end = performance.now() + 20;
-    let clock = performance.now();
+    // instructions run since the clock was read: short turns of threads that hand off share one read
+    let spent = 0;
     try {
       while (this.exitCode === null) {
         const t = this.next();
@@ -1113,23 +1114,36 @@ export class JVM {
         if (t.state !== RUNNABLE) continue;
         sched.thread = t;
         const q = t.quantum || SLICE;
-        runThread(t, q);
+        // only a thread that stayed runnable is timed, so hand-offs read no clock
+        const t0 = t.timed ? performance.now() : 0;
+        spent += q - runThread(t, q);
         if (t.unmounting !== null) unmountBlocked(t);
-        const now = performance.now();
-        // a thread that runs long turns while others run short ones gets shorter turns
-        const dt = now - clock;
-        const others = this.shortTurns !== t.shortSeen && (this.runQueue.length > 0 || this.woken.length > 0);
-        if (t.state !== RUNNABLE || !others) t.quantum = SLICE;
-        else if (dt > LONG_TURN) t.quantum = Math.max(MIN_SLICE, q >> 1);
-        else t.quantum = q;
-        if (t.state !== RUNNABLE || (q === SLICE && dt <= LONG_TURN)) this.shortTurns++;
-        t.shortSeen = this.shortTurns;
-        clock = now;
-        if (t.state === RUNNABLE && !this.queued.has(t)) {
-          this.queued.add(t);
-          this.runQueue.push(t);
+        if (t.state !== RUNNABLE) {
+          this.shortTurns++;
+          t.quantum = SLICE;
+          t.timed = false;
+        } else {
+          // a thread that runs long turns while others run short ones gets shorter turns
+          const now = performance.now();
+          const dt = now - t0;
+          const others = this.shortTurns !== t.shortSeen && (this.runQueue.length > 0 || this.woken.length > 0);
+          const long = t.timed && dt > LONG_TURN;
+          if (t.timed && q === SLICE && !long) this.shortTurns++;
+          t.quantum = !others ? SLICE : long ? Math.max(MIN_SLICE, q >> 1) : q;
+          t.timed = true;
+          if (!this.queued.has(t)) {
+            this.queued.add(t);
+            this.runQueue.push(t);
+          }
+          if (now > end) break;
+          spent = 0;
         }
-        if (sched.pause || now > end) break;
+        t.shortSeen = this.shortTurns;
+        if (sched.pause) break;
+        if (spent >= SLICE) {
+          if (performance.now() > end) break;
+          spent = 0;
+        }
         sched.yieldNow = false;
       }
     } finally {
