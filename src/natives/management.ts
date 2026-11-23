@@ -4,7 +4,7 @@
 // collector. Heap usage is the JS heap's; collections are the explicit
 // System.gc() calls, which HotSpot counts as full collections.
 
-import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP } from "../runtime.ts";
+import { INITIALIZED, JArray, JClass, JObject, MAX_HEAP, dataOf, monitorOf } from "../runtime.ts";
 import type { JMethod } from "../runtime.ts";
 import {
   Frame, JThread, NativeFrame, PendingThrow, STATUS_BLOCKED, STATUS_NEW, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE,
@@ -206,7 +206,7 @@ function synchronizerOwner(vm: JVM, o: JObject): JObject | null {
 }
 
 function platformThread(o: JObject | null): JThread | null {
-  const x = o?.x;
+  const x = o ? dataOf(o) : undefined;
   return x instanceof JThread && x.state !== TERMINATED ? x : null;
 }
 
@@ -282,17 +282,17 @@ function lockedMonitors(t: JThread, frames: Shown[]): { o: JObject; depth: numbe
     if (!(f instanceof Frame)) return;
     const held: JObject[] = [];
     const locals: any[] = f.locals ?? [];
-    for (const v of locals) if (v instanceof JObject && v.mon?.owner === t) owned.add(v);
+    for (const v of locals) if (v instanceof JObject && monitorOf(v)?.owner === t) owned.add(v);
     if (locals.length) {
       const active = syncBlocks(f.m).filter((b) => b.start <= f.pc && f.pc < b.end);
       // a handler's own range is listed too, so one lock can appear twice
       const slots = [...new Set(active.sort((x, y) => y.start - x.start).map((b) => b.slot))];
       for (const slot of slots) {
         const v = locals[slot];
-        if (v instanceof JObject && v.mon?.owner === t) held.push(v);
+        if (v instanceof JObject && monitorOf(v)?.owner === t) held.push(v);
       }
     }
-    if (f.lock && !f.needLock && f.lock.mon?.owner === t) held.push(f.lock);
+    if (f.lock && !f.needLock && monitorOf(f.lock)?.owner === t) held.push(f.lock);
     for (const o of held) accounted.set(o, (accounted.get(o) ?? 0) + 1);
     byFrame.set(at, held);
   });
@@ -301,7 +301,7 @@ function lockedMonitors(t: JThread, frames: Shown[]): { o: JObject; depth: numbe
     for (const o of byFrame.get(fr.at) ?? []) out.push({ o, depth });
   });
   for (const o of owned) {
-    for (let n = o.mon!.count - (accounted.get(o) ?? 0); n > 0; n--) out.push({ o, depth: -1 });
+    for (let n = monitorOf(o)!.count - (accounted.get(o) ?? 0); n > 0; n--) out.push({ o, depth: -1 });
   }
   return out;
 }
@@ -326,7 +326,7 @@ function snapshot(vm: JVM, t: JThread, maxDepth: number): Snapshot {
     const o = t.waitingOn ?? t.pendingOn;
     if (o === null) status = STATUS_RUNNABLE;
     else {
-      const holder = o.mon?.owner ?? null;
+      const holder = monitorOf(o)?.owner ?? null;
       if (holder === null && status === STATUS_BLOCKED) status = STATUS_RUNNABLE;
       else {
         blocker = o;
@@ -429,7 +429,7 @@ function ownedSynchronizers(vm: JVM): Map<JObject, JObject[]> {
       if (Array.isArray(o.a)) for (const v of o.a) visit(v);
     } else for (const v of o.f) visit(v);
     // a class loader keeps the classes it defined
-    const x = o.x;
+    const x = dataOf(o);
     if (x instanceof JClass) visitClass(x);
     else if (x?.classes instanceof Map) for (const c of x.classes.values()) visitClass(c);
   }
@@ -486,7 +486,7 @@ function findDeadlocks(vm: JVM, synchronizers: boolean): JObject | null {
     while (cur && (mon || park)) {
       path.push(cur);
       if (mon) {
-        const owner = mon.mon?.owner ?? null;
+        const owner = monitorOf(mon)?.owner ?? null;
         if (owner !== null) cur = owner.state === TERMINATED ? null : owner;
       } else if (isSynchronizer(vm, park)) {
         cur = platformThread(synchronizerOwner(vm, park!));

@@ -1,9 +1,7 @@
 // jdk.internal.misc (Unsafe, VM, CDS, Signal), system properties and other
 // low-level natives.
 
-import {
-  ARRAY_BASE_OFFSET, INITIALIZED, JArray, JClass, JMethod, JObject, STATIC_OFFSET_BASE,
-} from "../runtime.ts";
+import { ARRAY_BASE_OFFSET, INITIALIZED, JArray, JClass, JMethod, JObject, STATIC_OFFSET_BASE, dataOf, setData } from "../runtime.ts";
 import { JThread, JavaThrow, PendingThrow, STATUS_PARKED, STATUS_PARKED_TIMED, STATUS_RUNNABLE } from "../thread.ts";
 import type { NativeGen } from "../thread.ts";
 import type { JVM } from "../jvm.ts";
@@ -24,10 +22,12 @@ export function indexScale(c: JClass): number {
 // A primitive array's DataView, kept in x (unused otherwise for arrays, and
 // not copied by clone).
 function view(a: JArray): DataView {
-  const v = a.x as DataView | undefined;
+  const v = dataOf(a) as DataView | undefined;
   if (v !== undefined) return v;
   const d = a.a as Int8Array;
-  return (a.x = new DataView(d.buffer, d.byteOffset, d.byteLength));
+  const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
+  setData(a, dv);
+  return dv;
 }
 
 // A byte[] access of another width, composed from bytes: a DataView per
@@ -122,7 +122,8 @@ export function unsafeGet(t: JThread, o: JObject | null, offset: bigint, k: stri
     if (sameKind(elem, k)) return o.a[(off - ARRAY_BASE_OFFSET) / WIDTH[elem]];
     return arrayRead(o, off - ARRAY_BASE_OFFSET, k);
   }
-  if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) return o.x.statics[off - STATIC_OFFSET_BASE];
+  const c = dataOf(o);
+  if (off >= STATIC_OFFSET_BASE && c instanceof JClass) return c.statics[off - STATIC_OFFSET_BASE];
   return o.f[off];
 }
 
@@ -139,7 +140,8 @@ export function unsafePut(t: JThread, o: JObject | null, offset: bigint, k: stri
     else arrayWrite(o, off - ARRAY_BASE_OFFSET, k, v);
     return;
   }
-  if (off >= STATIC_OFFSET_BASE && o.x instanceof JClass) o.x.statics[off - STATIC_OFFSET_BASE] = v;
+  const c = dataOf(o);
+  if (off >= STATIC_OFFSET_BASE && c instanceof JClass) c.statics[off - STATIC_OFFSET_BASE] = v;
   else o.f[off] = v;
 }
 
@@ -282,7 +284,7 @@ function setStatus(t: JThread, s: number) {
 Object.assign(unsafe, {
   [`${U}park(ZJ)V`]: (t: JThread, [, abs, time]: any[]) => park(t, abs === 1, time),
   [`${U}unpark(Ljava/lang/Object;)V`]: (t: JThread, [, obj]: any[]) => {
-    const jt = obj?.x as JThread | undefined;
+    const jt = obj ? (dataOf(obj) as JThread | undefined) : undefined;
     if (!(jt instanceof JThread)) return;
     jt.parkPermit = true;
     if (t.vm.state.get(`parked:${jt.id}`)) jt.wake?.();

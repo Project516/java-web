@@ -174,15 +174,51 @@ export class JMethod {
 export class JObject {
   cls: JClass;
   f: any[];
-  mon: Monitor | null = null;
-  hash = 0;
-  // VM-side data: the JClass of a Class mirror, the JThread of a Thread, ...
-  x: any = undefined;
+  // what most objects never need: null, the identity hash once taken, or a
+  // Monitor (which also holds the hash and the VM-side data)
+  s: number | Monitor | null = null;
   constructor(cls: JClass, f: any[]) {
     this.cls = cls;
     this.f = f;
     if (allocationCheck?.enabled) allocated(32);
   }
+}
+
+export function monitorOf(o: JObject): Monitor | null {
+  const s = o.s;
+  return typeof s === "object" ? s : null;
+}
+
+export function monitorFor(o: JObject): Monitor {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) return s;
+  const m = new Monitor();
+  if (s !== null) m.hash = s;
+  o.s = m;
+  return m;
+}
+
+export function hashOf(o: JObject): number {
+  const s = o.s;
+  return s === null ? 0 : typeof s === "number" ? s : s.hash;
+}
+
+export function setHash(o: JObject, h: number) {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) s.hash = h;
+  else o.s = h === 0 ? null : h;
+}
+
+// VM-side data: the JClass of a Class mirror, the JThread of a Thread, ...
+export function dataOf(o: JObject): any {
+  const s = o.s;
+  return typeof s === "object" && s !== null ? s.x : undefined;
+}
+
+export function setData(o: JObject, x: any) {
+  const s = o.s;
+  if (typeof s === "object" && s !== null) s.x = x;
+  else if (x !== undefined) monitorFor(o).x = x;
 }
 
 export type ArrayData =
@@ -233,6 +269,9 @@ export class Monitor {
   entry: (() => void)[] | null = null;
   // threads in wait(), woken by notify, with the entry count they gave up
   waiters: Waiter[] | null = null;
+  // the object's identity hash and VM-side data, kept here to cost the other objects nothing
+  hash = 0;
+  x: any = undefined;
 
   enqueue(wake: () => void) {
     (this.entry ??= []).push(wake);

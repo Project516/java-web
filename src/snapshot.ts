@@ -11,7 +11,7 @@ import { restorePending, restoreReference } from "./natives/ref.ts";
 import { MAX_HEAP } from "./runtime.ts";
 import type { WarmTrace } from "./fs.ts";
 import { reopenSnapshotFile, OpenFile, streams } from "./natives/io.ts";
-import { JArray, JClass, JField, JMethod, JObject, Monitor } from "./runtime.ts";
+import { JArray, JClass, JField, JMethod, JObject, Monitor, dataOf, hashOf, monitorOf, setData, setHash } from "./runtime.ts";
 import { restoreJit } from "./jit.ts";
 import { Frame, JThread, NativeFrame, STATUS_RUNNABLE, Signal } from "./thread.ts";
 import type { NativeGen } from "./thread.ts";
@@ -216,7 +216,7 @@ class Encoder {
   }
 
   private isLeaf(v: JObject): boolean {
-    if (v.mon || v.x !== undefined) return false;
+    if (monitorOf(v) !== null) return false;
     const list = v instanceof JArray ? v.a : v.f;
     if (!Array.isArray(list)) return true;
     for (const e of list) if (e !== null && (typeof e === "function" || (typeof e === "object" && !ArrayBuffer.isView(e) && !(e instanceof ArrayBuffer)))) return false;
@@ -229,7 +229,7 @@ class Encoder {
     let t: any;
     if (v instanceof JObject) {
       const array = v instanceof JArray;
-      t = { $: array ? "A" : "O", c: this.cls(v.cls, path), h: v.hash };
+      t = { $: array ? "A" : "O", c: this.cls(v.cls, path), h: hashOf(v) };
       this.work.push(() => {
         if (array && !Array.isArray(v.a)) t.a = v.a;
         else {
@@ -237,8 +237,10 @@ class Encoder {
           t[array ? "a" : "f"] = list;
           if (r) t.r = r;
         }
-        if (v.mon) t.n = this.child(v.mon, path, next);
-        if (v.x !== undefined) t.x = v.x instanceof WeakRef ? { $: "W", v: this.child(v.x.deref() ?? null, path, next) } : this.child(v.x, path, next);
+        const mon = monitorOf(v);
+        if (mon && (mon.owner !== null || mon.count > 0 || mon.waiters?.length)) t.n = this.child(mon, path, next);
+        const x = dataOf(v);
+        if (x !== undefined) t.x = x instanceof WeakRef ? { $: "W", v: this.child(x.deref() ?? null, path, next) } : this.child(x, path, next);
       });
     } else if (v instanceof JClass) t = { $: "C", i: this.cls(v, path) };
     else if (v instanceof JMethod) t = { $: "M", c: this.cls(v.cls, path), k: v.key };
@@ -312,7 +314,7 @@ class Decoder {
         const cls = this.classes[v.c];
         if (!cls) throw new Error(`snapshot: object of class #${v.c} before its class`);
         o = v.$ === "A" ? new JArray(cls, v.a) : new JObject(cls, v.f);
-        o.hash = v.h;
+        if (v.h) setHash(o, v.h);
         break;
       }
       case "C": return this.classes[v.i];
@@ -355,10 +357,14 @@ class Decoder {
     }
     switch (v.$) {
       case "O": case "A":
-        if (v.n) o.mon = this.dec(v.n);
+        if (v.n) {
+          const m: Monitor = this.dec(v.n);
+          m.hash = hashOf(o);
+          o.s = m;
+        }
         if (v.x !== undefined) {
           if (v.x?.$ === "W") this.references.push([o, v.x.v]);
-          else o.x = this.dec(v.x);
+          else setData(o, this.dec(v.x));
         }
         break;
       case "m":
@@ -464,7 +470,7 @@ export function dumpVM(vm: JVM, main: JThread, key: string, library = false): Sn
       if (key === REF_WAIT) return { $: "native", m: e.enc(f.m, p) };
       if (key === WAIT0) {
         const o = (t.frames[i - 1] as Frame).locals[0] as JObject;
-        const w = o.mon?.waiters?.find((x) => x.t === t);
+        const w = monitorOf(o)?.waiters?.find((x) => x.t === t);
         if (!w) throw new Error(`snapshot: ${p} in wait0 is not a waiter`);
         return { $: "rewait", m: e.enc(f.m, p), o: e.enc(o, p), n: w.count };
       }
@@ -499,7 +505,7 @@ function snapshotFds(value: unknown): unknown {
 
 // A waiter woken as if spuriously: takes its monitor back with the count it gave up.
 function* rewait(t: JThread, o: JObject, count: number): NativeGen {
-  const mon = o.mon!;
+  const mon = monitorOf(o)!;
   t.waitingOn = o;
   while (mon.owner !== null) yield t.block(new Signal((r) => mon.enqueue(r)));
   mon.owner = t;
@@ -574,7 +580,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
 
   const mainRec = image.threads[0];
   main.obj = d.dec(mainRec.obj);
-  main.obj!.x = main;
+  setData(main.obj!, main);
   if (mainRec.frames) {
     for (const f of mainRec.frames as any[]) {
       if (f.$ === "library") {
@@ -620,7 +626,7 @@ export function restoreVM(vm: JVM, image: SnapshotImage, main: JThread) {
   for (const [o, referent] of d.references) {
     const r = d.dec(referent);
     if (r) restoreReference(vm, o, r);
-    else o.x = null;
+    else setData(o, null);
   }
   d.flush();
   for (const t of others) vm.startThread(t);

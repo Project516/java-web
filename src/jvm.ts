@@ -11,7 +11,8 @@ import { JImage } from "./jimage.ts";
 import {
   ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_NATIVE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
   ACC_STATIC, ACC_SUPER, ACC_VARARGS, ERRONEOUS, INITIALIZED, INITIALIZING, JArray, JClass, JField,
-  JMethod, JObject, LINKED, Monitor, defaultValue, dropsWithLoader, newArrayData, noteYield, sched,
+  JMethod, JObject, LINKED, Monitor, dataOf, defaultValue, dropsWithLoader, hashOf, monitorFor, monitorOf, newArrayData, noteYield,
+  sched, setData, setHash,
 } from "./runtime.ts";
 import type { CallSite, NativeFn } from "./runtime.ts";
 import {
@@ -262,7 +263,9 @@ export class JVM {
   }
 
   loaderData(loader: JObject): LoaderData {
-    return (loader.x ??= { classes: new Map(), modules: new Map() });
+    let d = dataOf(loader);
+    if (d === undefined) setData(loader, (d = { classes: new Map(), modules: new Map() }));
+    return d;
   }
 
   // A hidden class defined STRONG lives as long as its loader; the others, as long as they are reachable.
@@ -442,7 +445,7 @@ export class JVM {
       throw e;
     }
     if (!mirror) throw new PendingThrow("java/lang/NoClassDefFoundError", name);
-    const c = mirror.x as JClass;
+    const c = dataOf(mirror) as JClass;
     this.loaderClasses(loader).set(name, c);
     return c;
   }
@@ -724,13 +727,14 @@ export class JVM {
   }
 
   identityHash(o: JObject): number {
-    if (o.hash === 0) {
+    let h = hashOf(o);
+    if (h === 0) {
       let x = this.hashSeed;
       x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
       this.hashSeed = x;
-      o.hash = (x & 0x7fffffff) || 1;
+      setHash(o, h = (x & 0x7fffffff) || 1);
     }
-    return o.hash;
+    return h;
   }
 
   isInstance(o: JObject, name: string): boolean {
@@ -741,7 +745,7 @@ export class JVM {
   mirror(c: JClass): JObject {
     if (c.mirror) return c.mirror;
     const o = this.newObject(this.loadBootOrFail("java/lang/Class"));
-    o.x = c;
+    setData(o, c);
     c.mirror = o;
     this.setField(o, "java/lang/Class", "classLoader", c.loader);
     if (c.component) this.setField(o, "java/lang/Class", "componentType", this.mirror(c.component));
@@ -752,7 +756,7 @@ export class JVM {
   }
 
   classOf(mirror: JObject): JClass {
-    return mirror.x as JClass;
+    return dataOf(mirror) as JClass;
   }
 
   // Class.getModifiers: inner class flags win over the class access flags.
@@ -782,16 +786,21 @@ export class JVM {
     return this.getField(c.loader, "java/lang/ClassLoader", "unnamedModule");
   }
 
+  private baseVersion(): string | undefined {
+    const base = this.bootModules.get("java.base");
+    return base ? dataOf(base)?.version : undefined;
+  }
+
   // ModuleEntry::should_show_version: the JDK's own modules show no version.
   shownVersion(mod: JObject): string | null {
-    const version = mod.x?.version as string | null | undefined;
+    const version = dataOf(mod)?.version as string | null | undefined;
     if (!version || !this.getField(mod, "java/lang/Module", "name")) return null;
-    const jrt = (mod.x.location as string | null) ?? "";
+    const jrt = (dataOf(mod).location as string | null) ?? "";
     const loader = this.getField(mod, "java/lang/Module", "loader") as JObject | null;
     const platform = loader?.cls.name === "jdk/internal/loader/ClassLoaders$PlatformClassLoader";
     const builtin = !loader || platform || loader.cls.name === "jdk/internal/loader/ClassLoaders$AppClassLoader";
     if ((!loader || platform) && jrt.startsWith("jrt:/java.")) return null;
-    if (builtin && jrt.startsWith("jrt:/jdk.") && version === this.bootModules.get("java.base")?.x?.version) return null;
+    if (builtin && jrt.startsWith("jrt:/jdk.") && version === this.baseVersion()) return null;
     return version;
   }
 
@@ -1009,7 +1018,7 @@ export class JVM {
       this.setThreadStatus(t, STATUS_BLOCKED);
     }
     t.state = WAITING;
-    o.mon!.enqueue(() => this.wake(t, true));
+    monitorOf(o)!.enqueue(() => this.wake(t, true));
     return false;
   }
 
@@ -1021,7 +1030,7 @@ export class JVM {
 
   // Takes o's monitor if that needs no waiting.
   tryMonitorEnter(t: JThread, o: JObject): boolean {
-    const mon = (o.mon ??= new Monitor());
+    const mon = monitorFor(o);
     if (mon.owner === null) {
       mon.owner = t;
       mon.count = 1;
@@ -1036,7 +1045,7 @@ export class JVM {
   }
 
   monitorExit(t: JThread, o: JObject) {
-    const mon = o.mon;
+    const mon = monitorOf(o);
     if (!mon || mon.owner !== t) throw new PendingThrow("java/lang/IllegalMonitorStateException");
     if (--mon.count === 0) {
       if (t.mounted !== null) dropOwned(t, o);
@@ -1178,7 +1187,7 @@ export class JVM {
   javaThread(obj: JObject): JThread {
     const t = new JThread(this);
     t.obj = obj;
-    obj.x = t;
+    setData(obj, t);
     const vm = this;
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     t.daemon = this.getField(holder, "java/lang/Thread$FieldHolder", "daemon") === 1;
@@ -1213,7 +1222,7 @@ export class JVM {
     // Thread.join waits on the thread object, checking isAlive() under its
     // monitor. Take the monitor first, as HotSpot's ensure_join does, so a
     // joiner between isAlive() and wait() cannot miss the wakeup.
-    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => obj.mon!.enqueue(r)));
+    while (!this.tryMonitorEnter(t, obj)) yield t.block(new Signal((r) => monitorOf(obj)!.enqueue(r)));
     const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;
     this.setField(holder, "java/lang/Thread$FieldHolder", "threadStatus", STATUS_TERMINATED);
     this.setField(obj, "java/lang/Thread", "eetop", 0n);
@@ -1222,7 +1231,7 @@ export class JVM {
   }
 
   notifyAll(o: JObject) {
-    const mon = o.mon;
+    const mon = monitorOf(o);
     if (!mon) return;
     const w = mon.waiters;
     if (w === null) return;
@@ -1364,7 +1373,7 @@ export class JVM {
       const thread = boot("java/lang/Thread");
       const obj = this.newObject(thread);
       t.obj = obj;
-      obj.x = t;
+      setData(obj, t);
       this.setField(obj, "java/lang/Thread", "eetop", 1n);
       yield t.call(thread.methodMap.get("<init>(Ljava/lang/ThreadGroup;Ljava/lang/String;)V")!, obj, mainGroup, this.str("main"));
       const holder = this.getField(obj, "java/lang/Thread", "holder") as JObject;

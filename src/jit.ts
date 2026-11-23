@@ -15,9 +15,7 @@
 // interpreted call.
 
 import { cpB, cpTag, cpValue, Tag, utf8 } from "./classfile.ts";
-import {
-  ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc, pin,
-} from "./runtime.ts";
+import { ACC_FINAL, INITIALIZED, JArray, JClass, JField, JMethod, JObject, isWide, longToFloat, newArrayData, parseMethodDesc, pin, dataOf } from "./runtime.ts";
 import { memberTarget } from "./natives/invoke.ts";
 import { concatStrings } from "./natives/strings.ts";
 import { Frame, JavaThrow, NativeFrame, PendingThrow, fromNative } from "./thread.ts";
@@ -76,7 +74,7 @@ export function restoreJit(vm: JVM, m: JMethod, code: SavedJit) {
 
 // A constant of compiled code that holds a class another loader can drop.
 function namesUnloadable(v: unknown, caller: JClass): boolean {
-  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (v.x instanceof JClass ? v.x : v.cls) : null;
+  const c = v instanceof JClass ? v : v instanceof JMethod || v instanceof JField ? v.cls : v instanceof JObject ? (dataOf(v) instanceof JClass ? dataOf(v) : v.cls) : null;
   return c !== null && c !== caller && c.unloadable && (c.hidden || c.loader !== caller.loader);
 }
 
@@ -1088,11 +1086,12 @@ function insnCode(g: Gen, b: Body, pc: number) {
     }
     case 0xc2:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)np(${pc});if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}`);
+      // an idle or own monitor is taken inline, so the object's shape is seen by this site alone
+      emit(`if(${top()}===null)np(${pc});{const mo=${top()}.s;if(mo!==null&&typeof mo==="object"&&mo.owner===null&&t.mounted===null&&!t.blockedOnMonitor){mo.owner=t;mo.count=1}else if(mo!==null&&typeof mo==="object"&&mo.owner===t)mo.count++;else if(!vm.monitorEnter(t,${top()}))${g.exit(pc, d, EXIT_SUSPEND)}}`);
       break;
     case 0xc3:
       if (region) throw new NoInline();
-      emit(`if(${top()}===null)np(${pc});vm.monitorExit(t,${top()});`);
+      emit(`if(${top()}===null)np(${pc});{const mo=${top()}.s;if(mo!==null&&typeof mo==="object"&&mo.owner===t){if(mo.count>1)mo.count--;else if(mo.entry===null&&t.mounted===null){mo.owner=null;mo.count=0}else vm.monitorExit(t,${top()})}else vm.monitorExit(t,${top()})}`);
       break;
     case 0xc4: {
       const wop = c[pc + 1], i = u16(c, pc + 2);

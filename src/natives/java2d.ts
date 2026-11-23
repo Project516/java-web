@@ -3,7 +3,7 @@
 // .registerNativeLoops). Surface types without loops here use the JDK's
 // pure Java general loops, as HotSpot does for types it has no loops for.
 
-import { INITIALIZED } from "../runtime.ts";
+import { INITIALIZED, setData } from "../runtime.ts";
 import type { JArray, JMethod, JObject } from "../runtime.ts";
 import type { JVM } from "../jvm.ts";
 import { PendingThrow } from "../thread.ts";
@@ -397,7 +397,7 @@ const surfaceNatives: Natives = {
     s.lut = lut;
     s.lutSize = lutSize;
     s.icm = icm;
-    self.x = s;
+    setData(self, s);
   },
   "sun/java2d/SurfaceData.isOpaqueGray"(t, [icm]) {
     return icm === null ? 0 : t.vm.getField(icm, "java/awt/image/IndexColorModel", "allgrayopaque");

@@ -6,7 +6,7 @@
 // finalizer is watched too: its wrapper is collected, and the Finalizer gets a
 // new wrapper over the same storage.
 
-import { INITIALIZED, MAX_HEAP, freeHeap, hasMaxHeap, releasePins, setReclaim, wrapperOver } from "../runtime.ts";
+import { INITIALIZED, MAX_HEAP, dataOf, freeHeap, hasMaxHeap, releasePins, setData, setHash, setReclaim, wrapperOver } from "../runtime.ts";
 import { JObject } from "../runtime.ts";
 import type { JClass } from "../runtime.ts";
 import { Signal } from "../thread.ts";
@@ -61,8 +61,8 @@ function refs(vm: JVM): RefState {
         if (typeof held === "function") return held();
         if ("cls" in held) return resurrect(vm, s!, held);
         const ref = held.deref();
-        if (!ref || !(ref.x instanceof WeakRef)) return;
-        ref.x = null;
+        if (!ref || !(dataOf(ref) instanceof WeakRef)) return;
+        setData(ref, null);
         addPending(s!, ref);
       }),
       weak: vm.loadBoot("java/lang/ref/WeakReference")!,
@@ -88,24 +88,25 @@ function addPending(s: RefState, ref: JObject) {
 }
 
 function referent(t: JThread, r: JObject): JObject | null {
-  if (r.x instanceof WeakRef) return r.x.deref() ?? null;
+  const x = dataOf(r);
+  if (x instanceof WeakRef) return x.deref() ?? null;
   return t.vm.getField(r, R, "referent");
 }
 
 function clear(t: JThread, r: JObject) {
-  if (r.x instanceof WeakRef) {
+  if (dataOf(r) instanceof WeakRef) {
     const s = refs(t.vm);
     s.registry.unregister(r);
     s.softs.delete(r);
   }
-  r.x = null;
+  setData(r, null);
   t.vm.setField(r, R, "referent", null);
 }
 
 // A weak, soft or phantom reference to obj; a reference with a queue is
 // enqueued when obj is collected.
 function watch(s: RefState, self: JObject, obj: JObject, queued: boolean) {
-  self.x = new WeakRef(obj);
+  setData(self, new WeakRef(obj));
   if (self.cls.isSubclassOf(s.soft)) {
     s.softs.set(self, obj);
     s.softCount++;
@@ -157,16 +158,16 @@ function probe(s: RefState, done: () => void) {
 // storage, and the Reference Handler passes it on to finalize().
 function resurrect(vm: JVM, s: RefState, h: Fin) {
   const fin = h.fin;
-  if (!(fin.x instanceof WeakRef)) return;
+  if (!(dataOf(fin) instanceof WeakRef)) return;
   if (h.f === null) {
     // nothing to finalize: the Finalizer thread unlinks it, and its finalize(null) fails quietly
-    fin.x = null;
+    setData(fin, null);
     return addPending(s, fin);
   }
   const o = wrapperOver(h.cls, h.f);
-  o.hash = h.hash;
-  o.x = h.x;
-  fin.x = null;
+  setHash(o, h.hash);
+  setData(o, h.x);
+  setData(fin, null);
   vm.setField(fin, R, "referent", o);
   addPending(s, fin);
 }
@@ -226,7 +227,8 @@ function forgetCycles(s: RefState, scan: number): boolean {
   let i = 0;
   for (; i < list.length && budget.left > 0; i++) {
     const h = list[i];
-    const w = h.f !== null && h.fin.x instanceof WeakRef ? h.fin.x.deref() : undefined;
+    const fx = h.f !== null ? dataOf(h.fin) : undefined;
+    const w = fx instanceof WeakRef ? fx.deref() : undefined;
     if (w === undefined) continue;
     if (leadsBack(w, h.f!, budget)) h.f = null;
     else kept.push(h);
@@ -241,8 +243,8 @@ export function releaseFinalizerCycles(vm: JVM) {
 }
 
 function watchFinalizer(vm: JVM, s: RefState, fin: JObject, obj: JObject) {
-  fin.x = new WeakRef(obj);
-  const h: Fin = { fin, cls: obj.cls, f: obj.f, hash: vm.identityHash(obj), x: obj.x };
+  setData(fin, new WeakRef(obj));
+  const h: Fin = { fin, cls: obj.cls, f: obj.f, hash: vm.identityHash(obj), x: dataOf(obj) };
   s.fins.push(h);
   s.registry.register(obj, h, fin);
 }
