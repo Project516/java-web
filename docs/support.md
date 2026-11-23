@@ -142,8 +142,9 @@ Locales other than English need `cheerpjInit({ localeData: true })`, or
 - TCP, UDP, IPv4 multicast, Unix domain sockets and `Pipe` work in both. Under
   Node a Unix domain socket is a file on the host; in the browser it is a file
   in the virtual file system.
-- IPv4 only. Not supported: IPv6, asynchronous channels
-  (`AsynchronousSocketChannel`), SCTP, ICMP (`isReachable` is true for the
+- Asynchronous channels (`AsynchronousSocketChannel`,
+  `AsynchronousServerSocketChannel`, `AsynchronousFileChannel`) work under Node.
+- IPv4 only. Not supported: IPv6, SCTP, ICMP (`isReachable` is true for the
   host's own addresses only) and inherited channels.
 - `jdk.net` is in the image. Its socket options (TCP keep-alive time, interval
   and probes, quick ack, don't fragment) keep their values on the socket and do
