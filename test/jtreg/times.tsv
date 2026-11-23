@@ -4,9 +4,12 @@
 234175	java/util/zip/ZipFile/ZipFileSharedSourceTest.java
 188076	java/util/concurrent/tck/JSR166TestCase.java#2
 176493	java/util/UUID/UUIDTest.java
+168507	java/util/Random/RandomCanaryPi.java
 167240	java/security/SecureRandom/NoSync.java
 166800	java/net/httpclient/ProxyAuthDisabledSchemes.java
 158748	java/io/File/DeleteOnExitNPE.java
+148965	java/net/httpclient/ResponsePublisher.java
+144192	java/util/concurrent/forkjoin/Integrate.java
 142894	java/lang/String/StringRepeat.java#2
 142146	java/util/jar/JarFile/mrjar/MultiReleaseJarHttpProperties.java
 139027	java/lang/Float/Binary16Conversion.java
@@ -15,9 +18,12 @@
 135659	java/net/httpclient/CancelStreamedBodyTest.java
 134689	java/util/jar/JarFile/mrjar/MultiReleaseJarProperties.java
 132107	java/nio/channels/Channels/TransferTo2.java
+130429	java/security/MessageDigest/TestSameLength.java
 127615	java/net/httpclient/CancelRequestTest.java
 124229	java/net/httpclient/HttpSlowServerTest.java
+120501	java/net/httpclient/SpecialHeadersTest.java
 119796	java/lang/invoke/RicochetTest.java
+119712	java/util/Collections/RotateHuge.java
 117846	java/net/URLClassLoader/RemoveJar.java
 116709	java/lang/invoke/MethodHandles/CatchExceptionTest.java
 116586	java/io/SequenceInputStream/TransferTo.java
@@ -27,12 +33,14 @@
 110359	java/util/concurrent/tck/JSR166TestCase.java
 106034	java/net/httpclient/ForbiddenHeadTest.java
 104994	java/net/httpclient/StreamingBody.java
+104771	java/security/Provider/SecurityProviderModularTest.java
 104174	java/net/httpclient/ThrowingSubscribersAsString.java
 104080	java/lang/invoke/VarHandles/VarHandleTestMethodHandleAccessChar.java
 103755	java/util/NavigableMap/LockStep.java
 103627	java/net/httpclient/DependentActionsTest.java
 103079	java/net/httpclient/InvalidSubscriptionRequest.java
 102717	java/lang/Thread/virtual/stress/LotsOfUncontendedMonitorEnter.java
+102506	java/beans/Introspector/MethodOrderException.java
 102181	java/net/httpclient/AsFileDownloadTest.java
 100601	java/awt/geom/Path2D/UnitTest.java
 99579	java/lang/Thread/virtual/stress/PingPong.java
@@ -62,6 +70,7 @@
 83015	java/net/httpclient/ThrowingPublishersInRequest.java
 82830	java/net/httpclient/ThrowingPublishersInSubscribe.java
 82687	java/net/httpclient/ISO_8859_1_Test.java
+82332	jdk/nio/zipfs/ZipFSOutputStreamTest.java
 82166	java/util/Formatter/Padding.java
 80934	java/net/httpclient/EncodedCharsInURI.java
 80908	java/util/Random/RandomTestChiSquared.java
@@ -166,6 +175,7 @@
 49805	javax/crypto/Cipher/TestCipherMode.java
 49695	java/lang/Thread/virtual/stress/LotsOfUncontendedMonitorEnter.java#3
 49061	java/lang/Thread/virtual/stress/LotsOfUncontendedMonitorEnter.java#2
+48907	java/net/vthread/HttpALot.java
 48147	java/lang/ClassLoader/getResource/GetResource.java
 48127	java/nio/channels/Selector/LotsOfInterrupts.java#2
 47912	java/net/InetAddress/HostsFileOrderingTest.java
@@ -295,6 +305,7 @@
 25335	java/net/URLPermission/URLTest.java
 25086	java/text/Format/ListFormat/TestListFormat.java
 24901	java/net/MulticastSocket/IPMulticastIF.java
+24809	java/nio/channels/AsynchronousSocketChannel/Basic.java
 24773	java/util/Locale/LocaleProvidersTimeZone.java
 24767	java/lang/System/LoggerFinder/internal/backend/LoggerFinderBackendTest.java
 24757	java/net/httpclient/SplitResponse.java
@@ -651,8 +662,11 @@
 10857	java/net/PortUnreachableException/Concurrent.java
 10848	java/text/Format/DecimalFormat/LargeExponentsTest.java
 10845	java/util/concurrent/ExecutorService/SubmitTest.java
+10839	java/net/httpclient/ConnectTimeoutTest.java#3
 10833	java/lang/ScopedValue/ScopedValueAPI.java
+10825	java/net/httpclient/ConnectTimeoutTest.java
 10821	java/util/logging/LoggingDeadlock3.java
+10818	java/net/httpclient/ConnectTimeoutTest.java#4
 10817	java/lang/invoke/condy/CondyBSMValidationTest.java
 10764	java/lang/String/CompactString/CompareToIgnoreCase.java
 10756	javax/crypto/KEM/RSA_KEM.java
@@ -677,6 +691,7 @@
 10594	java/lang/String/CompactString/ToUpperCase.java
 10560	java/net/httpclient/http2/IdlePooledConnectionTest.java
 10547	java/lang/String/CompactString/SerializationTest.java
+10541	java/net/httpclient/ConnectTimeoutTest.java#2
 10540	java/lang/Thread/virtual/stress/ParkALot.java
 10528	java/io/FileInputStream/TransferTo.java
 10526	java/net/SocketOption/CachedImplOptions.java
@@ -792,10 +807,12 @@
 8901	java/text/Format/CompactNumberFormat/TestParseBigDecimal.java
 8898	java/lang/Thread/SleepWithDuration.java
 8886	java/beans/XMLEncoder/javax_swing_DefaultCellEditor.java
+8873	java/util/logging/LogManager/Configuration/TestConfigurationLock.java
 8864	java/beans/XMLEncoder/javax_swing_Box_Filler.java
 8837	java/beans/PropertyEditor/TestFloatClassNull.java
 8832	java/beans/XMLEncoder/Test4631471.java
 8828	javax/crypto/Cipher/ByteBuffers.java
+8827	java/nio/channels/vthread/BlockingChannelOps.java#2
 8825	java/text/Format/NumberFormat/Bug4208135.java
 8812	java/util/prefs/CheckUserPrefsStorage.java
 8811	java/nio/channels/Selector/WakeupNow.java
@@ -907,6 +924,7 @@
 7912	java/util/Collection/CollectionDefaults.java
 7904	java/text/Format/MessageFormat/TemporalSubFormats.java
 7894	java/lang/Thread/virtual/Reflection.java
+7882	java/lang/invoke/lambda/LambdaAccessControlDoPrivilegedTest.java
 7880	java/net/httpclient/BufferingSubscriberErrorCompleteTest.java
 7873	java/lang/reflect/Field/NegativeTest.java
 7847	java/lang/String/RegionMatches.java
@@ -1509,6 +1527,7 @@
 5330	javax/crypto/CipherSpi/TestGCMWithByteBuffer.java
 5330	java/util/Locale/MatchEmptyWeightCorrectly.java
 5326	java/util/zip/ZipFile/ReleaseInflater.java
+5326	java/util/logging/TestLoggerBundleSync.java
 5325	java/io/Reader/Skip.java
 5320	java/util/zip/ZipOutputStream/CloseWrappedStream.java
 5318	java/util/Locale/CaseCheckVariant.java
@@ -1545,6 +1564,7 @@
 5248	java/lang/Package/GetPackages.java
 5247	javax/xml/jaxp/parsers/8024707/XSLT.java
 5244	java/nio/channels/DatagramChannel/EmptyBuffer.java
+5242	java/util/logging/TestLogConfigurationDeadLockWithConf.java
 5241	java/lang/management/CompositeData/ThreadInfoCompositeData.java
 5239	java/util/Properties/InitialCapacity.java
 5237	java/util/logging/LoggerSupplierAPIsTest.java
@@ -1634,6 +1654,7 @@
 4948	java/security/KeyStore/PKCS12/MetadataEmptyTest.java
 4946	java/lang/invoke/MethodHandles/TestDropReturn.java
 4944	java/io/Serializable/skipWriteObject/Write.java
+4943	java/util/logging/TestLogConfigurationDeadLock.java
 4941	java/io/Serializable/resolveClass/deserializeButton/DeserializeButtonTest.java
 4938	java/time/test/java/time/TestLocalDateTime.java
 4938	java/beans/XMLEncoder/Test6176120.java
@@ -1756,6 +1777,7 @@
 4661	java/io/InputStream/ReadParams.java
 4659	java/beans/XMLEncoder/Test5023552.java
 4654	java/beans/XMLEncoder/Test5023550.java
+4654	java/nio/channels/vthread/BlockingChannelOps.java#3
 4653	java/beans/XMLEncoder/java_util_Collections_EmptySet.java
 4652	javax/crypto/EncryptedPrivateKeyInfo/GetAlgName.java
 4651	java/net/Socket/asyncClose/Race.java
@@ -1855,6 +1877,7 @@
 4423	java/util/Calendar/Bug8152077.java
 4409	java/text/Format/DateFormat/Bug8139572.java
 4409	java/beans/XMLEncoder/java_awt_MenuShortcut.java
+4409	java/nio/channels/vthread/BlockingChannelOps.java
 4408	java/util/prefs/RemoveNullKeyCheck.java
 4404	javax/crypto/NullCipher/TestNPE.java
 4404	java/security/SecureRandom/GetInstanceTest.java
@@ -2222,6 +2245,7 @@
 3511	java/util/logging/LogManager/Configuration/rootLoggerHandlers/RootLoggerHandlers.java
 3508	java/util/logging/Logger/getLogger/TestLogger.java
 3507	java/util/Collection/IteratorAtEnd.java
+3507	java/nio/Buffer/LimitDirectMemoryNegativeTest.java
 3505	java/net/InetAddress/IPv4Formats.java
 3502	java/util/ResourceBundle/Bug6190861.java
 3502	java/net/ProxySelector/B8035158.java
@@ -3914,6 +3938,7 @@
 1334	java/util/Properties/CloseXMLStream.java
 1330	java/util/LinkedList/Clone.java
 1328	java/util/zip/TestCRC32.java
+1326	java/nio/channels/AsynchronousServerSocketChannel/Basic.java
 1325	java/util/Vector/CopyInto.java
 1325	java/io/InputStream/Skip.java
 1321	java/util/EnumSet/SmallEnumIteratorRemoveResilience.java
@@ -3931,6 +3956,7 @@
 1297	java/io/PipedOutputStream/ClosedWrite.java
 1292	java/net/URLClassLoader/URLParsing.java
 1291	java/util/Locale/ExtensionsTest.java
+1291	java/io/ByteArrayOutputStream/WriteToReleasesCarrier.java
 1290	java/net/CookieHandler/NullUriCookieTest.java
 1288	java/lang/Class/getMethods/NonPublicStaticInitializer.java
 1287	java/util/zip/ZipInputStream/Skip.java
@@ -4017,6 +4043,7 @@
 1067	java/lang/Throwable/OverrideFillInStackTrace.java
 1054	java/lang/annotation/AnnotationTypeMismatchException/EnumTypeMismatchTest.java
 1052	java/util/Timer/NameConstructors.java
+1050	java/nio/channels/Selector/RegisterDuringSelect.java
 1046	java/util/zip/ZipEntry/Clone.java
 1033	java/util/regex/NamedGroupsTests.java
 1031	java/nio/channels/FileChannel/directio/WriteDirect.java
@@ -4029,6 +4056,7 @@
 980	java/net/SocketPermission/Equals.java
 970	java/text/AttributedString/TestAttributedStringCtor.java
 969	java/security/spec/RC2ParameterSpec/InvalidArrayIndex.java
+966	java/nio/channels/Selector/SelectAndClose.java
 959	java/io/PushbackInputStream/Skip.java
 950	java/security/BasicPermission/NullOrEmptyName.java
 948	java/nio/file/attribute/AclEntry/EmptySet.java

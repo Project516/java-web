@@ -10,6 +10,7 @@ java/beans/Beans/TypoInBeanDescription.java
 java/beans/EventHandler/Test6788531.java
 java/beans/Introspector/7064279/Test7064279.java
 java/beans/Introspector/8159696/UnloadClassBeanInfo.java
+java/beans/Introspector/MethodOrderException.java
 java/beans/Introspector/Test4948761.java
 java/beans/Introspector/Test5102804.java
 java/beans/Introspector/Test8027905.java
@@ -36,6 +37,7 @@ java/beans/beancontext/BeanContextSupport/AddRemove.java
 java/beans/beancontext/Test4328406.java
 java/io/BufferedInputStream/TransferToTrusted.java
 java/io/ByteArrayInputStream/ChunkedTransferTo.java
+java/io/ByteArrayOutputStream/WriteToReleasesCarrier.java
 java/io/Console/RedirectTest.java
 java/io/DataInputStream/OpsAfterClose.java
 java/io/File/AccessDenied.java
@@ -380,6 +382,7 @@ java/lang/invoke/condy/ConstantBootstrapsTest.java
 java/lang/invoke/defineHiddenClass/PreviewHiddenClass.java
 java/lang/invoke/defineHiddenClass/UnloadingTest.java
 java/lang/invoke/lambda/InheritedMethodTest.java
+java/lang/invoke/lambda/LambdaAccessControlDoPrivilegedTest.java
 java/lang/invoke/lambda/LambdaAsm.java
 java/lang/invoke/lambda/LambdaReceiver.java
 java/lang/invoke/lambda/LambdaStackTrace.java
@@ -583,6 +586,10 @@ java/net/httpclient/ALPNFailureTest.java
 java/net/httpclient/ALPNProxyFailureTest.java
 java/net/httpclient/BasicAuthTest.java
 java/net/httpclient/CancelledResponse.java
+java/net/httpclient/ConnectTimeoutTest.java
+java/net/httpclient/ConnectTimeoutTest.java#2
+java/net/httpclient/ConnectTimeoutTest.java#3
+java/net/httpclient/ConnectTimeoutTest.java#4
 java/net/httpclient/DebugLoggerTest.java
 java/net/httpclient/DigestEchoClient.java
 java/net/httpclient/HandshakeFailureTest.java
@@ -599,11 +606,13 @@ java/net/httpclient/ProxyAuthDisabledSchemes.java
 java/net/httpclient/ProxyAuthDisabledSchemesSSL.java
 java/net/httpclient/ProxyAuthTest.java
 java/net/httpclient/RelayingPublishers.java
+java/net/httpclient/ResponsePublisher.java
 java/net/httpclient/RestrictedHeadersTest.java
 java/net/httpclient/RetryPost.java
 java/net/httpclient/ShortResponseBodyPost.java
 java/net/httpclient/ShutdownNow.java
 java/net/httpclient/SmallTimeout.java
+java/net/httpclient/SpecialHeadersTest.java
 java/net/httpclient/SplitResponseSSL.java
 java/net/httpclient/StreamCloseTest.java
 java/net/httpclient/TestKitTest.java
@@ -624,11 +633,13 @@ java/net/httpclient/ssltest/TlsVersionTest.java
 java/net/httpclient/websocket/ConnectionHandoverTest.java
 java/net/ipv6tests/ScopeTests.java
 java/net/ipv6tests/UdpTest.java
+java/net/vthread/HttpALot.java
 java/net/vthread/InterruptHttp.java
 java/nio/Buffer/Basic.java
 java/nio/Buffer/ByteBufferViews.java
 java/nio/Buffer/Chew.java
 java/nio/Buffer/LimitDirectMemory.java
+java/nio/Buffer/LimitDirectMemoryNegativeTest.java
 java/nio/Buffer/UnmeteredTempBuffers.java
 java/nio/MappedByteBuffer/Basic.java
 java/nio/MappedByteBuffer/Force.java
@@ -638,6 +649,8 @@ java/nio/MappedByteBuffer/Truncate.java
 java/nio/channels/AsynchronousChannelGroup/GroupOfOne.java
 java/nio/channels/AsynchronousChannelGroup/Identity.java
 java/nio/channels/AsynchronousFileChannel/Basic.java
+java/nio/channels/AsynchronousServerSocketChannel/Basic.java
+java/nio/channels/AsynchronousSocketChannel/Basic.java
 java/nio/channels/AsynchronousSocketChannel/Leaky.java
 java/nio/channels/AsynchronousSocketChannel/StressLoopback.java
 java/nio/channels/Channels/ReadOffset.java
@@ -703,7 +716,9 @@ java/nio/channels/Selector/KeysReady.java
 java/nio/channels/Selector/LotsOfChannels.java
 java/nio/channels/Selector/LotsOfInterrupts.java#2
 java/nio/channels/Selector/RegAfterPreClose.java
+java/nio/channels/Selector/RegisterDuringSelect.java
 java/nio/channels/Selector/SelectAndCancel.java
+java/nio/channels/Selector/SelectAndClose.java
 java/nio/channels/Selector/SelectWithConsumer.java
 java/nio/channels/Selector/SelectorLimit.java
 java/nio/channels/Selector/WakeupAfterClose.java
@@ -738,6 +753,9 @@ java/nio/channels/unixdomain/IOExchanges.java
 java/nio/channels/unixdomain/NonBlockingAccept.java
 java/nio/channels/unixdomain/Shutdown.java
 java/nio/channels/unixdomain/SocketOptions.java
+java/nio/channels/vthread/BlockingChannelOps.java
+java/nio/channels/vthread/BlockingChannelOps.java#2
+java/nio/channels/vthread/BlockingChannelOps.java#3
 java/nio/charset/coders/StreamTimeout.java
 java/nio/file/DirectoryStream/Basic.java
 java/nio/file/DirectoryStream/SecureDS.java
@@ -779,7 +797,9 @@ java/security/KeyStore/PBETest.java
 java/security/KeyStore/TestDisabledAlgorithms.java
 java/security/MessageDigest/ByteBuffers.java
 java/security/MessageDigest/TestDisabledAlgorithms.java
+java/security/MessageDigest/TestSameLength.java
 java/security/PKCS12Attribute/HashCode.java
+java/security/Provider/SecurityProviderModularTest.java
 java/security/Provider/SupportsParameter.java
 java/security/SecureRandom/ApiTest.java
 java/security/SecureRandom/EnoughSeedTest.java
@@ -871,6 +891,7 @@ java/util/Calendar/NarrowNamesTest.java
 java/util/Collection/RandomizedIteration.java
 java/util/Collections/CheckedListReplaceAll.java
 java/util/Collections/NCopies.java
+java/util/Collections/RotateHuge.java
 java/util/Currency/CurrencyTest.java
 java/util/Currency/PropertiesTestRun.java
 java/util/Date/TZ.java
@@ -896,6 +917,7 @@ java/util/Properties/CheckUnsynchronized.java
 java/util/Properties/LoadParsing2.java
 java/util/Properties/StoreReproducibilityTest.java
 java/util/Random/LXMRandomWithSeed.java
+java/util/Random/RandomCanaryPi.java
 java/util/Random/RandomTestChiSquared.java
 java/util/Random/RandomTestCoverage.java
 java/util/Random/T8282144.java
@@ -934,6 +956,7 @@ java/util/concurrent/StructuredTaskScope/WithScopedValue.java
 java/util/concurrent/ThreadPoolExecutor/ThreadRestarts.java
 java/util/concurrent/ThreadPoolExecutor/ThrowingTasks.java
 java/util/concurrent/atomic/Lazy.java
+java/util/concurrent/forkjoin/Integrate.java
 java/util/concurrent/forkjoin/NQueensCS.java
 java/util/concurrent/forkjoin/Starvation.java
 java/util/concurrent/forkjoin/SubmissionTest.java
@@ -960,6 +983,7 @@ java/util/logging/FileHandlerPatternExceptions.java
 java/util/logging/FileHandlerPatternGeneration.java
 java/util/logging/HandlersConfigTest.java
 java/util/logging/LocalizedLevelName.java
+java/util/logging/LogManager/Configuration/TestConfigurationLock.java
 java/util/logging/LogManager/Configuration/rootLoggerHandlers/BadRootLoggerHandlers.java
 java/util/logging/LogManager/Configuration/rootLoggerHandlers/RootLoggerHandlers.java
 java/util/logging/LogManagerAppContextDeadlock.java
@@ -970,6 +994,9 @@ java/util/logging/Logger/getGlobal/TestGetGlobalConcurrent.java
 java/util/logging/LoggingDeadlock2.java
 java/util/logging/LoggingMXBeanTest.java
 java/util/logging/TestGetLoggerNPE.java
+java/util/logging/TestLogConfigurationDeadLock.java
+java/util/logging/TestLogConfigurationDeadLockWithConf.java
+java/util/logging/TestLoggerBundleSync.java
 java/util/logging/TestUILoggerContext.java
 java/util/logging/XMLFormatterDate.java
 java/util/prefs/CodePointZeroPrefsTest.java
@@ -1027,4 +1054,5 @@ jdk/nio/zipfs/PathOps.java
 jdk/nio/zipfs/TestPosix.java
 jdk/nio/zipfs/UpdateEntryTest.java
 jdk/nio/zipfs/ZFSTests.java
+jdk/nio/zipfs/ZipFSOutputStreamTest.java
 jdk/nio/zipfs/ZipFSTester.java
