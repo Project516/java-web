@@ -172,6 +172,9 @@ export class JThread {
   // what is left of the run loop's budget while compiled code runs: its
   // loops and the calls it interprets in place spend it
   slice = 0;
+  // instructions of its next turn, and the VM's count of short turns when it last ran
+  quantum = 0;
+  shortSeen = 0;
   // wakes the thread early from sleep, park or wait, for interrupt/unpark
   wake: (() => void) | null = null;
   // set when the bottom frame finishes

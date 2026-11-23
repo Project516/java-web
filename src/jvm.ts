@@ -136,8 +136,11 @@ const WARM_MIN_CLASSES = 200;
 
 const WOKEN_RUN = 16;
 
-// instructions a thread runs per turn
+// instructions a thread runs per turn, at most and at least
 const SLICE = 20000;
+const MIN_SLICE = 200;
+// a turn this long (ms) is a spin or a long computation
+const LONG_TURN = 0.05;
 
 export class JVM {
   readonly opts: JvmOptions;
@@ -164,6 +167,7 @@ export class JVM {
   // threads another thread woke in its turn: they run before the rotation, so a hand-off does not wait behind spinners
   private woken: JThread[] = [];
   private wokenStreak = 0;
+  private shortTurns = 0;
   private queued = new Set<JThread>();
   private scheduled = false;
   private hashSeed = 0x2545f491;
@@ -1100,8 +1104,7 @@ export class JVM {
   private loop() {
     noteYield();
     const end = performance.now() + 20;
-    // instructions run since the clock was read: short turns of threads that hand off share one read
-    let spent = 0;
+    let clock = performance.now();
     try {
       while (this.exitCode === null) {
         const t = this.next();
@@ -1109,17 +1112,24 @@ export class JVM {
         this.queued.delete(t);
         if (t.state !== RUNNABLE) continue;
         sched.thread = t;
-        spent += SLICE - runThread(t, SLICE);
+        const q = t.quantum || SLICE;
+        runThread(t, q);
         if (t.unmounting !== null) unmountBlocked(t);
+        const now = performance.now();
+        // a thread that runs long turns while others run short ones gets shorter turns
+        const dt = now - clock;
+        const others = this.shortTurns !== t.shortSeen && (this.runQueue.length > 0 || this.woken.length > 0);
+        if (t.state !== RUNNABLE || !others) t.quantum = SLICE;
+        else if (dt > LONG_TURN) t.quantum = Math.max(MIN_SLICE, q >> 1);
+        else t.quantum = q;
+        if (t.state !== RUNNABLE || (q === SLICE && dt <= LONG_TURN)) this.shortTurns++;
+        t.shortSeen = this.shortTurns;
+        clock = now;
         if (t.state === RUNNABLE && !this.queued.has(t)) {
           this.queued.add(t);
           this.runQueue.push(t);
         }
-        if (sched.pause) break;
-        if (spent >= SLICE) {
-          if (performance.now() > end) break;
-          spent = 0;
-        }
+        if (sched.pause || now > end) break;
         sched.yieldNow = false;
       }
     } finally {
