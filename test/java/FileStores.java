@@ -15,6 +15,6 @@ public class FileStores {
     System.out.println("usable within total " + (store.getUsableSpace() <= store.getTotalSpace()));
     System.out.println("missing file " + new File(tmp.toFile(), "no-such-file").getTotalSpace());
     ByteBuffer buf = ByteBuffer.allocateDirect((int) block * 2).alignedSlice((int) block);
-    System.out.println("aligned capacity " + buf.capacity());
+    System.out.println("aligned slice " + (buf.alignmentOffset(0, (int) block) == 0 && buf.capacity() >= block && buf.capacity() % block == 0));
   }
 }
