@@ -28,7 +28,7 @@ public class ObjectLayout {
     @Override
     public String toString() {
       return z + " " + (int) b + " " + (int) c + " " + s + " " + i + " " + j + " " + f + " " + d + " " + o + " " + str
-          + " " + (arr == null ? null : arr.length) + " " + vi + " " + vj + " " + vo;
+          + " " + (arr == null ? null : arr.length) + " " + vi + " " + vj + " " + (vo == null ? null : vo.getClass().getSimpleName());
     }
   }
 
